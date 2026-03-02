@@ -15,6 +15,16 @@ import {
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 
+function roleHome(role) {
+  if (role === "STAFF") {
+    return "/staff/requests";
+  }
+  if (role === "ADMIN") {
+    return "/admin/users";
+  }
+  return "/customer/loans";
+}
+
 export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -28,7 +38,7 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
 
   if (!isInitializing && isAuthenticated) {
-    const next = user.role === "STAFF" ? "/staff/requests" : "/customer/loans";
+    const next = roleHome(user.role);
     return <Navigate to={next} replace />;
   }
 
@@ -40,7 +50,7 @@ export default function LoginPage() {
       const authUser = isRegisterMode
         ? await register({ email, password, role })
         : await login({ email, password });
-      const fallback = authUser.role === "STAFF" ? "/staff/requests" : "/customer/loans";
+      const fallback = roleHome(authUser.role);
       const from = location.state?.from?.pathname || fallback;
       navigate(from, { replace: true });
     } catch (err) {

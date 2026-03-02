@@ -16,5 +16,9 @@ export default function HomeRedirect() {
     return <Navigate to="/staff/requests" replace />;
   }
 
+  if (user.role === "ADMIN") {
+    return <Navigate to="/admin/users" replace />;
+  }
+
   return <Navigate to="/login" replace />;
 }

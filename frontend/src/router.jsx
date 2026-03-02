@@ -4,6 +4,7 @@ import { AppShell } from "./layouts/AppShell";
 import HomeRedirect from "./pages/HomeRedirect";
 import LoginPage from "./pages/LoginPage";
 import NotFoundPage from "./pages/NotFoundPage";
+import AdminUsersPage from "./pages/admin/AdminUsersPage";
 import CustomerLoanDetailPage from "./pages/customer/CustomerLoanDetailPage";
 import CustomerLoanNewPage from "./pages/customer/CustomerLoanNewPage";
 import CustomerLoansPage from "./pages/customer/CustomerLoansPage";
@@ -11,6 +12,7 @@ import CustomerProfilePage from "./pages/customer/CustomerProfilePage";
 import StaffDashboardPage from "./pages/staff/StaffDashboardPage";
 import StaffRequestDetailPage from "./pages/staff/StaffRequestDetailPage";
 import StaffRequestsPage from "./pages/staff/StaffRequestsPage";
+import StaffUserCreatePage from "./pages/staff/StaffUserCreatePage";
 
 export const router = createBrowserRouter([
   {
@@ -20,7 +22,7 @@ export const router = createBrowserRouter([
   {
     path: "/",
     element: (
-      <RoleRoute allow={["CUSTOMER", "STAFF"]}>
+      <RoleRoute allow={["CUSTOMER", "STAFF", "ADMIN"]}>
         <AppShell />
       </RoleRoute>
     ),
@@ -28,6 +30,14 @@ export const router = createBrowserRouter([
       {
         index: true,
         element: <HomeRedirect />
+      },
+      {
+        path: "admin/users",
+        element: (
+          <RoleRoute allow={["ADMIN"]}>
+            <AdminUsersPage />
+          </RoleRoute>
+        )
       },
       {
         path: "customer/loan/new",
@@ -82,6 +92,14 @@ export const router = createBrowserRouter([
         element: (
           <RoleRoute allow={["STAFF"]}>
             <StaffDashboardPage />
+          </RoleRoute>
+        )
+      },
+      {
+        path: "staff/accounts/new",
+        element: (
+          <RoleRoute allow={["STAFF"]}>
+            <StaffUserCreatePage />
           </RoleRoute>
         )
       },

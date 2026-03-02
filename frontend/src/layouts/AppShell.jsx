@@ -41,6 +41,12 @@ export function AppShell() {
               <>
                 <NavButton to="/staff/requests">Review Queue</NavButton>
                 <NavButton to="/staff/dashboard">Dashboard</NavButton>
+                <NavButton to="/staff/accounts/new">Create Account</NavButton>
+              </>
+            )}
+            {user?.role === "ADMIN" && (
+              <>
+                <NavButton to="/admin/users">User Management</NavButton>
               </>
             )}
             <Chip

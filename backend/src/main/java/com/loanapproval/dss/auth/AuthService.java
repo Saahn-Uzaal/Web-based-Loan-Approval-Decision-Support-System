@@ -36,6 +36,9 @@ public class AuthService {
         }
 
         Role role = request.role() != null ? request.role() : Role.CUSTOMER;
+        if (role == Role.ADMIN) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Admin registration is not allowed");
+        }
         UserAccount user = userRepository.create(
             normalizedEmail,
             passwordEncoder.encode(request.password()),
