@@ -3,9 +3,12 @@ import {
   Alert,
   Box,
   Button,
+  FormControlLabel,
+  LinearProgress,
   MenuItem,
   Paper,
   Stack,
+  Switch,
   TextField,
   Typography
 } from "@mui/material";
@@ -15,21 +18,36 @@ import { useAuth } from "../auth/AuthContext";
 export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, isAuthenticated, user } = useAuth();
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState("CUSTOMER");
+  const { login, register, isAuthenticated, user, isInitializing } = useAuth();
 
-  if (isAuthenticated) {
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("CUSTOMER");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  if (!isInitializing && isAuthenticated) {
     const next = user.role === "STAFF" ? "/staff/requests" : "/customer/loans";
     return <Navigate to={next} replace />;
   }
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault();
-    login({ email, role });
-    const fallback = role === "STAFF" ? "/staff/requests" : "/customer/loans";
-    const from = location.state?.from?.pathname || fallback;
-    navigate(from, { replace: true });
+    setError("");
+    setSubmitting(true);
+    try {
+      const authUser = isRegisterMode
+        ? await register({ email, password, role })
+        : await login({ email, password });
+      const fallback = authUser.role === "STAFF" ? "/staff/requests" : "/customer/loans";
+      const from = location.state?.from?.pathname || fallback;
+      navigate(from, { replace: true });
+    } catch (err) {
+      setError(err.message || "Authentication failed");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -43,14 +61,25 @@ export default function LoginPage() {
       }}
     >
       <Paper sx={{ width: "100%", maxWidth: 420, p: 4 }}>
+        {isInitializing && <LinearProgress sx={{ mb: 2 }} />}
         <Stack spacing={2}>
-          <Typography variant="h4">Sign In</Typography>
+          <Typography variant="h4">{isRegisterMode ? "Register" : "Sign In"}</Typography>
           <Typography color="text.secondary">
-            Dev login for route scaffolding. API integration comes next.
+            Authentication now uses backend API with JWT.
           </Typography>
-          <Alert severity="info">
-            Role controls access: CUSTOMER or STAFF.
-          </Alert>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={isRegisterMode}
+                onChange={(event) => setIsRegisterMode(event.target.checked)}
+              />
+            }
+            label={isRegisterMode ? "Register mode" : "Login mode"}
+          />
+          {isRegisterMode && (
+            <Alert severity="info">You can register CUSTOMER or STAFF for demo RBAC testing.</Alert>
+          )}
+          {error && <Alert severity="error">{error}</Alert>}
           <Box component="form" onSubmit={handleSubmit}>
             <Stack spacing={2}>
               <TextField
@@ -63,17 +92,28 @@ export default function LoginPage() {
                 fullWidth
               />
               <TextField
-                select
-                label="Role"
-                value={role}
-                onChange={(event) => setRole(event.target.value)}
+                label="Password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                type="password"
+                placeholder="At least 6 characters"
+                required
                 fullWidth
-              >
-                <MenuItem value="CUSTOMER">CUSTOMER</MenuItem>
-                <MenuItem value="STAFF">STAFF</MenuItem>
-              </TextField>
-              <Button type="submit" variant="contained" size="large">
-                Continue
+              />
+              {isRegisterMode && (
+                <TextField
+                  select
+                  label="Role"
+                  value={role}
+                  onChange={(event) => setRole(event.target.value)}
+                  fullWidth
+                >
+                  <MenuItem value="CUSTOMER">CUSTOMER</MenuItem>
+                  <MenuItem value="STAFF">STAFF</MenuItem>
+                </TextField>
+              )}
+              <Button type="submit" variant="contained" size="large" disabled={submitting || isInitializing}>
+                {submitting ? "Please wait..." : isRegisterMode ? "Register" : "Login"}
               </Button>
             </Stack>
           </Box>

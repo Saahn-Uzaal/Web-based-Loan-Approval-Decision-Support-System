@@ -1,9 +1,18 @@
 import { Navigate, useLocation } from "react-router-dom";
+import { Box, CircularProgress } from "@mui/material";
 import { useAuth } from "../auth/AuthContext";
 
 export function RoleRoute({ allow, children }) {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, isInitializing } = useAuth();
   const location = useLocation();
+
+  if (isInitializing) {
+    return (
+      <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
 
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;

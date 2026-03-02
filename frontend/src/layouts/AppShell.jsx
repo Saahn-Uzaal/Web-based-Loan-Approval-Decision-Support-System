@@ -32,6 +32,7 @@ export function AppShell() {
           <Stack direction="row" spacing={1} alignItems="center">
             {user?.role === "CUSTOMER" && (
               <>
+                <NavButton to="/customer/profile">My Profile</NavButton>
                 <NavButton to="/customer/loan/new">New Request</NavButton>
                 <NavButton to="/customer/loans">My Requests</NavButton>
               </>

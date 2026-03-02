@@ -7,6 +7,7 @@ import NotFoundPage from "./pages/NotFoundPage";
 import CustomerLoanDetailPage from "./pages/customer/CustomerLoanDetailPage";
 import CustomerLoanNewPage from "./pages/customer/CustomerLoanNewPage";
 import CustomerLoansPage from "./pages/customer/CustomerLoansPage";
+import CustomerProfilePage from "./pages/customer/CustomerProfilePage";
 import StaffDashboardPage from "./pages/staff/StaffDashboardPage";
 import StaffRequestDetailPage from "./pages/staff/StaffRequestDetailPage";
 import StaffRequestsPage from "./pages/staff/StaffRequestsPage";
@@ -49,6 +50,14 @@ export const router = createBrowserRouter([
         element: (
           <RoleRoute allow={["CUSTOMER"]}>
             <CustomerLoanDetailPage />
+          </RoleRoute>
+        )
+      },
+      {
+        path: "customer/profile",
+        element: (
+          <RoleRoute allow={["CUSTOMER"]}>
+            <CustomerProfilePage />
           </RoleRoute>
         )
       },

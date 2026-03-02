@@ -1,4 +1,5 @@
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { loginApi, meApi, registerApi } from "../api/authApi";
 
 const STORAGE_KEY = "loan_dss_auth";
 const AuthContext = createContext(null);
@@ -18,20 +19,62 @@ function readStoredAuth() {
 
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(() => readStoredAuth());
+  const [isInitializing, setIsInitializing] = useState(true);
 
-  const login = ({ email, role }) => {
-    const normalizedRole = role.toUpperCase();
-    const nextSession = {
-      accessToken: "dev-token",
-      user: {
-        id: 1,
-        email,
-        role: normalizedRole
+  useEffect(() => {
+    let active = true;
+
+    async function bootstrap() {
+      const stored = readStoredAuth();
+      if (!stored?.accessToken) {
+        if (active) {
+          setIsInitializing(false);
+        }
+        return;
       }
-    };
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextSession));
-    setSession(nextSession);
+      try {
+        const user = await meApi(stored.accessToken);
+        if (!active) {
+          return;
+        }
+        const nextSession = {
+          accessToken: stored.accessToken,
+          user
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(nextSession));
+        setSession(nextSession);
+      } catch {
+        if (!active) {
+          return;
+        }
+        localStorage.removeItem(STORAGE_KEY);
+        setSession(null);
+      } finally {
+        if (active) {
+          setIsInitializing(false);
+        }
+      }
+    }
+
+    bootstrap();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const login = async ({ email, password }) => {
+    const payload = await loginApi({ email, password });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    setSession(payload);
+    return payload.user;
+  };
+
+  const register = async ({ email, password, role }) => {
+    const payload = await registerApi({ email, password, role });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    setSession(payload);
+    return payload.user;
   };
 
   const logout = () => {
@@ -44,10 +87,13 @@ export function AuthProvider({ children }) {
       session,
       user: session?.user ?? null,
       isAuthenticated: Boolean(session?.accessToken),
+      accessToken: session?.accessToken ?? null,
+      isInitializing,
       login,
+      register,
       logout
     }),
-    [session]
+    [session, isInitializing]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
