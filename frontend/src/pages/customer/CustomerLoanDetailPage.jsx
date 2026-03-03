@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { getLoanDetailApi } from "../../api/loanApi";
 import { useAuth } from "../../auth/AuthContext";
+import { formatVnd } from "../../utils/currency";
 
 function KeyValue({ label, value }) {
   return (
@@ -102,7 +103,7 @@ export default function CustomerLoanDetailPage() {
             <Grid item xs={12} md={4}>
               <KeyValue
                 label="Amount"
-                value={`$${Number(loan.amount || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+                value={formatVnd(loan.amount)}
               />
             </Grid>
             <Grid item xs={12} md={4}>

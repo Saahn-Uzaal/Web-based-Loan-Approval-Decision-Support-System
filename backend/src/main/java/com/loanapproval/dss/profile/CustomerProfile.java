@@ -8,6 +8,7 @@ public record CustomerProfile(
     String phone,
     BigDecimal monthlyIncome,
     BigDecimal debtToIncomeRatio,
-    String employmentStatus
+    String employmentStatus,
+    Integer paymentRating
 ) {
 }

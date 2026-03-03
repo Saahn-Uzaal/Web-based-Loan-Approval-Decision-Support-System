@@ -28,7 +28,8 @@ public class CustomerProfileService {
             request.phone(),
             request.monthlyIncome(),
             request.debtToIncomeRatio(),
-            request.employmentStatus()
+            request.employmentStatus(),
+            null
         );
         customerProfileRepository.upsert(profile);
         return customerProfileRepository.findByUserId(userId)
@@ -43,7 +44,8 @@ public class CustomerProfileService {
             profile.phone(),
             profile.monthlyIncome(),
             profile.debtToIncomeRatio(),
-            profile.employmentStatus()
+            profile.employmentStatus(),
+            profile.paymentRating()
         );
     }
 }

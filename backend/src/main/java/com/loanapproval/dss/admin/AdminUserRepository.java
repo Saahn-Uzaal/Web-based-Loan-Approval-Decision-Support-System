@@ -70,6 +70,10 @@ public class AdminUserRepository {
 
     public int deleteCustomerAndRelations(Long userId) {
         jdbcTemplate.update(
+            "DELETE FROM loan_repayments WHERE customer_id = ?",
+            userId
+        );
+        jdbcTemplate.update(
             """
             DELETE dr
             FROM dss_results dr

@@ -35,6 +35,7 @@ export function AppShell() {
                 <NavButton to="/customer/profile">My Profile</NavButton>
                 <NavButton to="/customer/loan/new">New Request</NavButton>
                 <NavButton to="/customer/loans">My Requests</NavButton>
+                <NavButton to="/customer/payments">Payments</NavButton>
               </>
             )}
             {user?.role === "STAFF" && (

@@ -16,7 +16,7 @@ public class CustomerProfileRepository {
     public Optional<CustomerProfile> findByUserId(Long userId) {
         return jdbcTemplate.query(
             """
-            SELECT user_id, full_name, phone, monthly_income, debt_to_income_ratio, employment_status
+            SELECT user_id, full_name, phone, monthly_income, debt_to_income_ratio, employment_status, payment_rating
             FROM customer_profiles
             WHERE user_id = ?
             """,
@@ -26,7 +26,8 @@ public class CustomerProfileRepository {
                 rs.getString("phone"),
                 rs.getBigDecimal("monthly_income"),
                 rs.getBigDecimal("debt_to_income_ratio"),
-                rs.getString("employment_status")
+                rs.getString("employment_status"),
+                rs.getInt("payment_rating")
             ),
             userId
         ).stream().findFirst();
@@ -52,5 +53,35 @@ public class CustomerProfileRepository {
             profile.debtToIncomeRatio(),
             profile.employmentStatus()
         );
+    }
+
+    public Optional<Integer> findPaymentRatingByUserId(Long userId) {
+        return jdbcTemplate.query(
+            """
+            SELECT payment_rating
+            FROM customer_profiles
+            WHERE user_id = ?
+            """,
+            (rs, rowNum) -> rs.getInt("payment_rating"),
+            userId
+        ).stream().findFirst();
+    }
+
+    public Optional<Integer> adjustPaymentRating(Long userId, int delta) {
+        int updatedRows = jdbcTemplate.update(
+            """
+            UPDATE customer_profiles
+            SET payment_rating = LEAST(100, GREATEST(-100, payment_rating + ?)),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            """,
+            delta,
+            userId
+        );
+
+        if (updatedRows == 0) {
+            return Optional.empty();
+        }
+        return findPaymentRatingByUserId(userId);
     }
 }

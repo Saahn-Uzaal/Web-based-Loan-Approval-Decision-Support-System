@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
 import { getMyLoansApi } from "../../api/loanApi";
 import { useAuth } from "../../auth/AuthContext";
+import { formatVnd } from "../../utils/currency";
 
 function StatusChip({ status }) {
   const colorMap = {
@@ -105,9 +106,7 @@ export default function CustomerLoansPage() {
             {rows.map((row) => (
               <TableRow key={row.id} hover>
                 <TableCell>#{row.id}</TableCell>
-                <TableCell>
-                  ${Number(row.amount || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                </TableCell>
+                <TableCell>{formatVnd(row.amount)}</TableCell>
                 <TableCell>{row.termMonths} months</TableCell>
                 <TableCell>{row.purpose}</TableCell>
                 <TableCell>

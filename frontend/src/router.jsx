@@ -8,6 +8,7 @@ import AdminUsersPage from "./pages/admin/AdminUsersPage";
 import CustomerLoanDetailPage from "./pages/customer/CustomerLoanDetailPage";
 import CustomerLoanNewPage from "./pages/customer/CustomerLoanNewPage";
 import CustomerLoansPage from "./pages/customer/CustomerLoansPage";
+import CustomerPaymentsPage from "./pages/customer/CustomerPaymentsPage";
 import CustomerProfilePage from "./pages/customer/CustomerProfilePage";
 import StaffDashboardPage from "./pages/staff/StaffDashboardPage";
 import StaffRequestDetailPage from "./pages/staff/StaffRequestDetailPage";
@@ -68,6 +69,14 @@ export const router = createBrowserRouter([
         element: (
           <RoleRoute allow={["CUSTOMER"]}>
             <CustomerProfilePage />
+          </RoleRoute>
+        )
+      },
+      {
+        path: "customer/payments",
+        element: (
+          <RoleRoute allow={["CUSTOMER"]}>
+            <CustomerPaymentsPage />
           </RoleRoute>
         )
       },

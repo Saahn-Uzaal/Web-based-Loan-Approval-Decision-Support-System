@@ -1,4 +1,4 @@
-import { Alert, Button, Paper, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Button, Chip, Paper, Stack, TextField, Typography } from "@mui/material";
 import { useEffect, useState } from "react";
 import { getMyProfileApi, upsertMyProfileApi } from "../../api/profileApi";
 import { useAuth } from "../../auth/AuthContext";
@@ -17,6 +17,7 @@ export default function CustomerProfilePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [paymentRating, setPaymentRating] = useState(0);
   const [form, setForm] = useState({
     fullName: "",
     phone: "",
@@ -46,6 +47,7 @@ export default function CustomerProfilePage() {
           debtToIncomeRatio: profile.debtToIncomeRatio ?? "",
           employmentStatus: profile.employmentStatus ?? ""
         });
+        setPaymentRating(Number(profile.paymentRating || 0));
       } catch (err) {
         if (!active) {
           return;
@@ -94,6 +96,7 @@ export default function CustomerProfilePage() {
         debtToIncomeRatio: profile.debtToIncomeRatio ?? "",
         employmentStatus: profile.employmentStatus ?? ""
       });
+      setPaymentRating(Number(profile.paymentRating || 0));
       setSuccessMessage("Profile saved successfully.");
     } catch (err) {
       setError(err.message || "Failed to save profile");
@@ -112,6 +115,14 @@ export default function CustomerProfilePage() {
         <Stack spacing={2} component="form" onSubmit={handleSubmit}>
           {error && <Alert severity="error">{error}</Alert>}
           {successMessage && <Alert severity="success">{successMessage}</Alert>}
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Typography variant="subtitle2">Payment Rating</Typography>
+            <Chip
+              size="small"
+              label={paymentRating}
+              color={paymentRating >= 20 ? "success" : paymentRating >= 0 ? "info" : "error"}
+            />
+          </Stack>
           <TextField
             label="Full Name"
             value={form.fullName}
