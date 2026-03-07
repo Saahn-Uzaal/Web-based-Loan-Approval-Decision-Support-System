@@ -5,10 +5,42 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.Period;
 import java.util.Locale;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class DecisionEngineService {
+
+    private static final Logger log = LoggerFactory.getLogger(DecisionEngineService.class);
+
+    // --- Scoring weights ---
+    private static final double WEIGHT_DTI = 0.23;
+    private static final double WEIGHT_INCOME = 0.18;
+    private static final double WEIGHT_CREDIT_HISTORY = 0.15;
+    private static final double WEIGHT_BURDEN = 0.12;
+    private static final double WEIGHT_EMPLOYMENT = 0.12;
+    private static final double WEIGHT_AGE = 0.07;
+    private static final double WEIGHT_COLLATERAL = 0.07;
+    private static final double WEIGHT_PURPOSE = 0.04;
+    private static final double WEIGHT_VERIFICATION = 0.02;
+
+    // --- Credit score range ---
+    private static final int SCORE_MIN = 300;
+    private static final int SCORE_MAX = 850;
+    private static final double SCORE_MULTIPLIER = 5.5;
+
+    // --- Risk rank thresholds ---
+    private static final int RANK_A_THRESHOLD = 780;
+    private static final int RANK_B_THRESHOLD = 700;
+    private static final int RANK_C_THRESHOLD = 620;
+
+    // --- DTI thresholds ---
+    private static final double DTI_LOW_THRESHOLD = 35.0;
+    private static final double DTI_HIGH_DOWNGRADE_THRESHOLD = 55.0;
+    private static final double DTI_MODERATE_DOWNGRADE_THRESHOLD = 45.0;
+    private static final double DTI_EXTREME_THRESHOLD = 75.0;
+    private static final double DTI_REJECT_THRESHOLD = 60.0;
 
     public DssResult evaluate(DecisionInput input) {
         double monthlyIncome = toPositiveDouble(input.monthlyIncome());
@@ -31,17 +63,17 @@ public class DecisionEngineService {
         double verificationScore = verificationScore(input);
 
         double weightedRawScore =
-            dtiScore * 0.23 +
-            incomeScore * 0.18 +
-            burdenScore * 0.12 +
-            employmentScore * 0.12 +
-            ageScore * 0.07 +
-            creditHistoryScore * 0.15 +
-            collateralScore * 0.07 +
-            purposeScore * 0.04 +
-            verificationScore * 0.02;
+            dtiScore * WEIGHT_DTI +
+            incomeScore * WEIGHT_INCOME +
+            burdenScore * WEIGHT_BURDEN +
+            employmentScore * WEIGHT_EMPLOYMENT +
+            ageScore * WEIGHT_AGE +
+            creditHistoryScore * WEIGHT_CREDIT_HISTORY +
+            collateralScore * WEIGHT_COLLATERAL +
+            purposeScore * WEIGHT_PURPOSE +
+            verificationScore * WEIGHT_VERIFICATION;
 
-        int baseScore = clamp((int) Math.round(300 + weightedRawScore * 5.5), 300, 850);
+        int baseScore = clamp((int) Math.round(SCORE_MIN + weightedRawScore * SCORE_MULTIPLIER), SCORE_MIN, SCORE_MAX);
 
         int paymentBonus = paymentRatingBonus(input.paymentRating());
         int compliancePenalty = compliancePenalty(input);
@@ -49,7 +81,7 @@ public class DecisionEngineService {
 
         RiskRank riskRank = riskRank(creditScore, debtToIncomeRatio, input);
 
-        boolean lowDti = debtToIncomeRatio <= 35;
+        boolean lowDti = debtToIncomeRatio <= DTI_LOW_THRESHOLD;
         boolean borderline = isBorderline(input, monthlyIncome, debtToIncomeRatio, loanToAnnualIncomeRatio, riskRank);
 
         DssRecommendation recommendation = recommendation(input, riskRank, lowDti, borderline, debtToIncomeRatio);
@@ -75,6 +107,9 @@ public class DecisionEngineService {
             customerSegment.name(),
             appliedRule
         );
+
+        log.info("DSS evaluation: customerId={}, score={}, rank={}, recommendation={}",
+            input.customerId(), creditScore, riskRank, recommendation);
 
         return new DssResult(creditScore, riskRank, customerSegment, recommendation, explanation);
     }
@@ -152,25 +187,25 @@ public class DecisionEngineService {
         if (hasComplianceHardReject(input)) {
             return RiskRank.D;
         }
-        if (dti >= 75) {
+        if (dti >= DTI_EXTREME_THRESHOLD) {
             return RiskRank.D;
         }
 
         RiskRank rank;
-        if (creditScore >= 780) {
+        if (creditScore >= RANK_A_THRESHOLD) {
             rank = RiskRank.A;
-        } else if (creditScore >= 700) {
+        } else if (creditScore >= RANK_B_THRESHOLD) {
             rank = RiskRank.B;
-        } else if (creditScore >= 620) {
+        } else if (creditScore >= RANK_C_THRESHOLD) {
             rank = RiskRank.C;
         } else {
             rank = RiskRank.D;
         }
 
-        if (dti > 55 && (rank == RiskRank.A || rank == RiskRank.B)) {
+        if (dti > DTI_HIGH_DOWNGRADE_THRESHOLD && (rank == RiskRank.A || rank == RiskRank.B)) {
             return RiskRank.C;
         }
-        if (dti > 45 && rank == RiskRank.A) {
+        if (dti > DTI_MODERATE_DOWNGRADE_THRESHOLD && rank == RiskRank.A) {
             return RiskRank.B;
         }
         return rank;
@@ -219,10 +254,10 @@ public class DecisionEngineService {
         if ((riskRank == RiskRank.B || riskRank == RiskRank.C) && borderline) {
             return DssRecommendation.ESCALATE_RECOMMENDED;
         }
-        if (riskRank == RiskRank.B && dti <= 45) {
+        if (riskRank == RiskRank.B && dti <= DTI_MODERATE_DOWNGRADE_THRESHOLD) {
             return DssRecommendation.APPROVE_RECOMMENDED;
         }
-        if (riskRank == RiskRank.C && dti > 60) {
+        if (riskRank == RiskRank.C && dti > DTI_REJECT_THRESHOLD) {
             return DssRecommendation.REJECT_RECOMMENDED;
         }
         return DssRecommendation.ESCALATE_RECOMMENDED;

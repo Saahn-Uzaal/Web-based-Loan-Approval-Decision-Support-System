@@ -1,24 +1,41 @@
+import { lazy, Suspense } from "react";
 import { createBrowserRouter } from "react-router-dom";
+import { CircularProgress, Box } from "@mui/material";
 import { RoleRoute } from "@/shared/routing/RoleRoute";
 import { AppShell } from "@/shared/layouts/AppShell";
-import HomeRedirect from "@/shared/pages/HomeRedirect";
-import LoginPage from "@/features/auth/pages/LoginPage";
-import NotFoundPage from "@/shared/pages/NotFoundPage";
-import AdminUsersPage from "@/features/admin/pages/AdminUsersPage";
-import CustomerLoanDetailPage from "@/features/customer/pages/CustomerLoanDetailPage";
-import CustomerLoanNewPage from "@/features/customer/pages/CustomerLoanNewPage";
-import CustomerLoansPage from "@/features/customer/pages/CustomerLoansPage";
-import CustomerPaymentsPage from "@/features/customer/pages/CustomerPaymentsPage";
-import CustomerProfilePage from "@/features/customer/pages/CustomerProfilePage";
-import StaffDashboardPage from "@/features/staff/pages/StaffDashboardPage";
-import StaffRequestDetailPage from "@/features/staff/pages/StaffRequestDetailPage";
-import StaffRequestsPage from "@/features/staff/pages/StaffRequestsPage";
-import StaffUserCreatePage from "@/features/staff/pages/StaffUserCreatePage";
+
+const HomeRedirect = lazy(() => import("@/shared/pages/HomeRedirect"));
+const LoginPage = lazy(() => import("@/features/auth/pages/LoginPage"));
+const NotFoundPage = lazy(() => import("@/shared/pages/NotFoundPage"));
+const AdminUsersPage = lazy(() => import("@/features/admin/pages/AdminUsersPage"));
+const CustomerLoanDetailPage = lazy(() => import("@/features/customer/pages/CustomerLoanDetailPage"));
+const CustomerLoanNewPage = lazy(() => import("@/features/customer/pages/CustomerLoanNewPage"));
+const CustomerLoansPage = lazy(() => import("@/features/customer/pages/CustomerLoansPage"));
+const CustomerPaymentsPage = lazy(() => import("@/features/customer/pages/CustomerPaymentsPage"));
+const CustomerProfilePage = lazy(() => import("@/features/customer/pages/CustomerProfilePage"));
+const StaffDashboardPage = lazy(() => import("@/features/staff/pages/StaffDashboardPage"));
+const StaffRequestDetailPage = lazy(() => import("@/features/staff/pages/StaffRequestDetailPage"));
+const StaffRequestsPage = lazy(() => import("@/features/staff/pages/StaffRequestsPage"));
+const StaffUserCreatePage = lazy(() => import("@/features/staff/pages/StaffUserCreatePage"));
+
+function SuspenseWrapper({ children }) {
+  return (
+    <Suspense
+      fallback={
+        <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}>
+          <CircularProgress />
+        </Box>
+      }
+    >
+      {children}
+    </Suspense>
+  );
+}
 
 export const router = createBrowserRouter([
   {
     path: "/login",
-    element: <LoginPage />
+    element: <SuspenseWrapper><LoginPage /></SuspenseWrapper>
   },
   {
     path: "/",
@@ -30,13 +47,13 @@ export const router = createBrowserRouter([
     children: [
       {
         index: true,
-        element: <HomeRedirect />
+        element: <SuspenseWrapper><HomeRedirect /></SuspenseWrapper>
       },
       {
         path: "admin/users",
         element: (
           <RoleRoute allow={["ADMIN"]}>
-            <AdminUsersPage />
+            <SuspenseWrapper><AdminUsersPage /></SuspenseWrapper>
           </RoleRoute>
         )
       },
@@ -44,7 +61,7 @@ export const router = createBrowserRouter([
         path: "customer/loan/new",
         element: (
           <RoleRoute allow={["CUSTOMER"]}>
-            <CustomerLoanNewPage />
+            <SuspenseWrapper><CustomerLoanNewPage /></SuspenseWrapper>
           </RoleRoute>
         )
       },
@@ -52,7 +69,7 @@ export const router = createBrowserRouter([
         path: "customer/loans",
         element: (
           <RoleRoute allow={["CUSTOMER"]}>
-            <CustomerLoansPage />
+            <SuspenseWrapper><CustomerLoansPage /></SuspenseWrapper>
           </RoleRoute>
         )
       },
@@ -60,7 +77,7 @@ export const router = createBrowserRouter([
         path: "customer/loans/:id",
         element: (
           <RoleRoute allow={["CUSTOMER"]}>
-            <CustomerLoanDetailPage />
+            <SuspenseWrapper><CustomerLoanDetailPage /></SuspenseWrapper>
           </RoleRoute>
         )
       },
@@ -68,7 +85,7 @@ export const router = createBrowserRouter([
         path: "customer/profile",
         element: (
           <RoleRoute allow={["CUSTOMER"]}>
-            <CustomerProfilePage />
+            <SuspenseWrapper><CustomerProfilePage /></SuspenseWrapper>
           </RoleRoute>
         )
       },
@@ -76,7 +93,7 @@ export const router = createBrowserRouter([
         path: "customer/payments",
         element: (
           <RoleRoute allow={["CUSTOMER"]}>
-            <CustomerPaymentsPage />
+            <SuspenseWrapper><CustomerPaymentsPage /></SuspenseWrapper>
           </RoleRoute>
         )
       },
@@ -84,7 +101,7 @@ export const router = createBrowserRouter([
         path: "staff/requests",
         element: (
           <RoleRoute allow={["STAFF"]}>
-            <StaffRequestsPage />
+            <SuspenseWrapper><StaffRequestsPage /></SuspenseWrapper>
           </RoleRoute>
         )
       },
@@ -92,7 +109,7 @@ export const router = createBrowserRouter([
         path: "staff/requests/:id",
         element: (
           <RoleRoute allow={["STAFF"]}>
-            <StaffRequestDetailPage />
+            <SuspenseWrapper><StaffRequestDetailPage /></SuspenseWrapper>
           </RoleRoute>
         )
       },
@@ -100,7 +117,7 @@ export const router = createBrowserRouter([
         path: "staff/dashboard",
         element: (
           <RoleRoute allow={["STAFF"]}>
-            <StaffDashboardPage />
+            <SuspenseWrapper><StaffDashboardPage /></SuspenseWrapper>
           </RoleRoute>
         )
       },
@@ -108,13 +125,13 @@ export const router = createBrowserRouter([
         path: "staff/accounts/new",
         element: (
           <RoleRoute allow={["STAFF"]}>
-            <StaffUserCreatePage />
+            <SuspenseWrapper><StaffUserCreatePage /></SuspenseWrapper>
           </RoleRoute>
         )
       },
       {
         path: "*",
-        element: <NotFoundPage />
+        element: <SuspenseWrapper><NotFoundPage /></SuspenseWrapper>
       }
     ]
   }

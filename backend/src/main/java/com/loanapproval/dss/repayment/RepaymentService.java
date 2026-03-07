@@ -1,5 +1,7 @@
 package com.loanapproval.dss.repayment;
 
+import com.loanapproval.dss.contract.LoanContract;
+import com.loanapproval.dss.contract.LoanContractService;
 import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
 import com.loanapproval.dss.loan.LoanStatus;
@@ -13,6 +15,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,21 +25,25 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class RepaymentService {
 
+    private static final Logger log = LoggerFactory.getLogger(RepaymentService.class);
     private static final int ON_TIME_RATING_DELTA = 5;
     private static final int LATE_RATING_DELTA = -8;
 
     private final RepaymentRepository repaymentRepository;
     private final LoanRepository loanRepository;
     private final CustomerProfileRepository customerProfileRepository;
+    private final LoanContractService loanContractService;
 
     public RepaymentService(
         RepaymentRepository repaymentRepository,
         LoanRepository loanRepository,
-        CustomerProfileRepository customerProfileRepository
+        CustomerProfileRepository customerProfileRepository,
+        LoanContractService loanContractService
     ) {
         this.repaymentRepository = repaymentRepository;
         this.loanRepository = loanRepository;
         this.customerProfileRepository = customerProfileRepository;
+        this.loanContractService = loanContractService;
     }
 
     public RepaymentHistoryResponse listMine(Long customerId) {
@@ -119,6 +127,9 @@ public class RepaymentService {
         int currentRating = customerProfileRepository.adjustPaymentRating(customerId, ratingDelta)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Profile not found"));
 
+        log.info("Repayment recorded: loanRequestId={}, customerId={}, amountPaid={}, status={}, ratingDelta={}, newRating={}",
+            request.loanRequestId(), customerId, amountPaid, repaymentStatus, ratingDelta, currentRating);
+
         return new RepaymentCreateResponse(toItemResponse(record), currentRating);
     }
 
@@ -147,6 +158,12 @@ public class RepaymentService {
     private BigDecimal calculateExpectedMonthlyDue(LoanRecord loan) {
         if (loan.termMonths() == null || loan.termMonths() <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Loan term is invalid");
+        }
+
+        LoanContract contract = loanContractService.findByLoanRequestId(loan.id());
+        if (contract != null && contract.monthlyPayment() != null
+            && contract.monthlyPayment().compareTo(BigDecimal.ZERO) > 0) {
+            return contract.monthlyPayment();
         }
 
         return loan.amount().divide(

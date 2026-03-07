@@ -20,6 +20,7 @@ import { useCallback, useEffect, useState } from "react";
 import { deleteManagedUserApi, getManagedUsersApi } from "@/features/admin/api/adminUserApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { labelRole } from "@/shared/utils/labels";
+import ConfirmDialog from "@/shared/components/ConfirmDialog";
 
 function RoleChip({ role }) {
   return (
@@ -39,6 +40,7 @@ export default function AdminUsersPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [deletingIds, setDeletingIds] = useState([]);
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState(null);
 
   const loadUsers = useCallback(async () => {
     if (!accessToken) {
@@ -60,11 +62,14 @@ export default function AdminUsersPage() {
     loadUsers();
   }, [loadUsers]);
 
-  const handleDelete = async (user) => {
-    const confirmed = window.confirm(
-      `Xóa tài khoản ${labelRole(user.role)} ${user.email}? Hành động này không thể hoàn tác.`
-    );
-    if (!confirmed) {
+  const handleDelete = (user) => {
+    setConfirmDeleteUser(user);
+  };
+
+  const handleConfirmDelete = async () => {
+    const user = confirmDeleteUser;
+    setConfirmDeleteUser(null);
+    if (!user) {
       return;
     }
 
@@ -166,6 +171,20 @@ export default function AdminUsersPage() {
           </TableBody>
         </Table>
       </Paper>
+
+      <ConfirmDialog
+        open={confirmDeleteUser != null}
+        title="Xóa tài khoản"
+        message={
+          confirmDeleteUser
+            ? `Xóa tài khoản ${labelRole(confirmDeleteUser.role)} ${confirmDeleteUser.email}? Hành động này không thể hoàn tác.`
+            : ""
+        }
+        confirmText="Xóa"
+        cancelText="Hủy"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setConfirmDeleteUser(null)}
+      />
     </Stack>
   );
 }

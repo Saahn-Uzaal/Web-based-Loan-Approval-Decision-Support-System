@@ -17,6 +17,8 @@ import com.loanapproval.dss.verification.VerificationStatus;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +26,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class StaffReviewService {
+
+    private static final Logger log = LoggerFactory.getLogger(StaffReviewService.class);
 
     private static final Set<LoanStatus> REVIEW_QUEUE_STATUSES = EnumSet.of(
         LoanStatus.PENDING,
@@ -124,6 +128,9 @@ public class StaffReviewService {
         }
 
         staffReviewRepository.insertDecisionAudit(loanRequestId, staffUserId, request.action(), reason);
+
+        log.info("Staff decision submitted: loanRequestId={}, staffUserId={}, action={}, newStatus={}",
+            loanRequestId, staffUserId, request.action(), nextStatus);
 
         LoanRecord updatedLoan = loanRepository.findById(loanRequestId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Loan request not found"));

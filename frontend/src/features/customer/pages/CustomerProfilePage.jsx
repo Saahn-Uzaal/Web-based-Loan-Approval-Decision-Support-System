@@ -18,6 +18,7 @@ import { createDebtApi, deleteDebtApi, getDebtMetricsApi, getMyDebtsApi } from "
 import { getMyProfileApi, upsertMyProfileApi } from "@/features/customer/api/profileApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
+import ConfirmDialog from "@/shared/components/ConfirmDialog";
 
 function normalizeNumberInput(value) {
   if (value === "" || value == null) {
@@ -66,6 +67,7 @@ export default function CustomerProfilePage() {
   const [debtForm, setDebtForm] = useState(emptyDebtForm);
   const [debts, setDebts] = useState([]);
   const [debtMetrics, setDebtMetrics] = useState(null);
+  const [confirmDeleteDebt, setConfirmDeleteDebt] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -252,8 +254,13 @@ export default function CustomerProfilePage() {
   };
 
   const handleDeleteDebt = async (debt) => {
-    const confirmed = window.confirm(`Xóa khoản nợ "${debt.debtType}"?`);
-    if (!confirmed) {
+    setConfirmDeleteDebt(debt);
+  };
+
+  const handleConfirmDelete = async () => {
+    const debt = confirmDeleteDebt;
+    setConfirmDeleteDebt(null);
+    if (!debt) {
       return;
     }
     setDebtError("");
@@ -462,6 +469,16 @@ export default function CustomerProfilePage() {
           </Paper>
         </Stack>
       </Paper>
+
+      <ConfirmDialog
+        open={confirmDeleteDebt != null}
+        title="Xóa khoản nợ"
+        message={confirmDeleteDebt ? `Bạn có chắc muốn xóa khoản nợ "${confirmDeleteDebt.debtType}"?` : ""}
+        confirmText="Xóa"
+        cancelText="Hủy"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setConfirmDeleteDebt(null)}
+      />
     </Stack>
   );
 }

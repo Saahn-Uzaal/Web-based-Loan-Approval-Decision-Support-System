@@ -24,6 +24,8 @@ import com.loanapproval.dss.verification.VerificationStatus;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,6 +33,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class CustomerLoanService {
+
+    private static final Logger log = LoggerFactory.getLogger(CustomerLoanService.class);
 
     private final LoanRepository loanRepository;
     private final CustomerProfileRepository customerProfileRepository;
@@ -72,6 +76,9 @@ public class CustomerLoanService {
             request.termMonths(),
             request.purpose()
         );
+
+        log.info("Loan application created: loanId={}, customerId={}, amount={}, termMonths={}, purpose={}",
+            loan.id(), customerId, request.amount(), request.termMonths(), request.purpose());
 
         CustomerProfile profile = customerProfileRepository.findByUserId(customerId).orElse(null);
         CustomerVerification verification = customerVerificationService.getOrDefault(customerId);

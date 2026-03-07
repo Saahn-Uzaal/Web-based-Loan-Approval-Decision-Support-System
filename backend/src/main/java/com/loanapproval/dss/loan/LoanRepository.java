@@ -7,11 +7,24 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
 import org.springframework.stereotype.Repository;
 
 @Repository
 public class LoanRepository {
+
+    private static final RowMapper<LoanRecord> LOAN_ROW_MAPPER = (rs, rowNum) -> new LoanRecord(
+        rs.getLong("id"),
+        rs.getLong("customer_id"),
+        rs.getBigDecimal("amount"),
+        rs.getInt("term_months"),
+        LoanPurpose.valueOf(rs.getString("purpose")),
+        LoanStatus.valueOf(rs.getString("status")),
+        rs.getString("final_reason"),
+        toInstant(rs.getTimestamp("created_at")),
+        toInstant(rs.getTimestamp("updated_at"))
+    );
 
     private final JdbcTemplate jdbcTemplate;
     private final SimpleJdbcInsert insertLoan;
@@ -48,17 +61,7 @@ public class LoanRepository {
             WHERE customer_id = ?
             ORDER BY created_at DESC, id DESC
             """,
-            (rs, rowNum) -> new LoanRecord(
-                rs.getLong("id"),
-                rs.getLong("customer_id"),
-                rs.getBigDecimal("amount"),
-                rs.getInt("term_months"),
-                LoanPurpose.valueOf(rs.getString("purpose")),
-                LoanStatus.valueOf(rs.getString("status")),
-                rs.getString("final_reason"),
-                toInstant(rs.getTimestamp("created_at")),
-                toInstant(rs.getTimestamp("updated_at"))
-            ),
+            LOAN_ROW_MAPPER,
             customerId
         );
     }
@@ -81,17 +84,7 @@ public class LoanRepository {
             ORDER BY created_at DESC, id DESC
             LIMIT ? OFFSET ?
             """,
-            (rs, rowNum) -> new LoanRecord(
-                rs.getLong("id"),
-                rs.getLong("customer_id"),
-                rs.getBigDecimal("amount"),
-                rs.getInt("term_months"),
-                LoanPurpose.valueOf(rs.getString("purpose")),
-                LoanStatus.valueOf(rs.getString("status")),
-                rs.getString("final_reason"),
-                toInstant(rs.getTimestamp("created_at")),
-                toInstant(rs.getTimestamp("updated_at"))
-            ),
+            LOAN_ROW_MAPPER,
             customerId, limit, offset
         );
     }
@@ -103,17 +96,7 @@ public class LoanRepository {
             FROM loan_requests
             WHERE id = ? AND customer_id = ?
             """,
-            (rs, rowNum) -> new LoanRecord(
-                rs.getLong("id"),
-                rs.getLong("customer_id"),
-                rs.getBigDecimal("amount"),
-                rs.getInt("term_months"),
-                LoanPurpose.valueOf(rs.getString("purpose")),
-                LoanStatus.valueOf(rs.getString("status")),
-                rs.getString("final_reason"),
-                toInstant(rs.getTimestamp("created_at")),
-                toInstant(rs.getTimestamp("updated_at"))
-            ),
+            LOAN_ROW_MAPPER,
             id,
             customerId
         ).stream().findFirst();
@@ -126,17 +109,7 @@ public class LoanRepository {
             FROM loan_requests
             WHERE id = ?
             """,
-            (rs, rowNum) -> new LoanRecord(
-                rs.getLong("id"),
-                rs.getLong("customer_id"),
-                rs.getBigDecimal("amount"),
-                rs.getInt("term_months"),
-                LoanPurpose.valueOf(rs.getString("purpose")),
-                LoanStatus.valueOf(rs.getString("status")),
-                rs.getString("final_reason"),
-                toInstant(rs.getTimestamp("created_at")),
-                toInstant(rs.getTimestamp("updated_at"))
-            ),
+            LOAN_ROW_MAPPER,
             id
         ).stream().findFirst();
     }
@@ -166,7 +139,7 @@ public class LoanRepository {
         );
     }
 
-    private java.time.Instant toInstant(Timestamp timestamp) {
+    private static java.time.Instant toInstant(Timestamp timestamp) {
         return timestamp != null ? timestamp.toInstant() : null;
     }
 }
