@@ -62,6 +62,15 @@ Additional feature implemented:
 |  `- pom.xml
 |- frontend
 |  |- src
+|  |  |- app
+|  |  |- features
+|  |  |  |- auth
+|  |  |  |- admin
+|  |  |  |- customer
+|  |  |  `- staff
+|  |  |- shared
+|  |  `- main.jsx
+|  |- vite.config.js
 |  `- Dockerfile
 |- docker-compose.yml
 `- .env.example

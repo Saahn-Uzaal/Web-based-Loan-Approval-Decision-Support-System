@@ -10,6 +10,7 @@ import java.math.BigDecimal;
 public record CreateLoanRequest(
     @NotNull @DecimalMin(value = "1.00", inclusive = true) BigDecimal amount,
     @NotNull @Min(1) @Max(360) Integer termMonths,
-    @NotNull LoanPurpose purpose
+    @NotNull LoanPurpose purpose,
+    @DecimalMin(value = "0.00", inclusive = true) BigDecimal collateralValue
 ) {
 }

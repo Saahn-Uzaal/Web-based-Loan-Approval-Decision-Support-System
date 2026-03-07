@@ -4,6 +4,7 @@ import com.loanapproval.dss.loan.dto.CreateLoanRequest;
 import com.loanapproval.dss.loan.dto.LoanDetailResponse;
 import com.loanapproval.dss.loan.dto.LoanSummaryResponse;
 import com.loanapproval.dss.security.AuthenticatedUser;
+import com.loanapproval.dss.shared.PageResponse;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.http.HttpStatus;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
@@ -43,6 +45,16 @@ public class CustomerLoanController {
     public List<LoanSummaryResponse> listMyLoans(Authentication authentication) {
         AuthenticatedUser user = extractUser(authentication);
         return customerLoanService.listMine(user.id());
+    }
+
+    @GetMapping("/paged")
+    public PageResponse<LoanSummaryResponse> listMyLoansPaged(
+        Authentication authentication,
+        @RequestParam(defaultValue = "0") int page,
+        @RequestParam(defaultValue = "10") int size
+    ) {
+        AuthenticatedUser user = extractUser(authentication);
+        return customerLoanService.listMinePaged(user.id(), page, size);
     }
 
     @GetMapping("/{id}")

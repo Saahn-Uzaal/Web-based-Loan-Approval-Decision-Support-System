@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
@@ -31,6 +32,16 @@ public class CustomerRepaymentController {
     public RepaymentHistoryResponse listMyRepayments(Authentication authentication) {
         AuthenticatedUser user = extractUser(authentication);
         return repaymentService.listMine(user.id());
+    }
+
+    @GetMapping("/paged")
+    public RepaymentHistoryResponse listMyRepaymentsPaged(
+        Authentication authentication,
+        @RequestParam(defaultValue = "0") int page,
+        @RequestParam(defaultValue = "10") int size
+    ) {
+        AuthenticatedUser user = extractUser(authentication);
+        return repaymentService.listMinePaged(user.id(), page, size);
     }
 
     @PostMapping

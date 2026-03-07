@@ -9,7 +9,6 @@ import java.time.LocalDate;
 
 public record CreateRepaymentRequest(
     @NotNull Long loanRequestId,
-    @NotNull @DecimalMin(value = "0.01", inclusive = true) BigDecimal amountDue,
     @NotNull @DecimalMin(value = "0.00", inclusive = true) BigDecimal amountPaid,
     @NotNull LocalDate dueDate,
     Instant paidAt,

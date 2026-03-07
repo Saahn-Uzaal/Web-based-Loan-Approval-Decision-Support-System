@@ -63,6 +63,39 @@ public class LoanRepository {
         );
     }
 
+    public long countByCustomerId(Long customerId) {
+        Long count = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM loan_requests WHERE customer_id = ?",
+            Long.class,
+            customerId
+        );
+        return count != null ? count : 0L;
+    }
+
+    public List<LoanRecord> findByCustomerIdPaged(Long customerId, int offset, int limit) {
+        return jdbcTemplate.query(
+            """
+            SELECT id, customer_id, amount, term_months, purpose, status, final_reason, created_at, updated_at
+            FROM loan_requests
+            WHERE customer_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (rs, rowNum) -> new LoanRecord(
+                rs.getLong("id"),
+                rs.getLong("customer_id"),
+                rs.getBigDecimal("amount"),
+                rs.getInt("term_months"),
+                LoanPurpose.valueOf(rs.getString("purpose")),
+                LoanStatus.valueOf(rs.getString("status")),
+                rs.getString("final_reason"),
+                toInstant(rs.getTimestamp("created_at")),
+                toInstant(rs.getTimestamp("updated_at"))
+            ),
+            customerId, limit, offset
+        );
+    }
+
     public Optional<LoanRecord> findOwnedById(Long id, Long customerId) {
         return jdbcTemplate.query(
             """
@@ -86,6 +119,28 @@ public class LoanRepository {
         ).stream().findFirst();
     }
 
+    public Optional<LoanRecord> findById(Long id) {
+        return jdbcTemplate.query(
+            """
+            SELECT id, customer_id, amount, term_months, purpose, status, final_reason, created_at, updated_at
+            FROM loan_requests
+            WHERE id = ?
+            """,
+            (rs, rowNum) -> new LoanRecord(
+                rs.getLong("id"),
+                rs.getLong("customer_id"),
+                rs.getBigDecimal("amount"),
+                rs.getInt("term_months"),
+                LoanPurpose.valueOf(rs.getString("purpose")),
+                LoanStatus.valueOf(rs.getString("status")),
+                rs.getString("final_reason"),
+                toInstant(rs.getTimestamp("created_at")),
+                toInstant(rs.getTimestamp("updated_at"))
+            ),
+            id
+        ).stream().findFirst();
+    }
+
     public void updateStatus(Long id, LoanStatus status) {
         jdbcTemplate.update(
             """
@@ -94,6 +149,19 @@ public class LoanRepository {
             WHERE id = ?
             """,
             status.name(),
+            id
+        );
+    }
+
+    public int updateStatusAndReason(Long id, LoanStatus status, String reason) {
+        return jdbcTemplate.update(
+            """
+            UPDATE loan_requests
+            SET status = ?, final_reason = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            status.name(),
+            reason,
             id
         );
     }

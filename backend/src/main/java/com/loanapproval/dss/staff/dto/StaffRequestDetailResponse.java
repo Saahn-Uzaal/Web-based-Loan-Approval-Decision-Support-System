@@ -22,6 +22,9 @@ public record StaffRequestDetailResponse(
     CustomerSummary customer,
     CustomerProfileSummary customerProfile,
     DssSummary dss,
+    VerificationSummary verification,
+    RiskAssessmentSummary risk,
+    LoanContractSummary contract,
     List<DecisionAuditEntry> decisionAudits
 ) {
     public record CustomerSummary(
@@ -45,6 +48,38 @@ public record StaffRequestDetailResponse(
         CustomerSegment customerSegment,
         DssRecommendation recommendation,
         String explanation,
+        Instant createdAt
+    ) {
+    }
+
+    public record VerificationSummary(
+        String documentStatus,
+        String identityStatus,
+        String incomeStatus,
+        String kycStatus,
+        String amlStatus,
+        boolean fraudFlag,
+        String note,
+        Instant verifiedAt
+    ) {
+    }
+
+    public record RiskAssessmentSummary(
+        Integer creditRiskScore,
+        Integer fraudRiskScore,
+        Integer operationalRiskScore,
+        String overallRiskLevel,
+        String riskReasons,
+        Instant createdAt
+    ) {
+    }
+
+    public record LoanContractSummary(
+        Long id,
+        String status,
+        BigDecimal annualInterestRate,
+        BigDecimal monthlyPayment,
+        BigDecimal totalInterest,
         Instant createdAt
     ) {
     }

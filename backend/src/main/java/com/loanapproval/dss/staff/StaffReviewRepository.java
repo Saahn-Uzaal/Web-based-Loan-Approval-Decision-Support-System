@@ -99,6 +99,102 @@ public class StaffReviewRepository {
         );
     }
 
+    public long countReviewQueue(LoanStatus status) {
+        if (status == null) {
+            Long count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM loan_requests WHERE status IN ('PENDING', 'WAITING_SUPERVISOR')",
+                Long.class
+            );
+            return count != null ? count : 0L;
+        }
+        Long count = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM loan_requests WHERE status = ?",
+            Long.class,
+            status.name()
+        );
+        return count != null ? count : 0L;
+    }
+
+    public List<StaffRequestSummaryResponse> findReviewQueuePaged(LoanStatus status, int offset, int limit) {
+        if (status == null) {
+            return jdbcTemplate.query(
+                """
+                SELECT
+                    lr.id,
+                    lr.customer_id,
+                    u.email AS customer_email,
+                    cp.full_name AS customer_name,
+                    lr.amount,
+                    lr.term_months,
+                    lr.purpose,
+                    lr.status,
+                    dr.risk_rank,
+                    dr.recommendation,
+                    lr.created_at
+                FROM loan_requests lr
+                INNER JOIN users u ON u.id = lr.customer_id
+                LEFT JOIN customer_profiles cp ON cp.user_id = lr.customer_id
+                LEFT JOIN dss_results dr ON dr.loan_request_id = lr.id
+                WHERE lr.status IN ('PENDING', 'WAITING_SUPERVISOR')
+                ORDER BY lr.created_at DESC, lr.id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (rs, rowNum) -> new StaffRequestSummaryResponse(
+                    rs.getLong("id"),
+                    rs.getLong("customer_id"),
+                    rs.getString("customer_email"),
+                    rs.getString("customer_name"),
+                    rs.getBigDecimal("amount"),
+                    rs.getInt("term_months"),
+                    LoanPurpose.valueOf(rs.getString("purpose")),
+                    LoanStatus.valueOf(rs.getString("status")),
+                    parseEnum(RiskRank.class, rs.getString("risk_rank")),
+                    parseEnum(DssRecommendation.class, rs.getString("recommendation")),
+                    toInstant(rs.getTimestamp("created_at"))
+                ),
+                limit, offset
+            );
+        }
+
+        return jdbcTemplate.query(
+            """
+            SELECT
+                lr.id,
+                lr.customer_id,
+                u.email AS customer_email,
+                cp.full_name AS customer_name,
+                lr.amount,
+                lr.term_months,
+                lr.purpose,
+                lr.status,
+                dr.risk_rank,
+                dr.recommendation,
+                lr.created_at
+            FROM loan_requests lr
+            INNER JOIN users u ON u.id = lr.customer_id
+            LEFT JOIN customer_profiles cp ON cp.user_id = lr.customer_id
+            LEFT JOIN dss_results dr ON dr.loan_request_id = lr.id
+            WHERE lr.status = ?
+            ORDER BY lr.created_at DESC, lr.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (rs, rowNum) -> new StaffRequestSummaryResponse(
+                rs.getLong("id"),
+                rs.getLong("customer_id"),
+                rs.getString("customer_email"),
+                rs.getString("customer_name"),
+                rs.getBigDecimal("amount"),
+                rs.getInt("term_months"),
+                LoanPurpose.valueOf(rs.getString("purpose")),
+                LoanStatus.valueOf(rs.getString("status")),
+                parseEnum(RiskRank.class, rs.getString("risk_rank")),
+                parseEnum(DssRecommendation.class, rs.getString("recommendation")),
+                toInstant(rs.getTimestamp("created_at"))
+            ),
+            status.name(), limit, offset
+        );
+    }
+
     public Optional<LoanStatus> findStatusByLoanRequestId(Long loanRequestId) {
         return jdbcTemplate.query(
             """
@@ -130,16 +226,39 @@ public class StaffReviewRepository {
                 cp.monthly_income,
                 cp.debt_to_income_ratio,
                 cp.employment_status,
+                cv.document_status,
+                cv.identity_status,
+                cv.income_status,
+                cv.kyc_status,
+                cv.aml_status,
+                cv.fraud_flag,
+                cv.note AS verification_note,
+                cv.verified_at,
                 dr.credit_score,
                 dr.risk_rank,
                 dr.customer_segment,
                 dr.recommendation,
                 dr.explanation,
-                dr.created_at AS dss_created_at
+                dr.created_at AS dss_created_at,
+                ra.credit_risk_score,
+                ra.fraud_risk_score,
+                ra.operational_risk_score,
+                ra.overall_risk_level,
+                ra.risk_reasons,
+                ra.created_at AS risk_created_at,
+                lc.id AS contract_id,
+                lc.status AS contract_status,
+                lc.annual_interest_rate,
+                lc.monthly_payment,
+                lc.total_interest,
+                lc.created_at AS contract_created_at
             FROM loan_requests lr
             INNER JOIN users u ON u.id = lr.customer_id
             LEFT JOIN customer_profiles cp ON cp.user_id = lr.customer_id
+            LEFT JOIN customer_verifications cv ON cv.customer_id = lr.customer_id
             LEFT JOIN dss_results dr ON dr.loan_request_id = lr.id
+            LEFT JOIN risk_assessments ra ON ra.loan_request_id = lr.id
+            LEFT JOIN loan_contracts lc ON lc.loan_request_id = lr.id
             WHERE lr.id = ?
             """,
             (rs, rowNum) -> {
@@ -170,6 +289,44 @@ public class StaffReviewRepository {
                     );
                 }
 
+                StaffRequestDetailResponse.VerificationSummary verificationSummary = null;
+                if (rs.getString("document_status") != null) {
+                    verificationSummary = new StaffRequestDetailResponse.VerificationSummary(
+                        rs.getString("document_status"),
+                        rs.getString("identity_status"),
+                        rs.getString("income_status"),
+                        rs.getString("kyc_status"),
+                        rs.getString("aml_status"),
+                        rs.getBoolean("fraud_flag"),
+                        rs.getString("verification_note"),
+                        toInstant(rs.getTimestamp("verified_at"))
+                    );
+                }
+
+                StaffRequestDetailResponse.RiskAssessmentSummary riskSummary = null;
+                if (rs.getObject("credit_risk_score") != null) {
+                    riskSummary = new StaffRequestDetailResponse.RiskAssessmentSummary(
+                        rs.getInt("credit_risk_score"),
+                        rs.getInt("fraud_risk_score"),
+                        rs.getInt("operational_risk_score"),
+                        rs.getString("overall_risk_level"),
+                        rs.getString("risk_reasons"),
+                        toInstant(rs.getTimestamp("risk_created_at"))
+                    );
+                }
+
+                StaffRequestDetailResponse.LoanContractSummary contractSummary = null;
+                if (rs.getObject("contract_id") != null) {
+                    contractSummary = new StaffRequestDetailResponse.LoanContractSummary(
+                        rs.getLong("contract_id"),
+                        rs.getString("contract_status"),
+                        rs.getBigDecimal("annual_interest_rate"),
+                        rs.getBigDecimal("monthly_payment"),
+                        rs.getBigDecimal("total_interest"),
+                        toInstant(rs.getTimestamp("contract_created_at"))
+                    );
+                }
+
                 return new StaffRequestDetailResponse(
                     rs.getLong("id"),
                     LoanStatus.valueOf(rs.getString("status")),
@@ -182,6 +339,9 @@ public class StaffReviewRepository {
                     customerSummary,
                     customerProfileSummary,
                     dssSummary,
+                    verificationSummary,
+                    riskSummary,
+                    contractSummary,
                     List.of()
                 );
             },

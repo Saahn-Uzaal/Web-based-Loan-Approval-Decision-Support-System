@@ -8,6 +8,7 @@ import com.loanapproval.dss.repayment.dto.CreateRepaymentRequest;
 import com.loanapproval.dss.repayment.dto.RepaymentCreateResponse;
 import com.loanapproval.dss.repayment.dto.RepaymentHistoryResponse;
 import com.loanapproval.dss.repayment.dto.RepaymentItemResponse;
+import com.loanapproval.dss.shared.PageResponse;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
@@ -45,6 +46,21 @@ public class RepaymentService {
         return new RepaymentHistoryResponse(currentRating, items);
     }
 
+    public RepaymentHistoryResponse listMinePaged(Long customerId, int page, int size) {
+        int safeSize = Math.min(Math.max(size, 1), 100);
+        int safeOffset = Math.max(page, 0) * safeSize;
+        int currentRating = customerProfileRepository.findPaymentRatingByUserId(customerId).orElse(0);
+        long total = repaymentRepository.countByCustomerId(customerId);
+        List<RepaymentItemResponse> items = repaymentRepository
+            .findByCustomerIdPaged(customerId, safeOffset, safeSize)
+            .stream()
+            .map(this::toItemResponse)
+            .toList();
+        PageResponse<RepaymentItemResponse> page0 = PageResponse.of(items, Math.max(page, 0), safeSize, total);
+        return new RepaymentHistoryResponse(currentRating, page0.content(), page0.page(), page0.size(),
+            page0.totalElements(), page0.totalPages(), page0.last());
+    }
+
     @Transactional
     public RepaymentCreateResponse create(Long customerId, CreateRepaymentRequest request) {
         LoanRecord loan = loanRepository.findOwnedById(request.loanRequestId(), customerId)
@@ -64,24 +80,35 @@ public class RepaymentService {
             );
         }
 
-        BigDecimal expectedAmountDue = calculateExpectedMonthlyDue(loan);
-        if (request.amountPaid().compareTo(expectedAmountDue) > 0) {
+        BigDecimal totalPaidBefore = repaymentRepository
+            .sumAmountPaidByLoanRequestAndCustomer(request.loanRequestId(), customerId);
+        BigDecimal outstandingBefore = loan.amount()
+            .subtract(totalPaidBefore)
+            .max(BigDecimal.ZERO)
+            .setScale(0, RoundingMode.HALF_UP);
+
+        if (outstandingBefore.compareTo(BigDecimal.ZERO) <= 0) {
             throw new ResponseStatusException(
                 HttpStatus.BAD_REQUEST,
-                "Amount paid cannot be greater than amount due"
+                "Loan has already been fully repaid"
             );
         }
 
+        BigDecimal expectedMonthlyDue = calculateExpectedMonthlyDue(loan);
+        BigDecimal expectedAmountDue = expectedMonthlyDue.min(outstandingBefore);
+        BigDecimal amountPaid = request.amountPaid().setScale(0, RoundingMode.HALF_UP);
+
         Instant paidAt = request.paidAt() != null ? request.paidAt() : Instant.now();
-        boolean matchedDueAmount = request.amountPaid().compareTo(expectedAmountDue) == 0;
-        int ratingDelta = matchedDueAmount ? ON_TIME_RATING_DELTA : LATE_RATING_DELTA;
-        RepaymentStatus repaymentStatus = matchedDueAmount ? RepaymentStatus.ON_TIME : RepaymentStatus.LATE;
+        // ON_TIME when paid in full or more (early/overpayment); LATE when underpaid
+        boolean paidInFull = amountPaid.compareTo(expectedAmountDue) >= 0;
+        int ratingDelta = paidInFull ? ON_TIME_RATING_DELTA : LATE_RATING_DELTA;
+        RepaymentStatus repaymentStatus = paidInFull ? RepaymentStatus.ON_TIME : RepaymentStatus.LATE;
 
         RepaymentRecord record = repaymentRepository.create(
             request.loanRequestId(),
             customerId,
             expectedAmountDue,
-            request.amountPaid(),
+            amountPaid,
             request.dueDate(),
             paidAt,
             repaymentStatus,
@@ -124,7 +151,7 @@ public class RepaymentService {
 
         return loan.amount().divide(
             BigDecimal.valueOf(loan.termMonths()),
-            2,
+            0,
             RoundingMode.HALF_UP
         );
     }

@@ -1,0 +1,25 @@
+import { Navigate } from "react-router-dom";
+import { useAuth } from "@/features/auth/context/AuthContext";
+
+export default function HomeRedirect() {
+  const { isAuthenticated, user } = useAuth();
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (user.role === "CUSTOMER") {
+    return <Navigate to="/customer/loans" replace />;
+  }
+
+  if (user.role === "STAFF") {
+    return <Navigate to="/staff/requests" replace />;
+  }
+
+  if (user.role === "ADMIN") {
+    return <Navigate to="/admin/users" replace />;
+  }
+
+  return <Navigate to="/login" replace />;
+}
+

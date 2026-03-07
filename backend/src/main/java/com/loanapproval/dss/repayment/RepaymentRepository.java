@@ -99,6 +99,52 @@ public class RepaymentRepository {
         );
     }
 
+    public long countByCustomerId(Long customerId) {
+        Long count = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM loan_repayments WHERE customer_id = ?",
+            Long.class,
+            customerId
+        );
+        return count != null ? count : 0L;
+    }
+
+    public List<RepaymentRecord> findByCustomerIdPaged(Long customerId, int offset, int limit) {
+        return jdbcTemplate.query(
+            """
+            SELECT
+                id,
+                loan_request_id,
+                customer_id,
+                amount_due,
+                amount_paid,
+                due_date,
+                paid_at,
+                payment_status,
+                rating_delta,
+                note,
+                created_at
+            FROM loan_repayments
+            WHERE customer_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (rs, rowNum) -> new RepaymentRecord(
+                rs.getLong("id"),
+                rs.getLong("loan_request_id"),
+                rs.getLong("customer_id"),
+                rs.getBigDecimal("amount_due"),
+                rs.getBigDecimal("amount_paid"),
+                rs.getDate("due_date").toLocalDate(),
+                toInstant(rs.getTimestamp("paid_at")),
+                RepaymentStatus.valueOf(rs.getString("payment_status")),
+                rs.getInt("rating_delta"),
+                rs.getString("note"),
+                toInstant(rs.getTimestamp("created_at"))
+            ),
+            customerId, limit, offset
+        );
+    }
+
     public Optional<RepaymentRecord> findByIdAndCustomerId(Long id, Long customerId) {
         return jdbcTemplate.query(
             """
@@ -133,6 +179,20 @@ public class RepaymentRepository {
             id,
             customerId
         ).stream().findFirst();
+    }
+
+    public BigDecimal sumAmountPaidByLoanRequestAndCustomer(Long loanRequestId, Long customerId) {
+        BigDecimal total = jdbcTemplate.queryForObject(
+            """
+            SELECT COALESCE(SUM(amount_paid), 0)
+            FROM loan_repayments
+            WHERE loan_request_id = ? AND customer_id = ?
+            """,
+            BigDecimal.class,
+            loanRequestId,
+            customerId
+        );
+        return total != null ? total : BigDecimal.ZERO;
     }
 
     private Instant toInstant(Timestamp timestamp) {

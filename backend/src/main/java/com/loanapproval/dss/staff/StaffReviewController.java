@@ -2,6 +2,7 @@ package com.loanapproval.dss.staff;
 
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.security.AuthenticatedUser;
+import com.loanapproval.dss.shared.PageResponse;
 import com.loanapproval.dss.staff.dto.StaffDecisionRequest;
 import com.loanapproval.dss.staff.dto.StaffDecisionResponse;
 import com.loanapproval.dss.staff.dto.StaffRequestDetailResponse;
@@ -36,6 +37,15 @@ public class StaffReviewController {
         @RequestParam(value = "status", required = false) LoanStatus status
     ) {
         return staffReviewService.listReviewQueue(status);
+    }
+
+    @GetMapping("/paged")
+    public PageResponse<StaffRequestSummaryResponse> listReviewQueuePaged(
+        @RequestParam(value = "status", required = false) LoanStatus status,
+        @RequestParam(defaultValue = "0") int page,
+        @RequestParam(defaultValue = "10") int size
+    ) {
+        return staffReviewService.listReviewQueuePaged(status, page, size);
     }
 
     @GetMapping("/{id}")
