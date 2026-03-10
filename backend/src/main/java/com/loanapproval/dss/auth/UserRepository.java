@@ -65,4 +65,13 @@ public class UserRepository {
         );
         return new UserAccount(id.longValue(), email, passwordHash, role);
     }
+
+    public int updateEmailAndPassword(Long id, String email, String passwordHash) {
+        return jdbcTemplate.update(
+            "UPDATE users SET email = ?, password_hash = ? WHERE id = ?",
+            email,
+            passwordHash,
+            id
+        );
+    }
 }

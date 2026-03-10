@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
 public class AdminBootstrapInitializer implements ApplicationRunner {
 
     private static final Logger logger = LoggerFactory.getLogger(AdminBootstrapInitializer.class);
+    private static final String LEGACY_DEFAULT_ADMIN_EMAIL = "admin@loan.local";
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -25,8 +26,8 @@ public class AdminBootstrapInitializer implements ApplicationRunner {
         UserRepository userRepository,
         PasswordEncoder passwordEncoder,
         @Value("${app.bootstrap.admin.enabled:true}") boolean enabled,
-        @Value("${app.bootstrap.admin.email:admin@loan.local}") String adminEmail,
-        @Value("${app.bootstrap.admin.password:Admin123!}") String adminPassword
+        @Value("${app.bootstrap.admin.email:admin@gmail.com}") String adminEmail,
+        @Value("${app.bootstrap.admin.password:123456}") String adminPassword
     ) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
@@ -47,11 +48,40 @@ public class AdminBootstrapInitializer implements ApplicationRunner {
             return;
         }
 
+        if (tryMigrateLegacyDefaultAdmin(normalizedEmail, adminPassword)) {
+            return;
+        }
+
         if (userRepository.existsByEmail(normalizedEmail)) {
             return;
         }
 
         userRepository.create(normalizedEmail, passwordEncoder.encode(adminPassword), Role.ADMIN);
         logger.info("Bootstrapped default admin account: {}", normalizedEmail);
+    }
+
+    private boolean tryMigrateLegacyDefaultAdmin(String normalizedEmail, String rawPassword) {
+        if (LEGACY_DEFAULT_ADMIN_EMAIL.equals(normalizedEmail)) {
+            return false;
+        }
+        if (userRepository.existsByEmail(normalizedEmail)) {
+            return false;
+        }
+
+        return userRepository.findByEmail(LEGACY_DEFAULT_ADMIN_EMAIL)
+            .filter(account -> account.role() == Role.ADMIN)
+            .map(account -> {
+                int updated = userRepository.updateEmailAndPassword(
+                    account.id(),
+                    normalizedEmail,
+                    passwordEncoder.encode(rawPassword)
+                );
+                if (updated > 0) {
+                    logger.info("Migrated legacy default admin account from {} to {}", LEGACY_DEFAULT_ADMIN_EMAIL, normalizedEmail);
+                    return true;
+                }
+                return false;
+            })
+            .orElse(false);
     }
 }

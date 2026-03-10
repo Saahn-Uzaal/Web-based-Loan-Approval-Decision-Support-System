@@ -27,21 +27,32 @@ export function AppShell() {
     <Box sx={{ minHeight: "100vh", bgcolor: "background.default" }}>
       <AppBar position="sticky">
         <Toolbar>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
+          <Typography
+            variant="h6"
+            component={RouterLink}
+            to="/dashboard"
+            sx={{
+              flexGrow: 1,
+              textDecoration: "none",
+              color: "inherit",
+              "&:hover": { opacity: 0.85 }
+            }}
+          >
             Hệ thống hỗ trợ quyết định cho vay
           </Typography>
           <Stack direction="row" spacing={1} alignItems="center">
+            <NavButton to="/dashboard">Trang chủ</NavButton>
             {user?.role === "CUSTOMER" && (
               <>
-                <NavButton to="/customer/profile">Hồ sơ của tôi</NavButton>
+                <NavButton to="/customer/profile">Hồ sơ</NavButton>
                 <NavButton to="/customer/loan/new">Tạo hồ sơ vay</NavButton>
-                <NavButton to="/customer/loans">Hồ sơ vay của tôi</NavButton>
+                <NavButton to="/customer/loans">Hồ sơ vay</NavButton>
                 <NavButton to="/customer/payments">Thanh toán</NavButton>
               </>
             )}
             {user?.role === "STAFF" && (
               <>
-                <NavButton to="/staff/requests">Hàng đợi thẩm định</NavButton>
+                <NavButton to="/staff/requests">Thẩm định</NavButton>
                 <NavButton to="/staff/dashboard">Bảng điều khiển</NavButton>
                 <NavButton to="/staff/accounts/new">Tạo tài khoản</NavButton>
               </>

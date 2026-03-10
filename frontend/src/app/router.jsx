@@ -1,10 +1,11 @@
-import { lazy, Suspense } from "react";
+﻿import { lazy, Suspense } from "react";
 import { createBrowserRouter } from "react-router-dom";
 import { CircularProgress, Box } from "@mui/material";
 import { RoleRoute } from "@/shared/routing/RoleRoute";
 import { AppShell } from "@/shared/layouts/AppShell";
 
-const HomeRedirect = lazy(() => import("@/shared/pages/HomeRedirect"));
+const LandingPage = lazy(() => import("@/shared/pages/LandingPage"));
+const HomePage = lazy(() => import("@/shared/pages/HomePage"));
 const LoginPage = lazy(() => import("@/features/auth/pages/LoginPage"));
 const NotFoundPage = lazy(() => import("@/shared/pages/NotFoundPage"));
 const AdminUsersPage = lazy(() => import("@/features/admin/pages/AdminUsersPage"));
@@ -34,6 +35,10 @@ function SuspenseWrapper({ children }) {
 
 export const router = createBrowserRouter([
   {
+    path: "/",
+    element: <SuspenseWrapper><LandingPage /></SuspenseWrapper>
+  },
+  {
     path: "/login",
     element: <SuspenseWrapper><LoginPage /></SuspenseWrapper>
   },
@@ -46,8 +51,8 @@ export const router = createBrowserRouter([
     ),
     children: [
       {
-        index: true,
-        element: <SuspenseWrapper><HomeRedirect /></SuspenseWrapper>
+        path: "dashboard",
+        element: <SuspenseWrapper><HomePage /></SuspenseWrapper>
       },
       {
         path: "admin/users",
@@ -128,12 +133,11 @@ export const router = createBrowserRouter([
             <SuspenseWrapper><StaffUserCreatePage /></SuspenseWrapper>
           </RoleRoute>
         )
-      },
-      {
-        path: "*",
-        element: <SuspenseWrapper><NotFoundPage /></SuspenseWrapper>
       }
     ]
+  },
+  {
+    path: "*",
+    element: <SuspenseWrapper><NotFoundPage /></SuspenseWrapper>
   }
 ]);
-
