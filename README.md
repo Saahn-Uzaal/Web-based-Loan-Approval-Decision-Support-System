@@ -8,6 +8,8 @@ Hệ thống web hỗ trợ quyết định phê duyệt khoản vay, bao gồm:
 - Sinh hợp đồng vay, theo dõi thanh toán và payment rating.
 - Compliance / audit log cho các hành động quan trọng.
 
+Tài liệu cài đặt nhanh trên máy mới: [GETTING_STARTED.md](GETTING_STARTED.md)
+
 ## 1. Tổng quan nghiệp vụ
 
 Luồng xử lý chính:
