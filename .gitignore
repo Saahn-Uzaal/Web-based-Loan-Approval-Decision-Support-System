@@ -1,7 +1,15 @@
 .git_outer_backup/
+.docker-tmp/
+.local/
+.vscode/
 .idea/
 .env
+backend/target/
+frontend/dist/
+frontend/node_modules/
 *.md
 *.MD
 !README.md
 !README.MD
+!GETTING_STARTED.md
+!GETTING_STARTED.MD
