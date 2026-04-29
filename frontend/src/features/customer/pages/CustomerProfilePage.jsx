@@ -13,37 +13,22 @@ import {
   TextField,
   Typography
 } from "@mui/material";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createDebtApi, deleteDebtApi, getDebtMetricsApi, getMyDebtsApi } from "@/features/customer/api/debtApi";
-import { getMyProfileApi, upsertMyProfileApi } from "@/features/customer/api/profileApi";
+import { getMyInformationVerificationApi } from "@/features/customer/api/informationVerificationApi";
+import { downloadMyPayslipApi, getMyProfileApi, upsertMyProfileApi } from "@/features/customer/api/profileApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
+import { PAYSLIP_ACCEPT, formatFileSize, isAcceptedPayslipFile } from "@/shared/utils/files";
+import { labelVerificationStatus } from "@/shared/utils/labels";
 import ConfirmDialog from "@/shared/components/ConfirmDialog";
-
-function normalizeNumberInput(value) {
-  if (value === "" || value == null) {
-    return null;
-  }
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function normalizeIntegerInput(value) {
-  const number = normalizeNumberInput(value);
-  if (number == null) {
-    return null;
-  }
-  return Math.trunc(number);
-}
 
 const emptyProfileForm = {
   fullName: "",
   phone: "",
   dateOfBirth: "",
   monthlyIncome: "",
-  employmentStatus: "",
-  employmentStartDate: "",
-  creditHistoryScore: ""
+  verifiedMonthlyIncome: null
 };
 
 const emptyDebtForm = {
@@ -53,17 +38,55 @@ const emptyDebtForm = {
   lenderName: ""
 };
 
+function verificationSeverity(status) {
+  if (status === "PASSED") {
+    return "success";
+  }
+  if (status === "FAILED") {
+    return "warning";
+  }
+  return "info";
+}
+
+function verificationChipColor(status) {
+  if (status === "PASSED") {
+    return "success";
+  }
+  if (status === "FAILED") {
+    return "error";
+  }
+  return "warning";
+}
+
+function toPayslipSummary(profile) {
+  if (!profile?.payslipFileName) {
+    return null;
+  }
+
+  return {
+    fileName: profile.payslipFileName,
+    fileSize: profile.payslipFileSize ?? null,
+    uploadedAt: profile.payslipUploadedAt ?? null
+  };
+}
+
 export default function CustomerProfilePage() {
   const { accessToken } = useAuth();
+  const fileInputRef = useRef(null);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [debtSubmitting, setDebtSubmitting] = useState(false);
+  const [downloadingPayslip, setDownloadingPayslip] = useState(false);
   const [error, setError] = useState("");
   const [debtError, setDebtError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [debtSuccess, setDebtSuccess] = useState("");
   const [paymentRating, setPaymentRating] = useState(0);
+  const [informationVerification, setInformationVerification] = useState(null);
   const [form, setForm] = useState(emptyProfileForm);
+  const [selectedPayslip, setSelectedPayslip] = useState(null);
+  const [currentPayslip, setCurrentPayslip] = useState(null);
   const [debtForm, setDebtForm] = useState(emptyDebtForm);
   const [debts, setDebts] = useState([]);
   const [debtMetrics, setDebtMetrics] = useState(null);
@@ -81,19 +104,21 @@ export default function CustomerProfilePage() {
       setDebtError("");
       try {
         const profilePromise = getMyProfileApi(accessToken).catch((err) => {
+          const message = String(err.message || "");
           if (
-            String(err.message).includes("Profile not found") ||
-            String(err.message).includes("Không tìm thấy hồ sơ")
+            message.includes("Không tìm thấy hồ sơ khách hàng") ||
+            message.includes("Không tìm thấy hồ sơ khách hàng")
           ) {
             return null;
           }
           throw err;
         });
 
-        const [profile, debtList, metrics] = await Promise.all([
+        const [profile, debtList, metrics, verification] = await Promise.all([
           profilePromise,
           getMyDebtsApi(accessToken),
-          getDebtMetricsApi(accessToken)
+          getDebtMetricsApi(accessToken),
+          getMyInformationVerificationApi(accessToken)
         ]);
 
         if (!active) {
@@ -105,19 +130,24 @@ export default function CustomerProfilePage() {
             fullName: profile.fullName ?? "",
             phone: profile.phone ?? "",
             dateOfBirth: profile.dateOfBirth ?? "",
-            monthlyIncome: profile.monthlyIncome == null ? "" : formatVndInput(profile.monthlyIncome),
-            employmentStatus: profile.employmentStatus ?? "",
-            employmentStartDate: profile.employmentStartDate ?? "",
-            creditHistoryScore: profile.creditHistoryScore ?? ""
+            monthlyIncome: profile.monthlyIncome != null ? formatVndInput(profile.monthlyIncome) : "",
+            verifiedMonthlyIncome: profile.verifiedMonthlyIncome ?? null
           });
           setPaymentRating(Number(profile.paymentRating || 0));
+          setCurrentPayslip(toPayslipSummary(profile));
         } else {
           setForm(emptyProfileForm);
           setPaymentRating(0);
+          setCurrentPayslip(null);
         }
 
+        setSelectedPayslip(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
         setDebts(Array.isArray(debtList) ? debtList : []);
         setDebtMetrics(metrics ?? null);
+        setInformationVerification(verification ?? null);
       } catch (err) {
         if (active) {
           setError(err.message || "Không tải được hồ sơ của bạn");
@@ -135,16 +165,18 @@ export default function CustomerProfilePage() {
     };
   }, [accessToken]);
 
-  const refreshDebtData = async () => {
+  const refreshAuxiliaryData = async () => {
     if (!accessToken) {
       return;
     }
-    const [debtList, metrics] = await Promise.all([
+    const [debtList, metrics, verification] = await Promise.all([
       getMyDebtsApi(accessToken),
-      getDebtMetricsApi(accessToken)
+      getDebtMetricsApi(accessToken),
+      getMyInformationVerificationApi(accessToken)
     ]);
     setDebts(Array.isArray(debtList) ? debtList : []);
     setDebtMetrics(metrics ?? null);
+    setInformationVerification(verification ?? null);
   };
 
   const dtiDisplay = useMemo(() => {
@@ -161,7 +193,7 @@ export default function CustomerProfilePage() {
     }));
   };
 
-  const handleMoneyChange = (name) => (event) => {
+  const handleProfileMoneyChange = (name) => (event) => {
     setForm((prev) => ({
       ...prev,
       [name]: formatVndInput(event.target.value)
@@ -182,39 +214,87 @@ export default function CustomerProfilePage() {
     }));
   };
 
+  const clearSelectedPayslip = () => {
+    setSelectedPayslip(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const handlePayslipChange = (event) => {
+    const nextFile = event.target.files?.[0] ?? null;
+    if (!nextFile) {
+      setSelectedPayslip(null);
+      return;
+    }
+
+    if (!isAcceptedPayslipFile(nextFile)) {
+      setError("Chỉ chấp nhận file phiếu lương dạng PDF, Word hoặc Excel.");
+      event.target.value = "";
+      return;
+    }
+
+    setError("");
+    setSelectedPayslip(nextFile);
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
     setSuccessMessage("");
+
+    if (!selectedPayslip && !currentPayslip) {
+      setError("Vui lòng chọn phiếu lương trong tháng gần nhất.");
+      return;
+    }
+
+    const monthlyIncome = parseVndInput(form.monthlyIncome);
+    if (monthlyIncome == null || monthlyIncome <= 0) {
+      setError("Vui lòng nhập thu nhập hàng tháng hợp lệ để tính hạn mức vay.");
+      return;
+    }
+
     setSaving(true);
     try {
       const payload = {
         fullName: form.fullName.trim(),
         phone: form.phone.trim() || null,
         dateOfBirth: form.dateOfBirth || null,
-        monthlyIncome: parseVndInput(form.monthlyIncome),
-        debtToIncomeRatio: debtMetrics?.debtToIncomeRatio ?? null,
-        employmentStatus: form.employmentStatus.trim() || null,
-        employmentStartDate: form.employmentStartDate || null,
-        creditHistoryScore: normalizeIntegerInput(form.creditHistoryScore)
+        monthlyIncome
       };
-      const profile = await upsertMyProfileApi(accessToken, payload);
+
+      const profile = await upsertMyProfileApi(accessToken, payload, selectedPayslip);
       setForm({
         fullName: profile.fullName ?? "",
         phone: profile.phone ?? "",
         dateOfBirth: profile.dateOfBirth ?? "",
-        monthlyIncome: profile.monthlyIncome == null ? "" : formatVndInput(profile.monthlyIncome),
-        employmentStatus: profile.employmentStatus ?? "",
-        employmentStartDate: profile.employmentStartDate ?? "",
-        creditHistoryScore: profile.creditHistoryScore ?? ""
+        monthlyIncome: profile.monthlyIncome != null ? formatVndInput(profile.monthlyIncome) : "",
+        verifiedMonthlyIncome: profile.verifiedMonthlyIncome ?? null
       });
       setPaymentRating(Number(profile.paymentRating || 0));
-      await refreshDebtData();
-      setSuccessMessage("Lưu hồ sơ thành công.");
+      setCurrentPayslip(toPayslipSummary(profile));
+      clearSelectedPayslip();
+      await refreshAuxiliaryData();
+      setSuccessMessage("Lưu hồ sơ thành công. Trạng thái xác minh sẽ quay về chờ đối chiếu lại.");
     } catch (err) {
       setError(err.message || "Không lưu được hồ sơ");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDownloadPayslip = async () => {
+    if (!currentPayslip?.fileName) {
+      return;
+    }
+    setDownloadingPayslip(true);
+    setError("");
+    try {
+      await downloadMyPayslipApi(accessToken, currentPayslip.fileName);
+    } catch (err) {
+      setError(err.message || "Không tải được phiếu lương");
+    } finally {
+      setDownloadingPayslip(false);
     }
   };
 
@@ -244,8 +324,8 @@ export default function CustomerProfilePage() {
         lenderName: debtForm.lenderName.trim() || null
       });
       setDebtForm(emptyDebtForm);
-      await refreshDebtData();
-      setDebtSuccess("Đã thêm khoản nợ.");
+      await refreshAuxiliaryData();
+      setDebtSuccess("Đã thêm khoản nợ. Trạng thái xác minh thông tin đã được đưa về chờ xác minh.");
     } catch (err) {
       setDebtError(err.message || "Không thêm được khoản nợ");
     } finally {
@@ -268,8 +348,8 @@ export default function CustomerProfilePage() {
     setDebtSubmitting(true);
     try {
       await deleteDebtApi(accessToken, debt.id);
-      await refreshDebtData();
-      setDebtSuccess("Đã xóa khoản nợ.");
+      await refreshAuxiliaryData();
+      setDebtSuccess("Đã xóa khoản nợ. Trạng thái xác minh thông tin đã được đưa về chờ xác minh.");
     } catch (err) {
       setDebtError(err.message || "Không xóa được khoản nợ");
     } finally {
@@ -281,22 +361,33 @@ export default function CustomerProfilePage() {
     <Stack spacing={2}>
       <Typography variant="h4">Hồ sơ của tôi</Typography>
       <Typography color="text.secondary">
-        Cập nhật thông tin cá nhân. DTI được tự tính từ danh sách khoản nợ và thu nhập.
+        Cập nhật thông tin cá nhân, phiếu lương gần nhất và danh sách khoản nợ để nhân viên đối chiếu trước khi bạn tạo hồ sơ vay mới.
       </Typography>
 
       <Paper sx={{ p: 3 }}>
         <Stack spacing={2} component="form" onSubmit={handleSubmit}>
           {error && <Alert severity="error">{error}</Alert>}
           {successMessage && <Alert severity="success">{successMessage}</Alert>}
+          {informationVerification && (
+            <Alert severity={verificationSeverity(informationVerification.status)}>
+              Trạng thái xác minh thông tin: {labelVerificationStatus(informationVerification.status)}.
+              {informationVerification.rejectionReason ? ` Lý do: ${informationVerification.rejectionReason}` : ""}
+            </Alert>
+          )}
 
-          <Stack direction="row" spacing={1} alignItems="center">
-            <Typography variant="subtitle2">Điểm tín nhiệm thanh toán</Typography>
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+            <Typography variant="subtitle2">Chỉ số hiện tại</Typography>
             <Chip
               size="small"
-              label={paymentRating}
+              label={`Điểm thanh toán: ${paymentRating}`}
               color={paymentRating >= 20 ? "success" : paymentRating >= 0 ? "info" : "error"}
             />
             <Chip size="small" label={`DTI: ${dtiDisplay}`} color="default" />
+            <Chip
+              size="small"
+              label={`Xác minh: ${labelVerificationStatus(informationVerification?.status || "PENDING")}`}
+              color={verificationChipColor(informationVerification?.status || "PENDING")}
+            />
           </Stack>
 
           <TextField
@@ -324,38 +415,78 @@ export default function CustomerProfilePage() {
             InputLabelProps={{ shrink: true }}
           />
           <TextField
-            label="Thu nhập hàng tháng"
+            label="Thu nhập hàng tháng theo phiếu lương"
             type="text"
             value={form.monthlyIncome}
-            onChange={handleMoneyChange("monthlyIncome")}
+            onChange={handleProfileMoneyChange("monthlyIncome")}
+            required
             fullWidth
             disabled={loading || saving}
             inputProps={{ inputMode: "numeric" }}
           />
-          <TextField
-            label="Tình trạng việc làm"
-            value={form.employmentStatus}
-            onChange={handleChange("employmentStatus")}
-            fullWidth
-            disabled={loading || saving}
-          />
-          <TextField
-            label="Ngày bắt đầu làm việc"
-            type="date"
-            value={form.employmentStartDate}
-            onChange={handleChange("employmentStartDate")}
-            fullWidth
-            disabled={loading || saving}
-            InputLabelProps={{ shrink: true }}
-          />
-          <TextField
-            label="Điểm lịch sử tín dụng (0-100)"
-            type="number"
-            value={form.creditHistoryScore}
-            onChange={handleChange("creditHistoryScore")}
-            fullWidth
-            disabled={loading || saving}
-          />
+          {form.verifiedMonthlyIncome != null && (
+            <Alert severity="info">
+              Thu nhập đã xác minh bởi nhân viên: {formatVnd(form.verifiedMonthlyIncome)}.
+              Giá trị này sẽ được ưu tiên dùng khi tính hạn mức vay.
+            </Alert>
+          )}
+
+          <Paper
+            variant="outlined"
+            sx={{
+              p: 2,
+              borderStyle: "dashed"
+            }}
+          >
+            <Stack spacing={1.5}>
+              <Typography variant="subtitle1">Phiếu lương trong tháng gần nhất</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Chấp nhận PDF, DOC, DOCX, XLS, XLSX. Kích thước tối đa 10MB.
+              </Typography>
+
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "center" }}>
+                <Button component="label" variant="outlined" disabled={loading || saving}>
+                  {selectedPayslip ? "Đổi file" : currentPayslip ? "Chọn file mới" : "Chọn file"}
+                  <input
+                    ref={fileInputRef}
+                    hidden
+                    type="file"
+                    accept={PAYSLIP_ACCEPT}
+                    onChange={handlePayslipChange}
+                  />
+                </Button>
+                {selectedPayslip && (
+                  <Button variant="text" color="inherit" onClick={clearSelectedPayslip} disabled={loading || saving}>
+                    Bỏ chọn
+                  </Button>
+                )}
+                {currentPayslip?.fileName && (
+                  <Button
+                    variant="text"
+                    onClick={handleDownloadPayslip}
+                    disabled={loading || saving || downloadingPayslip}
+                  >
+                    {downloadingPayslip ? "Đang tải..." : "Tải file đã nộp"}
+                  </Button>
+                )}
+              </Stack>
+
+              {selectedPayslip && (
+                <Alert severity="info">
+                  Đã chọn: {selectedPayslip.name} ({formatFileSize(selectedPayslip.size)})
+                </Alert>
+              )}
+
+              {!selectedPayslip && currentPayslip?.fileName && (
+                <Alert severity="info">
+                  File hiện tại: {currentPayslip.fileName}
+                  {currentPayslip.fileSize != null ? ` (${formatFileSize(currentPayslip.fileSize)})` : ""}
+                  {currentPayslip.uploadedAt ? ` - tải lên lúc ${new Date(currentPayslip.uploadedAt).toLocaleString()}` : ""}
+                </Alert>
+              )}
+            </Stack>
+          </Paper>
+
           <Button type="submit" variant="contained" disabled={loading || saving}>
             {saving ? "Đang lưu..." : "Lưu hồ sơ"}
           </Button>

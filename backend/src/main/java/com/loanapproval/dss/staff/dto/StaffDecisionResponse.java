@@ -7,6 +7,7 @@ public record StaffDecisionResponse(
     Long loanRequestId,
     LoanStatus status,
     String finalReason,
+    StaffRequestDetailResponse.AppointmentSummary appointment,
     Instant updatedAt
 ) {
 }

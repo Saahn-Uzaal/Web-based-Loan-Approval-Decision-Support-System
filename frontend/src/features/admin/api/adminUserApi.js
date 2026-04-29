@@ -14,3 +14,11 @@ export function deleteManagedUserApi(token, userId) {
   });
 }
 
+export function createManagedUserApi(token, payload) {
+  return apiRequest("/api/admin/users", {
+    method: "POST",
+    token,
+    body: payload
+  });
+}
+

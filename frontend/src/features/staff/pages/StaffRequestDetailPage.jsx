@@ -1,4 +1,4 @@
-﻿import {
+import {
   Alert,
   Button,
   Chip,
@@ -17,16 +17,28 @@
   Typography
 } from "@mui/material";
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import { getStaffRequestDetailApi, submitStaffDecisionApi } from "@/features/staff/api/staffApi";
+import { Link as RouterLink, useParams } from "react-router-dom";
+import { downloadInformationVerificationPayslipApi } from "@/features/staff/api/informationVerificationApi";
+import {
+  completeStaffContractApi,
+  disburseStaffLoanApi,
+  downloadStaffLoanDocumentApi,
+  getStaffRequestDetailApi,
+  submitStaffDecisionApi,
+  updateStaffCustomerVerificationApi
+} from "@/features/staff/api/staffApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
-import { formatVnd } from "@/shared/utils/currency";
+import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
+import { formatFileSize } from "@/shared/utils/files";
 import {
   labelContractStatus,
+  labelCollateralType,
   labelCustomerSegment,
   labelDssRecommendation,
+  labelLoanDocumentType,
   labelLoanPurpose,
   labelLoanStatus,
+  labelLoanType,
   labelRiskLevel,
   labelRiskRank,
   labelStaffAction,
@@ -51,8 +63,27 @@ function mapRecommendationToAction(recommendation) {
   if (recommendation === "REJECT_RECOMMENDED") {
     return "REJECT";
   }
-  return "ESCALATE";
+  return "";
 }
+
+function toDateTimeLocalValue(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function defaultAppointmentInputValue() {
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+  date.setHours(9, 0, 0, 0);
+  return toDateTimeLocalValue(date);
+}
+
+function toIsoInstant(localDateTime) {
+  return localDateTime ? new Date(localDateTime).toISOString() : null;
+}
+
+const VERIFICATION_STATUSES = ["PENDING", "PASSED", "FAILED"];
+const DECISION_EDITABLE_STATUSES = ["PENDING"];
 
 export default function StaffRequestDetailPage() {
   const { id } = useParams();
@@ -63,9 +94,29 @@ export default function StaffRequestDetailPage() {
   const [submitError, setSubmitError] = useState("");
   const [submitSuccess, setSubmitSuccess] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [submittingContract, setSubmittingContract] = useState(false);
+  const [submittingDisbursement, setSubmittingDisbursement] = useState(false);
+  const [submittingVerification, setSubmittingVerification] = useState(false);
+  const [downloadingPayslip, setDownloadingPayslip] = useState(false);
+  const [downloadingDocument, setDownloadingDocument] = useState("");
   const [decision, setDecision] = useState({
-    action: "ESCALATE",
-    reason: ""
+    action: "",
+    scheduledAt: defaultAppointmentInputValue(),
+    appointmentNote: "",
+    rejectionReason: "",
+    approvedAmount: "",
+    approvedTermMonths: "",
+    approvedAnnualRate: ""
+  });
+  const [verificationForm, setVerificationForm] = useState({
+    documentStatus: "PENDING",
+    identityStatus: "PENDING",
+    faceMatchStatus: "PENDING",
+    incomeStatus: "PENDING",
+    kycStatus: "PENDING",
+    amlStatus: "PENDING",
+    fraudFlag: false,
+    note: ""
   });
 
   useEffect(() => {
@@ -83,10 +134,33 @@ export default function StaffRequestDetailPage() {
           return;
         }
         setDetail(response);
-        setDecision((prev) => ({
-          action: prev.reason ? prev.action : mapRecommendationToAction(response?.dss?.recommendation),
-          reason: prev.reason
-        }));
+        setVerificationForm({
+          documentStatus: response?.verification?.documentStatus || "PENDING",
+          identityStatus: response?.verification?.identityStatus || "PENDING",
+          faceMatchStatus: response?.verification?.faceMatchStatus || "PENDING",
+          incomeStatus: response?.verification?.incomeStatus || "PENDING",
+          kycStatus: response?.verification?.kycStatus || "PENDING",
+          amlStatus: response?.verification?.amlStatus || "PENDING",
+          fraudFlag: Boolean(response?.verification?.fraudFlag),
+          note: response?.verification?.note || ""
+        });
+        setDecision((prev) => {
+          if (prev.action || prev.appointmentNote || prev.rejectionReason) {
+            return prev;
+          }
+          return {
+            ...prev,
+            action: response?.appointment ? "APPROVE" : mapRecommendationToAction(response?.dss?.recommendation),
+            approvedAmount:
+              response?.approvedAmount != null
+                ? formatVndInput(response.approvedAmount)
+                : response?.amount != null
+                  ? formatVndInput(response.amount)
+                  : "",
+            approvedTermMonths: response?.approvedTermMonths || response?.termMonths || "",
+            approvedAnnualRate: response?.approvedAnnualRate || ""
+          };
+        });
       } catch (err) {
         if (!active) {
           return;
@@ -105,7 +179,11 @@ export default function StaffRequestDetailPage() {
     };
   }, [accessToken, id]);
 
-  const finalized = detail?.status === "APPROVED" || detail?.status === "REJECTED";
+  const finalized = detail ? !DECISION_EDITABLE_STATUSES.includes(detail.status) : false;
+  const showApprovalFields = decision.action === "APPROVE";
+  const showAppointmentFields = showApprovalFields && detail?.loanType === "SECURED";
+  const showRejectReasonField = decision.action === "REJECT";
+  const hasSelectedAction = decision.action === "APPROVE" || decision.action === "REJECT";
 
   const handleDecisionChange = (field) => (event) => {
     setDecision((prev) => ({
@@ -114,25 +192,75 @@ export default function StaffRequestDetailPage() {
     }));
   };
 
+  const handleApprovedAmountChange = (event) => {
+    setDecision((prev) => ({
+      ...prev,
+      approvedAmount: formatVndInput(event.target.value)
+    }));
+  };
+
+  const handleVerificationChange = (field) => (event) => {
+    const value = field === "fraudFlag" ? event.target.value === "true" : event.target.value;
+    setVerificationForm((prev) => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  const handleSaveVerification = async (event) => {
+    event.preventDefault();
+    if (!detail?.customer?.id) {
+      return;
+    }
+    setSubmittingVerification(true);
+    setSubmitError("");
+    setSubmitSuccess("");
+    try {
+      await updateStaffCustomerVerificationApi(accessToken, detail.customer.id, verificationForm);
+      const refreshed = await getStaffRequestDetailApi(accessToken, detail.id);
+      setDetail(refreshed);
+      setSubmitSuccess("Đã cập nhật các bước xác minh hồ sơ.");
+    } catch (err) {
+      setSubmitError(err.message || "Không cập nhật được xác minh hồ sơ");
+    } finally {
+      setSubmittingVerification(false);
+    }
+  };
+
   const handleSubmitDecision = async (event) => {
     event.preventDefault();
     if (!detail) {
+      return;
+    }
+    if (!hasSelectedAction) {
+      setSubmitError("Vui lòng chọn hành động.");
+      return;
+    }
+    if (showRejectReasonField && !decision.rejectionReason.trim()) {
+      setSubmitError("Vui lòng nhập lý do từ chối.");
       return;
     }
     setSubmitting(true);
     setSubmitError("");
     setSubmitSuccess("");
     try {
+      const shouldSchedule = showAppointmentFields;
       await submitStaffDecisionApi(accessToken, detail.id, {
         action: decision.action,
-        reason: decision.reason.trim()
+        scheduledAt: shouldSchedule ? toIsoInstant(decision.scheduledAt) : null,
+        appointmentLocation: "",
+        appointmentNote: shouldSchedule ? decision.appointmentNote.trim() : decision.rejectionReason.trim(),
+        approvedAmount: decision.action === "APPROVE" ? parseVndInput(decision.approvedAmount) : null,
+        approvedTermMonths: decision.action === "APPROVE" && decision.approvedTermMonths !== "" ? Number(decision.approvedTermMonths) : null,
+        approvedAnnualRate: decision.action === "APPROVE" && decision.approvedAnnualRate !== "" ? Number(decision.approvedAnnualRate) : null
       });
       const refreshed = await getStaffRequestDetailApi(accessToken, detail.id);
       setDetail(refreshed);
       setSubmitSuccess(`Gửi quyết định thành công. Trạng thái hiện tại: ${labelLoanStatus(refreshed.status)}.`);
       setDecision((prev) => ({
         ...prev,
-        reason: ""
+        appointmentNote: "",
+        rejectionReason: ""
       }));
     } catch (err) {
       setSubmitError(err.message || "Không gửi được quyết định");
@@ -141,11 +269,85 @@ export default function StaffRequestDetailPage() {
     }
   };
 
+  const handleDownloadPayslip = async () => {
+    if (!detail?.customer?.id || !detail?.customerProfile?.payslipFileName) {
+      return;
+    }
+    setDownloadingPayslip(true);
+    setError("");
+    try {
+      await downloadInformationVerificationPayslipApi(
+        accessToken,
+        detail.customer.id,
+        detail.customerProfile.payslipFileName
+      );
+    } catch (err) {
+      setError(err.message || "Không tải được phiếu lương");
+    } finally {
+      setDownloadingPayslip(false);
+    }
+  };
+
+  const handleDownloadDocument = async (document) => {
+    if (!detail?.id || !document?.documentType) {
+      return;
+    }
+    setDownloadingDocument(document.documentType);
+    setError("");
+    try {
+      await downloadStaffLoanDocumentApi(accessToken, detail.id, document.documentType, document.fileName);
+    } catch (err) {
+      setError(err.message || "Không tải được chứng từ hồ sơ vay");
+    } finally {
+      setDownloadingDocument("");
+    }
+  };
+
+  const handleCompleteContract = async () => {
+    if (!detail?.id) {
+      return;
+    }
+    setSubmittingContract(true);
+    setSubmitError("");
+    setSubmitSuccess("");
+    try {
+      const refreshed = await completeStaffContractApi(accessToken, detail.id);
+      setDetail(refreshed);
+      setSubmitSuccess("Đã hoàn thiện hợp đồng vay cho hồ sơ này.");
+    } catch (err) {
+      setSubmitError(err.message || "Không hoàn thiện được hợp đồng vay");
+    } finally {
+      setSubmittingContract(false);
+    }
+  };
+
+  const handleDisburse = async () => {
+    if (!detail?.id) {
+      return;
+    }
+    setSubmittingDisbursement(true);
+    setSubmitError("");
+    setSubmitSuccess("");
+    try {
+      const refreshed = await disburseStaffLoanApi(accessToken, detail.id);
+      setDetail(refreshed);
+      setSubmitSuccess("Đã giải ngân khoản vay. Khách hàng có thể bắt đầu thanh toán.");
+    } catch (err) {
+      setSubmitError(err.message || "Không giải ngân được khoản vay");
+    } finally {
+      setSubmittingDisbursement(false);
+    }
+  };
+
   const statusColorMap = {
+    APPOINTMENT_SCHEDULED: "info",
     APPROVED: "success",
+    CONTRACTED: "info",
+    DISBURSED: "primary",
+    ACTIVE: "primary",
+    CLOSED: "default",
     REJECTED: "error",
-    PENDING: "warning",
-    WAITING_SUPERVISOR: "info"
+    PENDING: "warning"
   };
 
   return (
@@ -171,179 +373,444 @@ export default function StaffRequestDetailPage() {
         </Paper>
       )}
       {detail && (
-      <Grid container spacing={2}>
-        <Grid item xs={12} md={6}>
-          <InfoCard title="Tóm tắt hồ sơ khách hàng">
-            <Typography variant="body2">Mã khách hàng: #{detail.customer?.id}</Typography>
-            <Typography variant="body2">Email: {detail.customer?.email || "-"}</Typography>
-            <Typography variant="body2">Họ tên: {detail.customerProfile?.fullName || "-"}</Typography>
-            <Typography variant="body2">
-              Thu nhập: {detail.customerProfile?.monthlyIncome != null ? `${formatVnd(detail.customerProfile.monthlyIncome)} / tháng` : "-"}
-            </Typography>
-            <Typography variant="body2">
-              DTI: {detail.customerProfile?.debtToIncomeRatio != null ? `${detail.customerProfile.debtToIncomeRatio}%` : "-"}
-            </Typography>
-            <Typography variant="body2">
-              Việc làm: {detail.customerProfile?.employmentStatus || "-"}
-            </Typography>
-          </InfoCard>
-        </Grid>
-        <Grid item xs={12} md={6}>
-          <InfoCard title="Thông tin khoản vay">
-            <Typography variant="body2">
-              Trạng thái: <Chip size="small" color={statusColorMap[detail.status] || "default"} label={labelLoanStatus(detail.status)} />
-            </Typography>
-            <Typography variant="body2">Số tiền: {formatVnd(detail.amount)}</Typography>
-            <Typography variant="body2">Kỳ hạn: {detail.termMonths} tháng</Typography>
-            <Typography variant="body2">Mục đích: {labelLoanPurpose(detail.purpose)}</Typography>
-            <Typography variant="body2">Ngày nộp: {new Date(detail.createdAt).toLocaleString()}</Typography>
-            <Typography variant="body2">Lý do cuối cùng: {detail.finalReason || "-"}</Typography>
-            {detail.contract && (
-              <>
-                <Divider />
-                <Typography variant="body2">Trạng thái hợp đồng: {labelContractStatus(detail.contract.status)}</Typography>
-                <Typography variant="body2">
-                  Thanh toán hàng tháng: {formatVnd(detail.contract.monthlyPayment)}
-                </Typography>
-                <Typography variant="body2">
-                  Lãi suất: {(Number(detail.contract.annualInterestRate || 0) * 100).toFixed(2)}%
-                </Typography>
-              </>
-            )}
-          </InfoCard>
-        </Grid>
-        <Grid item xs={12} md={6}>
-          <InfoCard title="Kết quả DSS">
-            {!detail.dss && (
-              <Alert severity="warning">
-                Không tìm thấy bản ghi DSS cho hồ sơ này.
-              </Alert>
-            )}
-            {detail.dss && (
-              <>
-                <Typography variant="body2">Điểm tín dụng: {detail.dss.creditScore}</Typography>
-                <Typography variant="body2">Hạng rủi ro: {labelRiskRank(detail.dss.riskRank)}</Typography>
-                <Typography variant="body2">Phân khúc: {labelCustomerSegment(detail.dss.customerSegment)}</Typography>
-                <Typography variant="body2">Khuyến nghị: {labelDssRecommendation(detail.dss.recommendation)}</Typography>
-                <Alert severity="info" sx={{ mt: 1 }}>
-                  {detail.dss.explanation}
-                </Alert>
-              </>
-            )}
-          </InfoCard>
-        </Grid>
-        <Grid item xs={12} md={6}>
-          <InfoCard title="Xác minh và rủi ro">
-            {!detail.verification && (
-              <Typography variant="body2" color="text.secondary">
-                Chưa có dữ liệu xác minh.
+        <Grid container spacing={2}>
+          <Grid item xs={12} md={6}>
+            <InfoCard title="Tóm tắt hồ sơ khách hàng">
+              <Typography variant="body2">Mã khách hàng: #{detail.customer?.id}</Typography>
+              <Typography variant="body2">Email: {detail.customer?.email || "-"}</Typography>
+              <Typography variant="body2">Họ tên: {detail.customerProfile?.fullName || "-"}</Typography>
+              <Typography variant="body2">
+                Thu nhập hàng tháng: {detail.customerProfile?.monthlyIncome != null ? formatVnd(detail.customerProfile.monthlyIncome) : "-"}
               </Typography>
-            )}
-            {detail.verification && (
-              <>
-                <Typography variant="body2">Giấy tờ: {labelVerificationStatus(detail.verification.documentStatus)}</Typography>
-                <Typography variant="body2">Định danh: {labelVerificationStatus(detail.verification.identityStatus)}</Typography>
-                <Typography variant="body2">Thu nhập: {labelVerificationStatus(detail.verification.incomeStatus)}</Typography>
-                <Typography variant="body2">KYC: {labelVerificationStatus(detail.verification.kycStatus)}</Typography>
-                <Typography variant="body2">AML: {labelVerificationStatus(detail.verification.amlStatus)}</Typography>
-                <Typography variant="body2">
-                  Cờ gian lận: {detail.verification.fraudFlag ? "Có" : "Không"}
-                </Typography>
-                {detail.verification.note && (
-                  <Alert severity="info">{detail.verification.note}</Alert>
-                )}
-              </>
-            )}
-            <Divider />
-            {!detail.risk && (
-              <Typography variant="body2" color="text.secondary">
-                Không tìm thấy bản ghi đánh giá rủi ro.
+              <Typography variant="body2">
+                DTI: {detail.customerProfile?.debtToIncomeRatio != null ? `${detail.customerProfile.debtToIncomeRatio}%` : "-"}
               </Typography>
-            )}
-            {detail.risk && (
-              <>
-                <Typography variant="body2">Mức rủi ro tổng: {labelRiskLevel(detail.risk.overallRiskLevel)}</Typography>
-                <Typography variant="body2">Rủi ro tín dụng: {detail.risk.creditRiskScore}</Typography>
-                <Typography variant="body2">Rủi ro gian lận: {detail.risk.fraudRiskScore}</Typography>
-                <Typography variant="body2">Rủi ro vận hành: {detail.risk.operationalRiskScore}</Typography>
-                <Alert severity={detail.risk.overallRiskLevel === "HIGH" ? "warning" : "info"}>
-                  {detail.risk.riskReasons}
-                </Alert>
-              </>
-            )}
-          </InfoCard>
-        </Grid>
-        <Grid item xs={12} md={6}>
-          <InfoCard title="Quyết định cuối cùng">
-            <Stack spacing={2} component="form" onSubmit={handleSubmitDecision}>
-              {submitError && <Alert severity="error">{submitError}</Alert>}
-              {submitSuccess && <Alert severity="success">{submitSuccess}</Alert>}
-              {finalized && (
-                <Alert severity="info">
-                  Hồ sơ này đã chốt kết quả. Không thể gửi thêm quyết định.
+              <Typography variant="body2">
+                Phiếu lương: {detail.customerProfile?.payslipFileName || "-"}
+                {detail.customerProfile?.payslipFileSize != null
+                  ? ` (${formatFileSize(detail.customerProfile.payslipFileSize)})`
+                  : ""}
+              </Typography>
+              <Typography variant="body2">
+                Tải lên lúc: {detail.customerProfile?.payslipUploadedAt ? new Date(detail.customerProfile.payslipUploadedAt).toLocaleString() : "-"}
+              </Typography>
+              {detail.customerProfile?.payslipFileName && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  sx={{ alignSelf: "flex-start" }}
+                  onClick={handleDownloadPayslip}
+                  disabled={downloadingPayslip}
+                >
+                  {downloadingPayslip ? "Đang tải..." : "Tải phiếu lương"}
+                </Button>
+              )}
+            </InfoCard>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <InfoCard title="Thông tin khoản vay">
+              <Typography variant="body2">
+                Trạng thái: <Chip size="small" color={statusColorMap[detail.status] || "default"} label={labelLoanStatus(detail.status)} />
+              </Typography>
+              <Typography variant="body2">Loại vay: {labelLoanType(detail.loanType)}</Typography>
+              <Typography variant="body2">Số tiền: {formatVnd(detail.amount)}</Typography>
+              <Typography variant="body2">Kỳ hạn: {detail.termMonths} tháng</Typography>
+              <Typography variant="body2">Mục đích: {labelLoanPurpose(detail.purpose)}</Typography>
+              {detail.collateralType && (
+                <Typography variant="body2">Tài sản bảo đảm: {labelCollateralType(detail.collateralType)}</Typography>
+              )}
+              <Typography variant="body2">
+                Hạn mức tạm tính: {detail.eligibleLimit != null ? formatVnd(detail.eligibleLimit) : "-"}
+              </Typography>
+              <Typography variant="body2">
+                Số tiền phê duyệt: {detail.approvedAmount != null ? formatVnd(detail.approvedAmount) : "-"}
+              </Typography>
+              <Typography variant="body2">
+                Kỳ hạn phê duyệt: {detail.approvedTermMonths != null ? `${detail.approvedTermMonths} tháng` : "-"}
+              </Typography>
+              <Typography variant="body2">
+                Góp hằng tháng: {detail.approvedMonthlyPayment != null ? formatVnd(detail.approvedMonthlyPayment) : "-"}
+              </Typography>
+              <Typography variant="body2">
+                Lãi suất phê duyệt: {detail.approvedAnnualRate != null ? `${(Number(detail.approvedAnnualRate) * 100).toFixed(2)}%/năm` : "-"}
+              </Typography>
+              <Typography variant="body2">Phiên bản chính sách: {detail.decisionPolicyVersion || "-"}</Typography>
+              {detail.intakeNote && <Alert severity="info">{detail.intakeNote}</Alert>}
+              <Typography variant="body2">Ngày nộp: {new Date(detail.createdAt).toLocaleString()}</Typography>
+              <Typography variant="body2">Ghi chú quyết định: {detail.finalReason || "-"}</Typography>
+              {detail.appointment && (
+                <Alert severity="success">
+                  Lịch hẹn gặp mặt: {new Date(detail.appointment.scheduledAt).toLocaleString()}
+                  {detail.appointment.location ? ` tại ${detail.appointment.location}` : ""}
+                  {detail.appointment.note ? `. Ghi chú: ${detail.appointment.note}` : ""}
                 </Alert>
               )}
-              <TextField
-                select
-                label="Hành động"
-                value={decision.action}
-                onChange={handleDecisionChange("action")}
-                disabled={submitting || finalized}
-              >
-                <MenuItem value="APPROVE">Duyệt</MenuItem>
-                <MenuItem value="REJECT">Từ chối</MenuItem>
-                <MenuItem value="ESCALATE">Chuyển cấp cao hơn</MenuItem>
-              </TextField>
-              <TextField
-                label="Lý do"
-                multiline
-                rows={4}
-                required
-                value={decision.reason}
-                onChange={handleDecisionChange("reason")}
-                disabled={submitting || finalized}
-                placeholder="Lý do là bắt buộc khi gửi quyết định."
-              />
-              <Button type="submit" variant="contained" disabled={submitting || finalized}>
-                {submitting ? "Đang gửi..." : "Gửi quyết định"}
-              </Button>
-            </Stack>
-          </InfoCard>
-        </Grid>
-        <Grid item xs={12}>
-          <InfoCard title="Lịch sử quyết định">
-            {!detail.decisionAudits?.length && (
-              <Typography variant="body2" color="text.secondary">
-                Chưa có bản ghi quyết định.
-              </Typography>
-            )}
-            {detail.decisionAudits?.length > 0 && (
-              <Paper variant="outlined" sx={{ overflowX: "auto" }}>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Thời gian</TableCell>
-                      <TableCell>Nhân viên</TableCell>
-                      <TableCell>Hành động</TableCell>
-                      <TableCell>Lý do</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {detail.decisionAudits.map((audit) => (
-                      <TableRow key={audit.id}>
-                        <TableCell>{new Date(audit.createdAt).toLocaleString()}</TableCell>
-                        <TableCell>{audit.staffEmail}</TableCell>
-                        <TableCell>{labelStaffAction(audit.action)}</TableCell>
-                        <TableCell>{audit.reason}</TableCell>
+              {detail.status === "APPOINTMENT_SCHEDULED" && detail.loanType === "SECURED" && (
+                <>
+                  <Divider />
+                  <Alert severity="warning">
+                    Hồ sơ thế chấp đang chờ buổi gặp trực tiếp và thẩm định tài sản. Chỉ hoàn tất hợp đồng sau khi thủ tục này hoàn thành.
+                  </Alert>
+                  <Button
+                    component={RouterLink}
+                    to={`/staff/secured-procedures/${detail.id}`}
+                    variant="contained"
+                    sx={{ alignSelf: "flex-start" }}
+                  >
+                    Xử lý thủ tục vay thế chấp
+                  </Button>
+                </>
+              )}
+              {detail.contract && (
+                <>
+                  <Divider />
+                  <Typography variant="body2">Trạng thái hợp đồng: {labelContractStatus(detail.contract.status)}</Typography>
+                  <Typography variant="body2">
+                    Thanh toán hàng tháng: {formatVnd(detail.contract.monthlyPayment)}
+                  </Typography>
+                  <Typography variant="body2">
+                    Lãi suất: {(Number(detail.contract.annualInterestRate || 0) * 100).toFixed(2)}%
+                  </Typography>
+                </>
+              )}
+              {detail.status === "APPROVED" && !detail.contract && (
+                <>
+                  <Divider />
+                  <Alert severity={detail.loanType === "SECURED" ? "warning" : "info"}>
+                    Hồ sơ đã duyệt nhưng chưa có hợp đồng. Với vay thế chấp, chỉ hoàn thiện hợp đồng sau khi khách hàng gặp trực tiếp và đối chiếu tài sản.
+                  </Alert>
+                  {submitError && <Alert severity="error">{submitError}</Alert>}
+                  {submitSuccess && <Alert severity="success">{submitSuccess}</Alert>}
+                  {detail.loanType === "SECURED" ? (
+                    <Button
+                      component={RouterLink}
+                      to={`/staff/secured-procedures/${detail.id}`}
+                      variant="contained"
+                      sx={{ alignSelf: "flex-start" }}
+                    >
+                      Xử lý thủ tục vay thế chấp
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="contained"
+                      onClick={handleCompleteContract}
+                      disabled={submittingContract}
+                      sx={{ alignSelf: "flex-start" }}
+                    >
+                      {submittingContract ? "Đang hoàn thiện..." : "Hoàn thiện hợp đồng vay"}
+                    </Button>
+                  )}
+                </>
+              )}
+              {detail.status === "CONTRACTED" && detail.contract && (
+                <>
+                  <Divider />
+                  <Alert severity="info">
+                    Hồ sơ đã có hợp đồng hiệu lực nhưng chưa giải ngân. Sau khi giải ngân, khách hàng mới được phép thanh toán.
+                  </Alert>
+                  {submitError && <Alert severity="error">{submitError}</Alert>}
+                  {submitSuccess && <Alert severity="success">{submitSuccess}</Alert>}
+                  <Button
+                    variant="contained"
+                    onClick={handleDisburse}
+                    disabled={submittingDisbursement}
+                    sx={{ alignSelf: "flex-start" }}
+                  >
+                    {submittingDisbursement ? "Đang giải ngân..." : "Giải ngân khoản vay"}
+                  </Button>
+                </>
+              )}
+            </InfoCard>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <InfoCard title="Chứng từ hồ sơ vay">
+              {!detail.documents?.length && (
+                <Typography variant="body2" color="text.secondary">
+                  Chưa có chứng từ đính kèm.
+                </Typography>
+              )}
+              {detail.documents?.map((document) => (
+                <Stack
+                  key={document.documentType}
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={1}
+                  alignItems={{ sm: "center" }}
+                >
+                  <Typography variant="body2" sx={{ flex: 1 }}>
+                    {labelLoanDocumentType(document.documentType)}: {document.fileName}
+                    {document.fileSize != null ? ` (${formatFileSize(document.fileSize)})` : ""}
+                  </Typography>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => handleDownloadDocument(document)}
+                    disabled={downloadingDocument === document.documentType}
+                  >
+                    {downloadingDocument === document.documentType ? "Đang tải..." : "Tải xuống"}
+                  </Button>
+                </Stack>
+              ))}
+            </InfoCard>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <InfoCard title="Kết quả DSS">
+              {!detail.dss && (
+                <Alert severity="warning">
+                  Không tìm thấy bản ghi DSS cho hồ sơ này.
+                </Alert>
+              )}
+              {detail.dss && (
+                <>
+                  <Typography variant="body2">Điểm tín dụng: {detail.dss.creditScore}</Typography>
+                  <Typography variant="body2">Hạng rủi ro: {labelRiskRank(detail.dss.riskRank)}</Typography>
+                  <Typography variant="body2">Phân khúc: {labelCustomerSegment(detail.dss.customerSegment)}</Typography>
+                  <Typography variant="body2">Khuyến nghị: {labelDssRecommendation(detail.dss.recommendation)}</Typography>
+                  <Alert severity="info" sx={{ mt: 1 }}>
+                    {detail.dss.explanation}
+                  </Alert>
+                </>
+              )}
+            </InfoCard>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <InfoCard title="Xác minh và rủi ro">
+              {!detail.verification && (
+                <Typography variant="body2" color="text.secondary">
+                  Chưa có dữ liệu xác minh.
+                </Typography>
+              )}
+              {detail.verification && (
+                <>
+                  <Typography variant="body2">Giấy tờ: {labelVerificationStatus(detail.verification.documentStatus)}</Typography>
+                  <Typography variant="body2">Định danh: {labelVerificationStatus(detail.verification.identityStatus)}</Typography>
+                  <Typography variant="body2">Đối khớp khuôn mặt: {labelVerificationStatus(detail.verification.faceMatchStatus)}</Typography>
+                  <Typography variant="body2">Thu nhập: {labelVerificationStatus(detail.verification.incomeStatus)}</Typography>
+                  <Typography variant="body2">KYC: {labelVerificationStatus(detail.verification.kycStatus)}</Typography>
+                  <Typography variant="body2">AML: {labelVerificationStatus(detail.verification.amlStatus)}</Typography>
+                  <Typography variant="body2">
+                    Cờ gian lận: {detail.verification.fraudFlag ? "Có" : "Không"}
+                  </Typography>
+                  {detail.verification.note && <Alert severity="info">{detail.verification.note}</Alert>}
+                  <Divider />
+                  <Stack spacing={2} component="form" onSubmit={handleSaveVerification}>
+                    <Typography variant="subtitle2">Cập nhật từng bước xác minh</Typography>
+                    <Grid container spacing={1.5}>
+                      {[
+                        ["documentStatus", "Giấy tờ"],
+                        ["identityStatus", "Định danh"],
+                        ["faceMatchStatus", "Đối khớp khuôn mặt"],
+                        ["incomeStatus", "Thu nhập"],
+                        ["kycStatus", "KYC"],
+                        ["amlStatus", "AML"]
+                      ].map(([field, label]) => (
+                        <Grid item xs={12} sm={6} key={field}>
+                          <TextField
+                            select
+                            size="small"
+                            label={label}
+                            value={verificationForm[field]}
+                            onChange={handleVerificationChange(field)}
+                            fullWidth
+                            disabled={submittingVerification}
+                          >
+                            {VERIFICATION_STATUSES.map((status) => (
+                              <MenuItem key={status} value={status}>{labelVerificationStatus(status)}</MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+                      ))}
+                      <Grid item xs={12} sm={6}>
+                        <TextField
+                          select
+                          size="small"
+                          label="Cờ gian lận"
+                          value={String(verificationForm.fraudFlag)}
+                          onChange={handleVerificationChange("fraudFlag")}
+                          fullWidth
+                          disabled={submittingVerification}
+                        >
+                          <MenuItem value="false">Không</MenuItem>
+                          <MenuItem value="true">Có</MenuItem>
+                        </TextField>
+                      </Grid>
+                      <Grid item xs={12}>
+                        <TextField
+                          size="small"
+                          label="Ghi chú xác minh"
+                          value={verificationForm.note}
+                          onChange={handleVerificationChange("note")}
+                          fullWidth
+                          multiline
+                          minRows={2}
+                          disabled={submittingVerification}
+                        />
+                      </Grid>
+                      <Grid item xs={12}>
+                        <Button type="submit" variant="outlined" disabled={submittingVerification}>
+                          {submittingVerification ? "Đang lưu..." : "Lưu xác minh"}
+                        </Button>
+                      </Grid>
+                    </Grid>
+                  </Stack>
+                </>
+              )}
+              <Divider />
+              {!detail.risk && (
+                <Typography variant="body2" color="text.secondary">
+                  Không tìm thấy bản ghi đánh giá rủi ro.
+                </Typography>
+              )}
+              {detail.risk && (
+                <>
+                  <Typography variant="body2">Mức rủi ro tổng: {labelRiskLevel(detail.risk.overallRiskLevel)}</Typography>
+                  <Typography variant="body2">Rủi ro tín dụng: {detail.risk.creditRiskScore}</Typography>
+                  <Typography variant="body2">Rủi ro gian lận: {detail.risk.fraudRiskScore}</Typography>
+                  <Typography variant="body2">Rủi ro vận hành: {detail.risk.operationalRiskScore}</Typography>
+                  <Alert severity={detail.risk.overallRiskLevel === "HIGH" ? "warning" : "info"}>
+                    {detail.risk.riskReasons}
+                  </Alert>
+                </>
+              )}
+            </InfoCard>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <InfoCard title="Quyết định cuối cùng">
+              <Stack spacing={2} component="form" onSubmit={handleSubmitDecision}>
+                {submitError && <Alert severity="error">{submitError}</Alert>}
+                {submitSuccess && <Alert severity="success">{submitSuccess}</Alert>}
+                {finalized && (
+                  <Alert severity="info">
+                    Hồ sơ này đã chốt kết quả. Không thể gửi thêm quyết định.
+                  </Alert>
+                )}
+                <TextField
+                  select
+                  label="Hành động"
+                  value={decision.action}
+                  onChange={handleDecisionChange("action")}
+                  disabled={submitting || finalized}
+                >
+                  <MenuItem value="">
+                    <em>Chọn hành động</em>
+                  </MenuItem>
+                  <MenuItem value="APPROVE">Duyệt</MenuItem>
+                  <MenuItem value="REJECT">Từ chối</MenuItem>
+                </TextField>
+                {showApprovalFields && (
+                  <>
+                    <Grid container spacing={1.5}>
+                      <Grid item xs={12} sm={4}>
+                        <TextField
+                          label="Số tiền phê duyệt"
+                          type="text"
+                          value={decision.approvedAmount}
+                          onChange={handleApprovedAmountChange}
+                          disabled={submitting || finalized}
+                          fullWidth
+                          inputProps={{ inputMode: "numeric" }}
+                        />
+                      </Grid>
+                      <Grid item xs={12} sm={4}>
+                        <TextField
+                          label="Kỳ hạn phê duyệt"
+                          type="number"
+                          value={decision.approvedTermMonths}
+                          onChange={handleDecisionChange("approvedTermMonths")}
+                          disabled={submitting || finalized}
+                          fullWidth
+                          inputProps={{ min: 1, step: 1 }}
+                        />
+                      </Grid>
+                      <Grid item xs={12} sm={4}>
+                        <TextField
+                          label="Lãi suất năm"
+                          type="number"
+                          value={decision.approvedAnnualRate}
+                          onChange={handleDecisionChange("approvedAnnualRate")}
+                          disabled={submitting || finalized}
+                          fullWidth
+                          helperText="Nhập dạng thập phân, ví dụ 0.12"
+                          inputProps={{ min: 0, max: 1, step: 0.001 }}
+                        />
+                      </Grid>
+                    </Grid>
+                  </>
+                )}
+                {showAppointmentFields && (
+                  <>
+                    <TextField
+                      label="Lịch hẹn gặp mặt"
+                      type="datetime-local"
+                      required
+                      value={decision.scheduledAt}
+                      onChange={handleDecisionChange("scheduledAt")}
+                      disabled={submitting || finalized}
+                      InputLabelProps={{ shrink: true }}
+                      helperText="Chọn thời điểm khách hàng đến gặp trực tiếp."
+                    />
+                    <TextField
+                      label="Ghi chú lịch hẹn"
+                      multiline
+                      rows={3}
+                      value={decision.appointmentNote}
+                      onChange={handleDecisionChange("appointmentNote")}
+                      disabled={submitting || finalized}
+                      placeholder="Nhắc khách hàng mang bản gốc CCCD, giấy tờ xe và hồ sơ tài sản bảo đảm."
+                    />
+                  </>
+                )}
+                {showRejectReasonField && (
+                  <TextField
+                    label="Lý do từ chối"
+                    multiline
+                    rows={3}
+                    required
+                    value={decision.rejectionReason}
+                    onChange={handleDecisionChange("rejectionReason")}
+                    disabled={submitting || finalized}
+                    placeholder="Nhập lý do từ chối hồ sơ."
+                  />
+                )}
+                <Button type="submit" variant="contained" disabled={submitting || finalized || !hasSelectedAction}>
+                  {submitting ? "Đang gửi..." : "Gửi quyết định"}
+                </Button>
+              </Stack>
+            </InfoCard>
+          </Grid>
+          <Grid item xs={12}>
+            <InfoCard title="Lịch sử quyết định">
+              {!detail.decisionAudits?.length && (
+                <Typography variant="body2" color="text.secondary">
+                  Chưa có bản ghi quyết định.
+                </Typography>
+              )}
+              {detail.decisionAudits?.length > 0 && (
+                <Paper variant="outlined" sx={{ overflowX: "auto" }}>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Thời gian</TableCell>
+                        <TableCell>Nhân viên</TableCell>
+                        <TableCell>Hành động</TableCell>
+                        <TableCell>Ghi chú xử lý</TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </Paper>
-            )}
-          </InfoCard>
+                    </TableHead>
+                    <TableBody>
+                      {detail.decisionAudits.map((audit) => (
+                        <TableRow key={audit.id}>
+                          <TableCell>{new Date(audit.createdAt).toLocaleString()}</TableCell>
+                          <TableCell>{audit.staffEmail}</TableCell>
+                          <TableCell>{labelStaffAction(audit.action)}</TableCell>
+                          <TableCell>{audit.reason}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Paper>
+              )}
+            </InfoCard>
+          </Grid>
         </Grid>
-      </Grid>
       )}
       <Divider />
     </Stack>

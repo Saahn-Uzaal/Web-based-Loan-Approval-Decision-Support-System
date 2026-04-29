@@ -1,32 +1,158 @@
 import {
   Alert,
+  Box,
   Button,
+  Chip,
+  Divider,
   Grid,
+  LinearProgress,
   MenuItem,
   Paper,
   Stack,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography
 } from "@mui/material";
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link as RouterLink, useNavigate } from "react-router-dom";
+import { getMyInformationVerificationApi } from "@/features/customer/api/informationVerificationApi";
 import { createLoanApi } from "@/features/customer/api/loanApi";
+import { getMyProfileApi } from "@/features/customer/api/profileApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
-import { formatVndInput, parseVndInput } from "@/shared/utils/currency";
+import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
+import { LOAN_IMAGE_ACCEPT, formatFileSize, isAcceptedLoanImageFile } from "@/shared/utils/files";
+import {
+  labelCollateralType,
+  labelLoanDocumentType,
+  labelLoanType,
+  labelVerificationStatus
+} from "@/shared/utils/labels";
+
+const emptyFiles = {
+  vehicleRegistration: null,
+  licensePlateImage: null,
+  idCardFront: null,
+  idCardBack: null,
+  faceCapture: null
+};
+
+const emptyForm = {
+  loanType: "UNSECURED",
+  amount: "",
+  termMonths: "",
+  purpose: "PERSONAL",
+  collateralType: "VEHICLE_REGISTRATION",
+  collateralValue: ""
+};
+
+function FilePicker({ label, file, disabled, onChange }) {
+  return (
+    <Paper variant="outlined" sx={{ p: 2, height: "100%" }}>
+      <Stack spacing={1.25}>
+        <Typography variant="subtitle2">{label}</Typography>
+        <Button component="label" variant="outlined" disabled={disabled} sx={{ alignSelf: "flex-start" }}>
+          {file ? "Đổi ảnh" : "Chọn ảnh"}
+          <input hidden type="file" accept={LOAN_IMAGE_ACCEPT} onChange={onChange} />
+        </Button>
+        {file && (
+          <Typography variant="body2" color="text.secondary">
+            {file.name} ({formatFileSize(file.size)})
+          </Typography>
+        )}
+      </Stack>
+    </Paper>
+  );
+}
 
 export default function CustomerLoanNewPage() {
   const navigate = useNavigate();
   const { accessToken } = useAuth();
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
 
   const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraError, setCameraError] = useState("");
   const [error, setError] = useState("");
+  const [verificationError, setVerificationError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
-  const [form, setForm] = useState({
-    amount: "",
-    termMonths: "",
-    purpose: "PERSONAL",
-    collateralValue: ""
-  });
+  const [informationVerification, setInformationVerification] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [form, setForm] = useState(emptyForm);
+  const [files, setFiles] = useState(emptyFiles);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadData() {
+      if (!accessToken) {
+        return;
+      }
+      setLoading(true);
+      setVerificationError("");
+      try {
+        const profilePromise = getMyProfileApi(accessToken).catch((err) => {
+          const message = String(err.message || "");
+          if (/kh(?:ông|ong)\s+t(?:ì|i)m\s+th(?:ấy|ay)/i.test(message)) {
+            return null;
+          }
+          throw err;
+        });
+        const [profileResponse, verificationResponse] = await Promise.all([
+          profilePromise,
+          getMyInformationVerificationApi(accessToken)
+        ]);
+        if (!active) {
+          return;
+        }
+        setProfile(profileResponse);
+        setInformationVerification(verificationResponse);
+      } catch (err) {
+        if (!active) {
+          return;
+        }
+        setVerificationError(err.message || "Không tải được trạng thái hồ sơ khách hàng");
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadData();
+    return () => {
+      active = false;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    };
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+    }
+  }, [cameraActive]);
+
+  const monthlyIncome = Number(profile?.monthlyIncome || 0);
+  const unsecuredLimit = monthlyIncome > 0 ? monthlyIncome * 10 : null;
+  const collateralValue = parseVndInput(form.collateralValue);
+  const securedLimit = collateralValue != null && collateralValue > 0 ? collateralValue * 0.7 : null;
+  const activeLimit = form.loanType === "SECURED" ? securedLimit : unsecuredLimit;
+  const requestedAmount = parseVndInput(form.amount);
+  const exceedsLimit = activeLimit != null && requestedAmount != null && requestedAmount > activeLimit;
+
+  const verificationStatus = informationVerification?.status || "PENDING";
+  const blockedByVerification = informationVerification != null && verificationStatus !== "PASSED";
+
+  const loanTypeHelp = useMemo(() => {
+    if (form.loanType === "SECURED") {
+      return "Vay bằng giấy tờ xe, cần ảnh giấy tờ xe và ảnh biển số xe tương ứng. Nhân viên sẽ liên hệ đặt lịch hẹn sau khi tiếp nhận.";
+    }
+    return "Vay tín chấp cần CCCD hai mặt và ảnh khuôn mặt chụp trực tiếp bằng camera trên trình duyệt.";
+  }, [form.loanType]);
 
   const handleChange = (name) => (event) => {
     setForm((prev) => ({
@@ -42,38 +168,163 @@ export default function CustomerLoanNewPage() {
     }));
   };
 
+  const handleLoanTypeChange = (_event, value) => {
+    if (!value) {
+      return;
+    }
+    setForm((prev) => ({
+      ...prev,
+      loanType: value
+    }));
+    setError("");
+  };
+
+  const handleFileChange = (name) => (event) => {
+    const file = event.target.files?.[0] ?? null;
+    if (!file) {
+      setFiles((prev) => ({ ...prev, [name]: null }));
+      return;
+    }
+    if (!isAcceptedLoanImageFile(file)) {
+      setError("Chỉ chấp nhận ảnh JPG, JPEG, PNG hoặc WEBP cho chứng từ hồ sơ vay.");
+      event.target.value = "";
+      return;
+    }
+    setError("");
+    setFiles((prev) => ({ ...prev, [name]: file }));
+  };
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    setCameraActive(false);
+  };
+
+  const startCamera = async () => {
+    setCameraError("");
+    setError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user" },
+        audio: false
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      setCameraActive(true);
+    } catch (err) {
+      setCameraError(err.message || "Không mở được camera. Vui lòng cấp quyền camera để chụp ảnh khuôn mặt.");
+    }
+  };
+
+  const captureFace = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) {
+      return;
+    }
+    const width = video.videoWidth || 640;
+    const height = video.videoHeight || 480;
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    context.drawImage(video, 0, 0, width, height);
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          setCameraError("Không chụp được ảnh khuôn mặt từ camera.");
+          return;
+        }
+        const faceFile = new File([blob], `face-capture-${Date.now()}.jpg`, { type: "image/jpeg" });
+        setFiles((prev) => ({ ...prev, faceCapture: faceFile }));
+        setCameraError("");
+        stopCamera();
+      },
+      "image/jpeg",
+      0.92
+    );
+  };
+
+  const validateSubmit = () => {
+    if (blockedByVerification) {
+      return "Thông tin của bạn chưa được nhân viên chấp thuận. Vui lòng vào Hồ sơ của tôi để xem trạng thái xác minh.";
+    }
+    const amountValue = parseVndInput(form.amount);
+    const termMonthsValue = Number(form.termMonths);
+    if (amountValue == null || amountValue <= 0) {
+      return "Vui lòng nhập số tiền vay hợp lệ.";
+    }
+    if (!Number.isFinite(termMonthsValue) || termMonthsValue <= 0) {
+      return "Vui lòng nhập kỳ hạn hợp lệ.";
+    }
+    if (form.loanType === "SECURED") {
+      if (collateralValue == null || collateralValue <= 0) {
+        return "Vui lòng nhập giá trị tài sản bảo đảm.";
+      }
+      if (!files.vehicleRegistration) {
+        return "Vui lòng chụp hoặc tải ảnh giấy tờ xe.";
+      }
+      if (!files.licensePlateImage) {
+        return "Vui lòng chụp hoặc tải ảnh biển số xe.";
+      }
+      return "";
+    }
+    if (!files.idCardFront) {
+      return "Vui lòng tải ảnh CCCD mặt trước.";
+    }
+    if (!files.idCardBack) {
+      return "Vui lòng tải ảnh CCCD mặt sau.";
+    }
+    if (!files.faceCapture) {
+      return "Vui lòng chụp ảnh khuôn mặt hiện tại bằng camera.";
+    }
+    return "";
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
     setSuccessMessage("");
+
+    const validationError = validateSubmit();
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
     const amountValue = parseVndInput(form.amount);
     const termMonthsValue = Number(form.termMonths);
-    const collateralValue = parseVndInput(form.collateralValue);
-
-    if (amountValue == null || amountValue <= 0) {
-      setError("Vui lòng nhập số tiền vay hợp lệ.");
-      return;
-    }
-    if (!Number.isFinite(termMonthsValue) || termMonthsValue <= 0) {
-      setError("Vui lòng nhập kỳ hạn hợp lệ.");
-      return;
-    }
-
     setSubmitting(true);
     try {
-      const created = await createLoanApi(accessToken, {
-        amount: amountValue,
-        termMonths: termMonthsValue,
-        purpose: form.purpose,
-        collateralValue: form.collateralValue === "" ? null : collateralValue
-      });
-      setSuccessMessage(`Tạo hồ sơ vay #${created.id} thành công.`);
-      setForm({
-        amount: "",
-        termMonths: "",
-        purpose: "PERSONAL",
-        collateralValue: ""
-      });
+      const created = await createLoanApi(
+        accessToken,
+        {
+          loanType: form.loanType,
+          amount: amountValue,
+          termMonths: termMonthsValue,
+          purpose: form.purpose,
+          collateralType: form.loanType === "SECURED" ? form.collateralType : null,
+          collateralValue: form.loanType === "SECURED" ? collateralValue : null
+        },
+        form.loanType === "SECURED"
+          ? {
+              vehicleRegistration: files.vehicleRegistration,
+              licensePlateImage: files.licensePlateImage
+            }
+          : {
+              idCardFront: files.idCardFront,
+              idCardBack: files.idCardBack,
+              faceCapture: files.faceCapture
+            }
+      );
+      setSuccessMessage(
+        form.loanType === "SECURED"
+          ? `Đã tiếp nhận hồ sơ vay thế chấp #${created.id}. Nhân viên sẽ liên hệ để đặt lịch hẹn.`
+          : `Đã gửi hồ sơ vay tín chấp #${created.id}. Vui lòng chờ kết quả thẩm định.`
+      );
+      setForm(emptyForm);
+      setFiles(emptyFiles);
       navigate(`/customer/loans/${created.id}`);
     } catch (err) {
       setError(err.message || "Không tạo được hồ sơ vay");
@@ -86,69 +337,266 @@ export default function CustomerLoanNewPage() {
     <Stack spacing={2}>
       <Typography variant="h4">Tạo hồ sơ vay</Typography>
       <Typography color="text.secondary">
-        Nhập số tiền, kỳ hạn, mục đích vay. Trạng thái ban đầu: Chờ xử lý.
+        Kiểm tra thông tin cá nhân đã lưu, sau đó chọn vay thế chấp hoặc vay tín chấp để nộp chứng từ tương ứng.
       </Typography>
+
+      <Paper sx={{ p: 3 }}>
+        <Stack spacing={1.5}>
+          <Typography variant="h6">Thông tin cá nhân</Typography>
+          {loading && <LinearProgress />}
+          {verificationError && <Alert severity="warning">{verificationError}</Alert>}
+          {profile ? (
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={4}>
+                <Typography variant="body2">Họ tên: {profile.fullName || "-"}</Typography>
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <Typography variant="body2">Số điện thoại: {profile.phone || "-"}</Typography>
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <Typography variant="body2">Thu nhập: {formatVnd(profile.monthlyIncome)}</Typography>
+              </Grid>
+            </Grid>
+          ) : (
+            <Alert severity="info">
+              Bạn cần hoàn thiện hồ sơ cá nhân và phiếu lương trước khi tạo hồ sơ vay.
+            </Alert>
+          )}
+          {informationVerification && (
+            <Alert severity={verificationStatus === "PASSED" ? "success" : verificationStatus === "FAILED" ? "warning" : "info"}>
+              Trạng thái xác minh thông tin: {labelVerificationStatus(verificationStatus)}.
+              {informationVerification.rejectionReason ? ` Lý do: ${informationVerification.rejectionReason}` : ""}
+            </Alert>
+          )}
+          {(blockedByVerification || !profile) && (
+            <Button component={RouterLink} to="/customer/profile" variant="outlined" sx={{ alignSelf: "flex-start" }}>
+              Đến hồ sơ của tôi
+            </Button>
+          )}
+        </Stack>
+      </Paper>
+
       <Paper component="form" onSubmit={handleSubmit} sx={{ p: 3 }}>
-        <Stack spacing={2} sx={{ mb: 2 }}>
+        <Stack spacing={2.5}>
           {error && <Alert severity="error">{error}</Alert>}
           {successMessage && <Alert severity="success">{successMessage}</Alert>}
-        </Stack>
-        <Grid container spacing={2}>
-          <Grid item xs={12} md={6}>
-            <TextField
-              label="Số tiền vay"
-              type="text"
-              value={form.amount}
-              onChange={handleMoneyChange("amount")}
-              required
-              fullWidth
-              disabled={submitting}
-              inputProps={{ inputMode: "numeric" }}
-            />
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <TextField
-              label="Kỳ hạn (tháng)"
-              type="number"
-              value={form.termMonths}
-              onChange={handleChange("termMonths")}
-              required
-              fullWidth
-              disabled={submitting}
-            />
-          </Grid>
-          <Grid item xs={12}>
-            <TextField
-              select
-              label="Mục đích"
-              fullWidth
-              value={form.purpose}
-              onChange={handleChange("purpose")}
-              disabled={submitting}
+
+          <Stack spacing={1}>
+            <Typography variant="h6">Chọn loại vay</Typography>
+            <ToggleButtonGroup
+              exclusive
+              value={form.loanType}
+              onChange={handleLoanTypeChange}
+              disabled={submitting || blockedByVerification || loading}
+              sx={{ alignSelf: "flex-start" }}
             >
-              <MenuItem value="PERSONAL">Tiêu dùng cá nhân</MenuItem>
-              <MenuItem value="HOME">Mua nhà</MenuItem>
-              <MenuItem value="EDUCATION">Học tập</MenuItem>
-              <MenuItem value="BUSINESS">Kinh doanh</MenuItem>
-            </TextField>
+              <ToggleButton value="UNSECURED">{labelLoanType("UNSECURED")}</ToggleButton>
+              <ToggleButton value="SECURED">{labelLoanType("SECURED")}</ToggleButton>
+            </ToggleButtonGroup>
+            <Typography variant="body2" color="text.secondary">{loanTypeHelp}</Typography>
+          </Stack>
+
+          <Grid container spacing={2}>
+            <Grid item xs={12} md={4}>
+              <TextField
+                label="Số tiền vay"
+                type="text"
+                value={form.amount}
+                onChange={handleMoneyChange("amount")}
+                required
+                fullWidth
+                disabled={submitting || blockedByVerification || loading}
+                inputProps={{ inputMode: "numeric" }}
+              />
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <TextField
+                label="Kỳ hạn (tháng)"
+                type="number"
+                value={form.termMonths}
+                onChange={handleChange("termMonths")}
+                required
+                fullWidth
+                disabled={submitting || blockedByVerification || loading}
+              />
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <TextField
+                select
+                label="Nhu cầu vay"
+                fullWidth
+                value={form.purpose}
+                onChange={handleChange("purpose")}
+                disabled={submitting || blockedByVerification || loading}
+              >
+                <MenuItem value="PERSONAL">Tiêu dùng cá nhân</MenuItem>
+                <MenuItem value="HOME">Mua nhà</MenuItem>
+                <MenuItem value="EDUCATION">Học tập</MenuItem>
+                <MenuItem value="BUSINESS">Kinh doanh</MenuItem>
+              </TextField>
+            </Grid>
           </Grid>
-          <Grid item xs={12}>
-            <TextField
-              label="Giá trị tài sản đảm bảo (tùy chọn)"
-              type="text"
-              value={form.collateralValue}
-              onChange={handleMoneyChange("collateralValue")}
-              fullWidth
-              disabled={submitting}
-              inputProps={{ inputMode: "numeric" }}
-            />
-          </Grid>
-          <Grid item xs={12}>
-            <Button type="submit" variant="contained" disabled={submitting}>
-              {submitting ? "Đang gửi..." : "Gửi hồ sơ vay"}
-            </Button>
-          </Grid>
-        </Grid>
+
+          <Paper variant="outlined" sx={{ p: 2 }}>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "center" }}>
+              <Chip
+                label={
+                  activeLimit != null
+                    ? `Hạn mức tạm tính: ${formatVnd(activeLimit)}`
+                    : form.loanType === "SECURED"
+                      ? "Nhập giá trị tài sản để tính hạn mức"
+                      : "Chưa có thu nhập để tính hạn mức"
+                }
+                color={activeLimit != null ? "info" : "default"}
+              />
+              {exceedsLimit && (
+                <Alert severity="warning" sx={{ py: 0 }}>
+                  Số tiền yêu cầu đang vượt hạn mức tạm tính. Nhân viên có thể yêu cầu điều chỉnh khi thẩm định.
+                </Alert>
+              )}
+            </Stack>
+          </Paper>
+
+          {form.loanType === "SECURED" && (
+            <Stack spacing={2}>
+              <Divider />
+              <Typography variant="h6">Chứng từ vay thế chấp</Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    select
+                    label="Tài sản bảo đảm"
+                    fullWidth
+                    value={form.collateralType}
+                    onChange={handleChange("collateralType")}
+                    disabled={submitting || blockedByVerification || loading}
+                  >
+                    <MenuItem value="VEHICLE_REGISTRATION">{labelCollateralType("VEHICLE_REGISTRATION")}</MenuItem>
+                  </TextField>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    label="Giá trị tài sản bảo đảm"
+                    type="text"
+                    value={form.collateralValue}
+                    onChange={handleMoneyChange("collateralValue")}
+                    fullWidth
+                    required
+                    disabled={submitting || blockedByVerification}
+                    inputProps={{ inputMode: "numeric" }}
+                    placeholder="Ví dụ: 150.000.000"
+                    helperText="Nhập giá trị thị trường ước tính của tài sản"
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <FilePicker
+                    label={labelLoanDocumentType("VEHICLE_REGISTRATION")}
+                    file={files.vehicleRegistration}
+                    disabled={submitting || blockedByVerification || loading}
+                    onChange={handleFileChange("vehicleRegistration")}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <FilePicker
+                    label={labelLoanDocumentType("LICENSE_PLATE_IMAGE")}
+                    file={files.licensePlateImage}
+                    disabled={submitting || blockedByVerification || loading}
+                    onChange={handleFileChange("licensePlateImage")}
+                  />
+                </Grid>
+              </Grid>
+            </Stack>
+          )}
+
+          {form.loanType === "UNSECURED" && (
+            <Stack spacing={2}>
+              <Divider />
+              <Typography variant="h6">Xác minh vay tín chấp</Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={12} md={6}>
+                  <FilePicker
+                    label={labelLoanDocumentType("ID_CARD_FRONT")}
+                    file={files.idCardFront}
+                    disabled={submitting || blockedByVerification || loading}
+                    onChange={handleFileChange("idCardFront")}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <FilePicker
+                    label={labelLoanDocumentType("ID_CARD_BACK")}
+                    file={files.idCardBack}
+                    disabled={submitting || blockedByVerification || loading}
+                    onChange={handleFileChange("idCardBack")}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <Paper variant="outlined" sx={{ p: 2 }}>
+                    <Stack spacing={1.5}>
+                      <Typography variant="subtitle2">{labelLoanDocumentType("FACE_CAPTURE")}</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Ảnh khuôn mặt phải được chụp trực tiếp bằng camera, không hỗ trợ upload file cho bước này.
+                      </Typography>
+                      {cameraError && <Alert severity="warning">{cameraError}</Alert>}
+                      {files.faceCapture && (
+                        <Alert severity="success">
+                          Đã chụp ảnh khuôn mặt ({formatFileSize(files.faceCapture.size)}).
+                        </Alert>
+                      )}
+                      {cameraActive && (
+                        <Box
+                          component="video"
+                          ref={videoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          sx={{
+                            width: "100%",
+                            maxWidth: 420,
+                            borderRadius: 1,
+                            border: "1px solid",
+                            borderColor: "divider",
+                            bgcolor: "grey.100"
+                          }}
+                        />
+                      )}
+                      <canvas ref={canvasRef} style={{ display: "none" }} />
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+                        {!cameraActive && (
+                          <Button
+                            variant="outlined"
+                            onClick={startCamera}
+                            disabled={submitting || blockedByVerification || loading}
+                          >
+                            Mở camera
+                          </Button>
+                        )}
+                        {cameraActive && (
+                          <>
+                            <Button variant="contained" onClick={captureFace} disabled={submitting}>
+                              Chụp ảnh
+                            </Button>
+                            <Button variant="outlined" color="inherit" onClick={stopCamera} disabled={submitting}>
+                              Tắt camera
+                            </Button>
+                          </>
+                        )}
+                      </Stack>
+                    </Stack>
+                  </Paper>
+                </Grid>
+              </Grid>
+            </Stack>
+          )}
+
+          <Button
+            type="submit"
+            variant="contained"
+            disabled={submitting || blockedByVerification || loading || !profile}
+            sx={{ alignSelf: "flex-start" }}
+          >
+            {submitting ? "Đang gửi..." : "Gửi hồ sơ vay"}
+          </Button>
+        </Stack>
       </Paper>
     </Stack>
   );

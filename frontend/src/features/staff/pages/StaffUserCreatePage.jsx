@@ -15,10 +15,12 @@
   Typography
 } from "@mui/material";
 import { useState } from "react";
-import { registerApi } from "@/features/auth/api/authApi";
+import { createManagedUserApi } from "@/features/admin/api/adminUserApi";
+import { useAuth } from "@/features/auth/context/AuthContext";
 import { labelRole } from "@/shared/utils/labels";
 
 export default function StaffUserCreatePage() {
+  const { accessToken } = useAuth();
   const [form, setForm] = useState({
     email: "",
     password: "",
@@ -42,12 +44,11 @@ export default function StaffUserCreatePage() {
     setError("");
     setSuccess("");
     try {
-      const payload = await registerApi({
+      const createdUser = await createManagedUserApi(accessToken, {
         email: form.email,
         password: form.password,
         role: form.role
       });
-      const createdUser = payload?.user;
       if (createdUser) {
         setCreatedAccounts((prev) => [
           {

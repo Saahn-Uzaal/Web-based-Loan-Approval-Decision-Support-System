@@ -14,7 +14,6 @@ public class DecisionEngineService {
 
     private static final Logger log = LoggerFactory.getLogger(DecisionEngineService.class);
 
-    // --- Scoring weights ---
     private static final double WEIGHT_DTI = 0.23;
     private static final double WEIGHT_INCOME = 0.18;
     private static final double WEIGHT_CREDIT_HISTORY = 0.15;
@@ -25,17 +24,14 @@ public class DecisionEngineService {
     private static final double WEIGHT_PURPOSE = 0.04;
     private static final double WEIGHT_VERIFICATION = 0.02;
 
-    // --- Credit score range ---
     private static final int SCORE_MIN = 300;
     private static final int SCORE_MAX = 850;
     private static final double SCORE_MULTIPLIER = 5.5;
 
-    // --- Risk rank thresholds ---
     private static final int RANK_A_THRESHOLD = 780;
     private static final int RANK_B_THRESHOLD = 700;
     private static final int RANK_C_THRESHOLD = 620;
 
-    // --- DTI thresholds ---
     private static final double DTI_LOW_THRESHOLD = 35.0;
     private static final double DTI_HIGH_DOWNGRADE_THRESHOLD = 55.0;
     private static final double DTI_MODERATE_DOWNGRADE_THRESHOLD = 45.0;
@@ -47,7 +43,9 @@ public class DecisionEngineService {
         double requestedAmount = toPositiveDouble(input.requestedAmount());
         int termMonths = sanitizeTermMonths(input.termMonths());
         double existingMonthlyDebt = toPositiveDouble(input.existingMonthlyDebt());
-        double monthlyInstallment = estimateMonthlyInstallment(requestedAmount, termMonths);
+        double monthlyInstallment = input.projectedMonthlyPayment() != null
+                ? toPositiveDouble(input.projectedMonthlyPayment())
+                : estimateMonthlyInstallment(requestedAmount, termMonths);
         double totalMonthlyDebt = existingMonthlyDebt + monthlyInstallment;
         double debtToIncomeRatio = resolveDti(input.debtToIncomeRatio(), monthlyIncome, totalMonthlyDebt);
         double loanToAnnualIncomeRatio = monthlyIncome > 0 ? requestedAmount / (monthlyIncome * 12.0) : 5.0;
@@ -55,61 +53,66 @@ public class DecisionEngineService {
         double dtiScore = dtiScore(debtToIncomeRatio);
         double incomeScore = incomeScore(monthlyIncome);
         double burdenScore = burdenScore(loanToAnnualIncomeRatio);
-        double employmentScore = employmentScore(input.employmentStatus(), employmentYears(input.employmentStartDate()));
+        double employmentScore = employmentScore(
+                input.employmentStatus(),
+                employmentYears(input.employmentStartDate()));
         double ageScore = ageScore(input.dateOfBirth());
         double creditHistoryScore = creditHistoryScore(input.creditHistoryScore());
         double collateralScore = collateralScore(input.collateralValue(), requestedAmount);
         double purposeScore = purposeScore(input.purpose());
         double verificationScore = verificationScore(input);
 
-        double weightedRawScore =
-            dtiScore * WEIGHT_DTI +
-            incomeScore * WEIGHT_INCOME +
-            burdenScore * WEIGHT_BURDEN +
-            employmentScore * WEIGHT_EMPLOYMENT +
-            ageScore * WEIGHT_AGE +
-            creditHistoryScore * WEIGHT_CREDIT_HISTORY +
-            collateralScore * WEIGHT_COLLATERAL +
-            purposeScore * WEIGHT_PURPOSE +
-            verificationScore * WEIGHT_VERIFICATION;
+        double weightedRawScore = dtiScore * WEIGHT_DTI
+                + incomeScore * WEIGHT_INCOME
+                + burdenScore * WEIGHT_BURDEN
+                + employmentScore * WEIGHT_EMPLOYMENT
+                + ageScore * WEIGHT_AGE
+                + creditHistoryScore * WEIGHT_CREDIT_HISTORY
+                + collateralScore * WEIGHT_COLLATERAL
+                + purposeScore * WEIGHT_PURPOSE
+                + verificationScore * WEIGHT_VERIFICATION;
 
-        int baseScore = clamp((int) Math.round(SCORE_MIN + weightedRawScore * SCORE_MULTIPLIER), SCORE_MIN, SCORE_MAX);
+        int baseScore = clamp(
+                (int) Math.round(SCORE_MIN + weightedRawScore * SCORE_MULTIPLIER),
+                SCORE_MIN,
+                SCORE_MAX);
 
         int paymentBonus = paymentRatingBonus(input.paymentRating());
         int compliancePenalty = compliancePenalty(input);
-        int creditScore = clamp(baseScore + paymentBonus + compliancePenalty, 300, 850);
+        int creditScore = clamp(baseScore + paymentBonus + compliancePenalty, SCORE_MIN, SCORE_MAX);
 
         RiskRank riskRank = riskRank(creditScore, debtToIncomeRatio, input);
-
         boolean lowDti = debtToIncomeRatio <= DTI_LOW_THRESHOLD;
-        boolean borderline = isBorderline(input, monthlyIncome, debtToIncomeRatio, loanToAnnualIncomeRatio, riskRank);
+        boolean borderline = isBorderline(monthlyIncome, debtToIncomeRatio, loanToAnnualIncomeRatio, riskRank);
 
-        DssRecommendation recommendation = recommendation(input, riskRank, lowDti, borderline, debtToIncomeRatio);
+        DssRecommendation recommendation = recommendation(input, riskRank, debtToIncomeRatio);
         CustomerSegment customerSegment = customerSegment(riskRank, monthlyIncome, requestedAmount, debtToIncomeRatio);
-
         String appliedRule = appliedRule(input, recommendation, riskRank, lowDti, borderline, debtToIncomeRatio);
         String explanation = String.format(
-            Locale.US,
-            "Score=%d (base=%d, paymentBonus=%+d, compliancePenalty=%+d, DTI %.1f%%, income %.0f, loanToIncome %.2fx, employment %.0f, age %.0f, creditHistory %.0f, collateral %.0f, verification %.0f). Risk=%s, Segment=%s, Rule=%s.",
-            creditScore,
-            baseScore,
-            paymentBonus,
-            compliancePenalty,
-            debtToIncomeRatio,
-            monthlyIncome,
-            loanToAnnualIncomeRatio,
-            employmentScore,
-            ageScore,
-            creditHistoryScore,
-            collateralScore,
-            verificationScore,
-            riskRank.name(),
-            customerSegment.name(),
-            appliedRule
-        );
+                Locale.US,
+                "Điểm=%d (nền=%d, thưởng thanh toán=%+d, phạt tuân thủ=%+d, DTI %.1f%%, thu nhập %.0f, tỷ lệ vay/thu nhập %.2fx, việc làm %.0f, tuổi %.0f, lịch sử tín dụng %.0f, tài sản bảo đảm %.0f, xác minh %.0f). Rủi ro=%s, phân khúc=%s, quy tắc=%s.",
+                creditScore,
+                baseScore,
+                paymentBonus,
+                compliancePenalty,
+                debtToIncomeRatio,
+                monthlyIncome,
+                loanToAnnualIncomeRatio,
+                employmentScore,
+                ageScore,
+                creditHistoryScore,
+                collateralScore,
+                verificationScore,
+                riskRank.name(),
+                customerSegment.name(),
+                appliedRule);
 
-        log.info("DSS evaluation: customerId={}, score={}, rank={}, recommendation={}",
-            input.customerId(), creditScore, riskRank, recommendation);
+        log.info(
+                "DSS evaluation: customerId={}, score={}, rank={}, recommendation={}",
+                input.customerId(),
+                creditScore,
+                riskRank,
+                recommendation);
 
         return new DssResult(creditScore, riskRank, customerSegment, recommendation, explanation);
     }
@@ -131,19 +134,19 @@ public class DecisionEngineService {
     }
 
     private double incomeScore(double income) {
-        if (income >= 6000) {
+        if (income >= 60_000_000) {
             return 100;
         }
-        if (income >= 4000) {
+        if (income >= 40_000_000) {
             return 88;
         }
-        if (income >= 2500) {
+        if (income >= 25_000_000) {
             return 82;
         }
-        if (income >= 1500) {
+        if (income >= 15_000_000) {
             return 62;
         }
-        if (income >= 800) {
+        if (income >= 8_000_000) {
             return 42;
         }
         if (income > 0) {
@@ -184,10 +187,7 @@ public class DecisionEngineService {
     }
 
     private RiskRank riskRank(int creditScore, double dti, DecisionInput input) {
-        if (hasComplianceHardReject(input)) {
-            return RiskRank.D;
-        }
-        if (dti >= DTI_EXTREME_THRESHOLD) {
+        if (hasComplianceHardReject(input) || dti >= DTI_EXTREME_THRESHOLD) {
             return RiskRank.D;
         }
 
@@ -212,65 +212,35 @@ public class DecisionEngineService {
     }
 
     private boolean isBorderline(
-        DecisionInput input,
-        double income,
-        double dti,
-        double loanToAnnualIncomeRatio,
-        RiskRank rank
-    ) {
+            double income,
+            double dti,
+            double loanToAnnualIncomeRatio,
+            RiskRank rank) {
         if (!(rank == RiskRank.B || rank == RiskRank.C)) {
             return false;
         }
-        boolean missingCriticalData =
-            input.monthlyIncome() == null ||
-            input.debtToIncomeRatio() == null ||
-            input.creditHistoryScore() == null ||
-            input.employmentStartDate() == null;
-        return (dti >= 35 && dti <= 60) ||
-            loanToAnnualIncomeRatio >= 2.5 ||
-            income < 1500 ||
-            missingCriticalData;
+        return (dti >= 35 && dti <= 60)
+                || loanToAnnualIncomeRatio >= 2.5
+                || income < 15_000_000;
     }
 
-    private DssRecommendation recommendation(
-        DecisionInput input,
-        RiskRank riskRank,
-        boolean lowDti,
-        boolean borderline,
-        double dti
-    ) {
-        if (hasComplianceHardReject(input)) {
+    private DssRecommendation recommendation(DecisionInput input, RiskRank riskRank, double dti) {
+        if (hasComplianceHardReject(input) || riskRank == RiskRank.D) {
             return DssRecommendation.REJECT_RECOMMENDED;
-        }
-        if (riskRank == RiskRank.D) {
-            return DssRecommendation.REJECT_RECOMMENDED;
-        }
-        if (Boolean.FALSE.equals(input.incomeVerified())) {
-            return DssRecommendation.ESCALATE_RECOMMENDED;
-        }
-        if (riskRank == RiskRank.A && lowDti) {
-            return DssRecommendation.APPROVE_RECOMMENDED;
-        }
-        if ((riskRank == RiskRank.B || riskRank == RiskRank.C) && borderline) {
-            return DssRecommendation.ESCALATE_RECOMMENDED;
-        }
-        if (riskRank == RiskRank.B && dti <= DTI_MODERATE_DOWNGRADE_THRESHOLD) {
-            return DssRecommendation.APPROVE_RECOMMENDED;
         }
         if (riskRank == RiskRank.C && dti > DTI_REJECT_THRESHOLD) {
             return DssRecommendation.REJECT_RECOMMENDED;
         }
-        return DssRecommendation.ESCALATE_RECOMMENDED;
+        return DssRecommendation.APPROVE_RECOMMENDED;
     }
 
     private CustomerSegment customerSegment(
-        RiskRank riskRank,
-        double monthlyIncome,
-        double requestedAmount,
-        double dti
-    ) {
+            RiskRank riskRank,
+            double monthlyIncome,
+            double requestedAmount,
+            double dti) {
         boolean highRisk = riskRank == RiskRank.C || riskRank == RiskRank.D || dti >= 50;
-        boolean highValue = monthlyIncome >= 3000 || requestedAmount >= 20000;
+        boolean highValue = monthlyIncome >= 40_000_000 || requestedAmount >= 300_000_000;
 
         if (!highRisk && highValue) {
             return CustomerSegment.LOW_RISK_HIGH_VALUE;
@@ -285,35 +255,31 @@ public class DecisionEngineService {
     }
 
     private String appliedRule(
-        DecisionInput input,
-        DssRecommendation recommendation,
-        RiskRank riskRank,
-        boolean lowDti,
-        boolean borderline,
-        double dti
-    ) {
+            DecisionInput input,
+            DssRecommendation recommendation,
+            RiskRank riskRank,
+            boolean lowDti,
+            boolean borderline,
+            double dti) {
         if (hasComplianceHardReject(input)) {
-            return "Compliance hard-fail (KYC/AML/FRAUD) -> REJECT_RECOMMENDED";
-        }
-        if (Boolean.FALSE.equals(input.incomeVerified()) && recommendation == DssRecommendation.ESCALATE_RECOMMENDED) {
-            return "Income not verified -> ESCALATE_RECOMMENDED";
-        }
-        if (recommendation == DssRecommendation.APPROVE_RECOMMENDED && riskRank == RiskRank.A && lowDti) {
-            return "A + low DTI -> APPROVE_RECOMMENDED";
+            return "Từ chối cứng theo quy tắc tuân thủ";
         }
         if (recommendation == DssRecommendation.REJECT_RECOMMENDED && riskRank == RiskRank.D) {
-            return "Risk rank D -> REJECT_RECOMMENDED";
-        }
-        if (recommendation == DssRecommendation.ESCALATE_RECOMMENDED && borderline) {
-            return "B/C + borderline factors -> ESCALATE_RECOMMENDED";
-        }
-        if (recommendation == DssRecommendation.APPROVE_RECOMMENDED && riskRank == RiskRank.B) {
-            return "Risk rank B with acceptable DTI -> APPROVE_RECOMMENDED";
+            return "Xếp hạng rủi ro D";
         }
         if (recommendation == DssRecommendation.REJECT_RECOMMENDED && riskRank == RiskRank.C && dti > 60) {
-            return "Risk rank C with very high DTI -> REJECT_RECOMMENDED";
+            return "Xếp hạng rủi ro C với DTI rất cao";
         }
-        return "Conservative fallback -> ESCALATE_RECOMMENDED";
+        if (recommendation == DssRecommendation.APPROVE_RECOMMENDED && riskRank == RiskRank.A && lowDti) {
+            return "Hạng A với DTI thấp";
+        }
+        if (recommendation == DssRecommendation.APPROVE_RECOMMENDED && riskRank == RiskRank.B) {
+            return "Hạng B cần nhân viên thẩm định";
+        }
+        if (borderline || Boolean.FALSE.equals(input.incomeVerified())) {
+            return "Chưa tự động từ chối, giữ lại trong hàng chờ thẩm định";
+        }
+        return "Khuyến nghị duyệt theo quy tắc an toàn mặc định";
     }
 
     private int paymentRatingBonus(Integer paymentRating) {
@@ -341,9 +307,9 @@ public class DecisionEngineService {
     }
 
     private boolean hasComplianceHardReject(DecisionInput input) {
-        return Boolean.TRUE.equals(input.fraudFlag()) ||
-            Boolean.TRUE.equals(input.kycFailed()) ||
-            Boolean.TRUE.equals(input.amlFailed());
+        return Boolean.TRUE.equals(input.fraudFlag())
+                || Boolean.TRUE.equals(input.kycFailed())
+                || Boolean.TRUE.equals(input.amlFailed());
     }
 
     private double verificationScore(DecisionInput input) {
@@ -500,3 +466,4 @@ public class DecisionEngineService {
         return Math.min(max, Math.max(min, value));
     }
 }
+

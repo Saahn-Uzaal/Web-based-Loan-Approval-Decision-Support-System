@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import {
   Alert,
   Box,
@@ -6,7 +6,6 @@ import {
   Chip,
   FormControlLabel,
   LinearProgress,
-  MenuItem,
   Paper,
   Stack,
   Switch,
@@ -26,19 +25,19 @@ import { useAuth } from "@/features/auth/context/AuthContext";
 
 const capabilityCards = [
   {
-    title: "DSS scoring",
-    description: "Đánh giá credit score, DTI và khuyến nghị phê duyệt trước vòng staff review.",
+    title: "Chấm điểm DSS",
+    description: "Đánh giá điểm tín dụng, DTI và khuyến nghị phê duyệt trước vòng thẩm định của nhân viên.",
     icon: <ScoreIcon fontSize="small" />,
     color: "#c76b3e"
   },
   {
-    title: "KYC / AML / Fraud",
-    description: "Xác minh nhiều lớp trong cùng workflow để giảm approve sai hồ sơ.",
+    title: "KYC / AML / Gian lận",
+    description: "Xác minh nhiều lớp trong cùng luồng xử lý để giảm nguy cơ duyệt sai hồ sơ.",
     icon: <ShieldIcon fontSize="small" />,
     color: "#13766c"
   },
   {
-    title: "Contract & repayment",
+    title: "Hợp đồng và thanh toán",
     description: "Sau phê duyệt, hợp đồng và thanh toán tiếp tục được theo dõi trong cùng hệ thống.",
     icon: <PaymentIcon fontSize="small" />,
     color: "#154c79"
@@ -80,7 +79,6 @@ export default function LoginPage() {
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("CUSTOMER");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -94,7 +92,7 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       if (isRegisterMode) {
-        await register({ email, password, role });
+        await register({ email, password, role: "CUSTOMER" });
       } else {
         await login({ email, password });
       }
@@ -161,7 +159,7 @@ export default function LoginPage() {
               <Stack spacing={1}>
                 <Chip
                   icon={<LockIcon sx={{ color: "inherit !important" }} />}
-                  label="Secure entry"
+                  label="Truy cập an toàn"
                   sx={{
                     alignSelf: "flex-start",
                     bgcolor: "rgba(255,255,255,0.12)",
@@ -202,8 +200,8 @@ export default function LoginPage() {
             </Stack>
 
             <Typography sx={{ maxWidth: 620, color: alpha("#ffffff", 0.76), fontSize: { xs: "1rem", md: "1.06rem" } }}>
-              Màn hình này là lớp xác thực sau landing page. Người dùng vào đây khi đã hiểu quy trình cho vay,
-              vai trò của họ và sẵn sàng truy cập đúng dashboard thao tác.
+              Màn hình này là lớp xác thực sau trang giới thiệu. Người dùng vào đây khi đã hiểu quy trình cho vay,
+              vai trò của họ và sẵn sàng truy cập đúng bảng điều khiển để thao tác.
             </Typography>
 
             <Box
@@ -259,13 +257,13 @@ export default function LoginPage() {
             >
               <Stack spacing={1.2}>
                 <Typography variant="overline" sx={{ letterSpacing: "0.16em", color: alpha("#fff", 0.64) }}>
-                  Access flow
+                  Luồng truy cập
                 </Typography>
                 <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                  Public landing page, protected dashboard, role-based routes.
+                  Trang giới thiệu công khai, bảng điều khiển được bảo vệ, điều hướng theo vai trò.
                 </Typography>
                 <Typography variant="body2" sx={{ color: alpha("#ffffff", 0.72), maxWidth: 560 }}>
-                  Sau khi xác thực thành công, người dùng được đưa thẳng vào luồng thao tác theo vai trò thay vì quay lại trang public.
+                  Sau khi xác thực thành công, người dùng được đưa thẳng vào luồng thao tác theo vai trò thay vì quay lại trang công khai.
                 </Typography>
               </Stack>
             </Paper>
@@ -285,7 +283,7 @@ export default function LoginPage() {
           <Stack spacing={3}>
             <Stack spacing={1.25}>
               <Chip
-                label={isRegisterMode ? "Create account" : "Sign in"}
+                label={isRegisterMode ? "Tạo tài khoản" : "Đăng nhập"}
                 sx={{
                   alignSelf: "flex-start",
                   bgcolor: "rgba(9,33,58,0.06)",
@@ -298,8 +296,8 @@ export default function LoginPage() {
               </Typography>
               <Typography color="text.secondary">
                 {isRegisterMode
-                  ? "Chỉ hỗ trợ đăng ký CUSTOMER và STAFF. Vai trò ADMIN được bootstrap từ backend."
-                  : "Sử dụng email và mật khẩu của tài khoản đã có để truy cập dashboard tương ứng."}
+                  ? "Public register chỉ tạo tài khoản khách hàng. Tài khoản nhân viên được quản trị viên tạo trong khu vực admin."
+                  : "Sử dụng email và mật khẩu của tài khoản đã có để truy cập đúng bảng điều khiển tương ứng."}
               </Typography>
             </Stack>
 
@@ -323,7 +321,7 @@ export default function LoginPage() {
 
             {isRegisterMode && (
               <Alert severity="info" sx={{ borderRadius: 3 }}>
-                Bạn có thể đăng ký tài khoản khách hàng hoặc nhân viên để kiểm thử RBAC và các route protected.
+                Bạn chỉ có thể đăng ký tài khoản khách hàng tại màn hình công khai này.
               </Alert>
             )}
 
@@ -349,26 +347,13 @@ export default function LoginPage() {
                   required
                   fullWidth
                 />
-                {isRegisterMode && (
-                  <TextField
-                    select
-                    label="Vai trò"
-                    value={role}
-                    onChange={(event) => setRole(event.target.value)}
-                    fullWidth
-                  >
-                    <MenuItem value="CUSTOMER">Khách hàng</MenuItem>
-                    <MenuItem value="STAFF">Nhân viên</MenuItem>
-                  </TextField>
-                )}
-
                 <FormControlLabel
-                  control={
+                  control={(
                     <Switch
                       checked={isRegisterMode}
                       onChange={(event) => setIsRegisterMode(event.target.checked)}
                     />
-                  }
+                  )}
                   label={isRegisterMode ? "Đang ở chế độ đăng ký" : "Đang ở chế độ đăng nhập"}
                   sx={{ m: 0 }}
                 />
@@ -407,7 +392,7 @@ export default function LoginPage() {
                   Ghi chú truy cập
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Route không hợp lệ hoặc sai vai trò sẽ được điều hướng về dashboard sau khi đăng nhập.
+                  Đường dẫn không hợp lệ hoặc sai vai trò sẽ được điều hướng về bảng điều khiển sau khi đăng nhập.
                 </Typography>
               </Stack>
             </Paper>

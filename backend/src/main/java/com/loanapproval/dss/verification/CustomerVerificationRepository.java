@@ -21,6 +21,7 @@ public class CustomerVerificationRepository {
                 customer_id,
                 document_status,
                 identity_status,
+                face_match_status,
                 income_status,
                 kyc_status,
                 aml_status,
@@ -37,6 +38,7 @@ public class CustomerVerificationRepository {
                 rs.getLong("customer_id"),
                 VerificationStatus.valueOf(rs.getString("document_status")),
                 VerificationStatus.valueOf(rs.getString("identity_status")),
+                VerificationStatus.valueOf(rs.getString("face_match_status")),
                 VerificationStatus.valueOf(rs.getString("income_status")),
                 VerificationStatus.valueOf(rs.getString("kyc_status")),
                 VerificationStatus.valueOf(rs.getString("aml_status")),
@@ -58,6 +60,7 @@ public class CustomerVerificationRepository {
                 customer_id,
                 document_status,
                 identity_status,
+                face_match_status,
                 income_status,
                 kyc_status,
                 aml_status,
@@ -65,10 +68,11 @@ public class CustomerVerificationRepository {
                 note,
                 verified_by,
                 verified_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
                 document_status = VALUES(document_status),
                 identity_status = VALUES(identity_status),
+                face_match_status = VALUES(face_match_status),
                 income_status = VALUES(income_status),
                 kyc_status = VALUES(kyc_status),
                 aml_status = VALUES(aml_status),
@@ -81,6 +85,7 @@ public class CustomerVerificationRepository {
             verification.customerId(),
             verification.documentStatus().name(),
             verification.identityStatus().name(),
+            verification.faceMatchStatus().name(),
             verification.incomeStatus().name(),
             verification.kycStatus().name(),
             verification.amlStatus().name(),
@@ -94,6 +99,7 @@ public class CustomerVerificationRepository {
     public CustomerVerification defaultPending(Long customerId) {
         return new CustomerVerification(
             customerId,
+            VerificationStatus.PENDING,
             VerificationStatus.PENDING,
             VerificationStatus.PENDING,
             VerificationStatus.PENDING,

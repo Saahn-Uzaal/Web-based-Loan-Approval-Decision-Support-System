@@ -1,8 +1,10 @@
 package com.loanapproval.dss.admin;
 
 import com.loanapproval.dss.admin.dto.AdminUserResponse;
+import com.loanapproval.dss.admin.dto.AdminCreateUserRequest;
 import com.loanapproval.dss.security.AuthenticatedUser;
 import com.loanapproval.dss.shared.Role;
+import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -10,8 +12,10 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
@@ -34,6 +38,12 @@ public class AdminUserController {
         return adminUserService.listManagedUsers(role);
     }
 
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    public AdminUserResponse createUser(@Valid @RequestBody AdminCreateUserRequest request) {
+        return adminUserService.createManagedUser(request);
+    }
+
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteUser(Authentication authentication, @PathVariable("id") Long id) {
@@ -43,7 +53,7 @@ public class AdminUserController {
 
     private AuthenticatedUser extractUser(Authentication authentication) {
         if (authentication == null || !(authentication.getPrincipal() instanceof AuthenticatedUser user)) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Chưa xác thực");
         }
         return user;
     }

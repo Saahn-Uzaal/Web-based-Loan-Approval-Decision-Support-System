@@ -1,4 +1,4 @@
-﻿const ROLE_LABELS = {
+const ROLE_LABELS = {
   CUSTOMER: "Khách hàng",
   STAFF: "Nhân viên",
   ADMIN: "Quản trị",
@@ -7,8 +7,12 @@
 
 const LOAN_STATUS_LABELS = {
   PENDING: "Chờ xử lý",
-  WAITING_SUPERVISOR: "Chờ quản lý duyệt",
+  APPOINTMENT_SCHEDULED: "Đã lên lịch hẹn",
   APPROVED: "Đã duyệt",
+  CONTRACTED: "Đã ký hợp đồng",
+  DISBURSED: "Đã giải ngân",
+  ACTIVE: "Đang vay",
+  CLOSED: "Đã tất toán",
   REJECTED: "Từ chối"
 };
 
@@ -19,9 +23,25 @@ const LOAN_PURPOSE_LABELS = {
   BUSINESS: "Kinh doanh"
 };
 
+const LOAN_TYPE_LABELS = {
+  SECURED: "Vay thế chấp",
+  UNSECURED: "Vay tín chấp"
+};
+
+const COLLATERAL_TYPE_LABELS = {
+  VEHICLE_REGISTRATION: "Giấy tờ xe"
+};
+
+const LOAN_DOCUMENT_TYPE_LABELS = {
+  VEHICLE_REGISTRATION: "Giấy tờ xe",
+  LICENSE_PLATE_IMAGE: "Ảnh biển số xe",
+  ID_CARD_FRONT: "CCCD mặt trước",
+  ID_CARD_BACK: "CCCD mặt sau",
+  FACE_CAPTURE: "Ảnh khuôn mặt hiện tại"
+};
+
 const DSS_RECOMMENDATION_LABELS = {
   APPROVE_RECOMMENDED: "Đề xuất duyệt",
-  ESCALATE_RECOMMENDED: "Đề xuất chuyển cấp cao hơn",
   REJECT_RECOMMENDED: "Đề xuất từ chối"
 };
 
@@ -63,8 +83,19 @@ const REPAYMENT_STATUS_LABELS = {
 
 const STAFF_ACTION_LABELS = {
   APPROVE: "Duyệt",
-  REJECT: "Từ chối",
-  ESCALATE: "Chuyển cấp cao hơn"
+  REJECT: "Từ chối"
+};
+
+const SECURED_PROCEDURE_STATUS_LABELS = {
+  DRAFT: "Chưa xử lý",
+  IN_PROGRESS: "Đang xử lý",
+  COMPLETED: "Hoàn tất"
+};
+
+const PAYMENT_CONFIRMATION_STATUS_LABELS = {
+  PENDING_REVIEW: "Chờ đối chiếu",
+  CONFIRMED: "Đã xác nhận",
+  REJECTED: "Bị từ chối"
 };
 
 function fallback(value) {
@@ -81,6 +112,18 @@ export function labelLoanStatus(value) {
 
 export function labelLoanPurpose(value) {
   return LOAN_PURPOSE_LABELS[value] || fallback(value);
+}
+
+export function labelLoanType(value) {
+  return LOAN_TYPE_LABELS[value] || fallback(value);
+}
+
+export function labelCollateralType(value) {
+  return COLLATERAL_TYPE_LABELS[value] || fallback(value);
+}
+
+export function labelLoanDocumentType(value) {
+  return LOAN_DOCUMENT_TYPE_LABELS[value] || fallback(value);
 }
 
 export function labelDssRecommendation(value) {
@@ -111,6 +154,14 @@ export function labelRepaymentStatus(value) {
   return REPAYMENT_STATUS_LABELS[value] || fallback(value);
 }
 
+export function labelPaymentConfirmationStatus(value) {
+  return PAYMENT_CONFIRMATION_STATUS_LABELS[value] || fallback(value);
+}
+
 export function labelStaffAction(value) {
   return STAFF_ACTION_LABELS[value] || fallback(value);
+}
+
+export function labelSecuredProcedureStatus(value) {
+  return SECURED_PROCEDURE_STATUS_LABELS[value] || fallback(value);
 }

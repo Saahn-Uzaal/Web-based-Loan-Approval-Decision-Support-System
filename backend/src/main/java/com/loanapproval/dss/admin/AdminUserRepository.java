@@ -70,7 +70,59 @@ public class AdminUserRepository {
 
     public int deleteCustomerAndRelations(Long userId) {
         jdbcTemplate.update(
+            "DELETE FROM compliance_audit_logs WHERE customer_id = ? OR actor_user_id = ?",
+            userId,
+            userId
+        );
+        jdbcTemplate.update(
+            "DELETE FROM customer_information_verifications WHERE customer_id = ?",
+            userId
+        );
+        jdbcTemplate.update(
+            "DELETE FROM customer_verifications WHERE customer_id = ?",
+            userId
+        );
+        jdbcTemplate.update(
+            "DELETE FROM customer_debts WHERE customer_id = ?",
+            userId
+        );
+        jdbcTemplate.update(
             "DELETE FROM loan_repayments WHERE customer_id = ?",
+            userId
+        );
+        jdbcTemplate.update(
+            """
+            DELETE lrd
+            FROM loan_request_documents lrd
+            INNER JOIN loan_requests lr ON lrd.loan_request_id = lr.id
+            WHERE lr.customer_id = ?
+            """,
+            userId
+        );
+        jdbcTemplate.update(
+            """
+            DELETE sp
+            FROM secured_loan_procedures sp
+            INNER JOIN loan_requests lr ON sp.loan_request_id = lr.id
+            WHERE lr.customer_id = ?
+            """,
+            userId
+        );
+        jdbcTemplate.update(
+            "DELETE FROM loan_appointments WHERE customer_id = ?",
+            userId
+        );
+        jdbcTemplate.update(
+            "DELETE FROM loan_contracts WHERE customer_id = ?",
+            userId
+        );
+        jdbcTemplate.update(
+            """
+            DELETE ra
+            FROM risk_assessments ra
+            INNER JOIN loan_requests lr ON ra.loan_request_id = lr.id
+            WHERE lr.customer_id = ?
+            """,
             userId
         );
         jdbcTemplate.update(
@@ -106,6 +158,26 @@ public class AdminUserRepository {
     }
 
     public int deleteStaffAndRelations(Long userId) {
+        jdbcTemplate.update(
+            "UPDATE customer_information_verifications SET reviewed_by = NULL WHERE reviewed_by = ?",
+            userId
+        );
+        jdbcTemplate.update(
+            "UPDATE customer_verifications SET verified_by = NULL WHERE verified_by = ?",
+            userId
+        );
+        jdbcTemplate.update(
+            "UPDATE compliance_audit_logs SET actor_user_id = NULL WHERE actor_user_id = ?",
+            userId
+        );
+        jdbcTemplate.update(
+            "DELETE FROM loan_appointments WHERE staff_id = ?",
+            userId
+        );
+        jdbcTemplate.update(
+            "DELETE FROM secured_loan_procedures WHERE staff_user_id = ?",
+            userId
+        );
         jdbcTemplate.update(
             "DELETE FROM decision_audits WHERE staff_user_id = ?",
             userId

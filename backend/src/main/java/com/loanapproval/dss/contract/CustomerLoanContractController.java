@@ -33,7 +33,7 @@ public class CustomerLoanContractController {
 
     private AuthenticatedUser extractUser(Authentication authentication) {
         if (authentication == null || !(authentication.getPrincipal() instanceof AuthenticatedUser user)) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Chưa xác thực");
         }
         return user;
     }

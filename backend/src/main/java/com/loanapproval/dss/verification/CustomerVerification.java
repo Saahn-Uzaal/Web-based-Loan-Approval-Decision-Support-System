@@ -6,6 +6,7 @@ public record CustomerVerification(
     Long customerId,
     VerificationStatus documentStatus,
     VerificationStatus identityStatus,
+    VerificationStatus faceMatchStatus,
     VerificationStatus incomeStatus,
     VerificationStatus kycStatus,
     VerificationStatus amlStatus,
@@ -19,12 +20,14 @@ public record CustomerVerification(
     public boolean hasHardRejectFlag() {
         return kycStatus == VerificationStatus.FAILED
             || amlStatus == VerificationStatus.FAILED
+            || faceMatchStatus == VerificationStatus.FAILED
             || fraudFlag;
     }
 
     public boolean isPending() {
         return documentStatus == VerificationStatus.PENDING
             || identityStatus == VerificationStatus.PENDING
+            || faceMatchStatus == VerificationStatus.PENDING
             || incomeStatus == VerificationStatus.PENDING
             || kycStatus == VerificationStatus.PENDING
             || amlStatus == VerificationStatus.PENDING;

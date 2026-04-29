@@ -1,19 +1,31 @@
 package com.loanapproval.dss.loan.dto;
 
+import com.loanapproval.dss.loan.CollateralType;
 import com.loanapproval.dss.loan.LoanPurpose;
 import com.loanapproval.dss.loan.LoanStatus;
+import com.loanapproval.dss.loan.LoanType;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 
 public record LoanDetailResponse(
-    Long id,
-    Long customerId,
-    BigDecimal amount,
-    Integer termMonths,
-    LoanPurpose purpose,
-    LoanStatus status,
-    String finalReason,
-    Instant createdAt,
-    Instant updatedAt
-) {
+        Long id,
+        Long customerId,
+        LoanType loanType,
+        BigDecimal amount,
+        Integer termMonths,
+        LoanPurpose purpose,
+        CollateralType collateralType,
+        LoanStatus status,
+        String finalReason,
+        BigDecimal eligibleLimit,
+        BigDecimal approvedAmount,
+        Integer approvedTermMonths,
+        BigDecimal approvedAnnualRate,
+        BigDecimal approvedMonthlyPayment,
+        String decisionPolicyVersion,
+        String intakeNote,
+        List<LoanDocumentResponse> documents,
+        Instant createdAt,
+        Instant updatedAt) {
 }

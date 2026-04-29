@@ -21,32 +21,30 @@ public class RepaymentRepository {
     public RepaymentRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
         this.insertRepayment = new SimpleJdbcInsert(jdbcTemplate)
-            .withTableName("loan_repayments")
-            .usingColumns(
-                "loan_request_id",
-                "customer_id",
-                "amount_due",
-                "amount_paid",
-                "due_date",
-                "paid_at",
-                "payment_status",
-                "rating_delta",
-                "note"
-            )
-            .usingGeneratedKeyColumns("id");
+                .withTableName("loan_repayments")
+                .usingColumns(
+                        "loan_request_id",
+                        "customer_id",
+                        "amount_due",
+                        "amount_paid",
+                        "due_date",
+                        "paid_at",
+                        "payment_status",
+                        "rating_delta",
+                        "note")
+                .usingGeneratedKeyColumns("id");
     }
 
     public RepaymentRecord create(
-        Long loanRequestId,
-        Long customerId,
-        BigDecimal amountDue,
-        BigDecimal amountPaid,
-        LocalDate dueDate,
-        Instant paidAt,
-        RepaymentStatus repaymentStatus,
-        int ratingDelta,
-        String note
-    ) {
+            Long loanRequestId,
+            Long customerId,
+            BigDecimal amountDue,
+            BigDecimal amountPaid,
+            LocalDate dueDate,
+            Instant paidAt,
+            RepaymentStatus repaymentStatus,
+            int ratingDelta,
+            String note) {
         Map<String, Object> values = new HashMap<>();
         values.put("loan_request_id", loanRequestId);
         values.put("customer_id", customerId);
@@ -60,138 +58,130 @@ public class RepaymentRepository {
 
         Number id = insertRepayment.executeAndReturnKey(values);
         return findByIdAndCustomerId(id.longValue(), customerId)
-            .orElseThrow(() -> new IllegalStateException("Created repayment was not found"));
+                .orElseThrow(() -> new IllegalStateException("Created repayment was not found"));
     }
 
     public List<RepaymentRecord> findByCustomerId(Long customerId) {
         return jdbcTemplate.query(
-            """
-            SELECT
-                id,
-                loan_request_id,
-                customer_id,
-                amount_due,
-                amount_paid,
-                due_date,
-                paid_at,
-                payment_status,
-                rating_delta,
-                note,
-                created_at
-            FROM loan_repayments
-            WHERE customer_id = ?
-            ORDER BY created_at DESC, id DESC
-            """,
-            (rs, rowNum) -> new RepaymentRecord(
-                rs.getLong("id"),
-                rs.getLong("loan_request_id"),
-                rs.getLong("customer_id"),
-                rs.getBigDecimal("amount_due"),
-                rs.getBigDecimal("amount_paid"),
-                rs.getDate("due_date").toLocalDate(),
-                toInstant(rs.getTimestamp("paid_at")),
-                RepaymentStatus.valueOf(rs.getString("payment_status")),
-                rs.getInt("rating_delta"),
-                rs.getString("note"),
-                toInstant(rs.getTimestamp("created_at"))
-            ),
-            customerId
-        );
+                """
+                        SELECT
+                            id,
+                            loan_request_id,
+                            customer_id,
+                            amount_due,
+                            amount_paid,
+                            due_date,
+                            paid_at,
+                            payment_status,
+                            rating_delta,
+                            note,
+                            created_at
+                        FROM loan_repayments
+                        WHERE customer_id = ?
+                        ORDER BY created_at DESC, id DESC
+                        """,
+                (rs, rowNum) -> new RepaymentRecord(
+                        rs.getLong("id"),
+                        rs.getLong("loan_request_id"),
+                        rs.getLong("customer_id"),
+                        rs.getBigDecimal("amount_due"),
+                        rs.getBigDecimal("amount_paid"),
+                        rs.getDate("due_date").toLocalDate(),
+                        toInstant(rs.getTimestamp("paid_at")),
+                        RepaymentStatus.valueOf(rs.getString("payment_status")),
+                        rs.getInt("rating_delta"),
+                        rs.getString("note"),
+                        toInstant(rs.getTimestamp("created_at"))),
+                customerId);
     }
 
     public long countByCustomerId(Long customerId) {
         Long count = jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM loan_repayments WHERE customer_id = ?",
-            Long.class,
-            customerId
-        );
+                "SELECT COUNT(*) FROM loan_repayments WHERE customer_id = ?",
+                Long.class,
+                customerId);
         return count != null ? count : 0L;
     }
 
     public List<RepaymentRecord> findByCustomerIdPaged(Long customerId, int offset, int limit) {
         return jdbcTemplate.query(
-            """
-            SELECT
-                id,
-                loan_request_id,
-                customer_id,
-                amount_due,
-                amount_paid,
-                due_date,
-                paid_at,
-                payment_status,
-                rating_delta,
-                note,
-                created_at
-            FROM loan_repayments
-            WHERE customer_id = ?
-            ORDER BY created_at DESC, id DESC
-            LIMIT ? OFFSET ?
-            """,
-            (rs, rowNum) -> new RepaymentRecord(
-                rs.getLong("id"),
-                rs.getLong("loan_request_id"),
-                rs.getLong("customer_id"),
-                rs.getBigDecimal("amount_due"),
-                rs.getBigDecimal("amount_paid"),
-                rs.getDate("due_date").toLocalDate(),
-                toInstant(rs.getTimestamp("paid_at")),
-                RepaymentStatus.valueOf(rs.getString("payment_status")),
-                rs.getInt("rating_delta"),
-                rs.getString("note"),
-                toInstant(rs.getTimestamp("created_at"))
-            ),
-            customerId, limit, offset
-        );
+                """
+                        SELECT
+                            id,
+                            loan_request_id,
+                            customer_id,
+                            amount_due,
+                            amount_paid,
+                            due_date,
+                            paid_at,
+                            payment_status,
+                            rating_delta,
+                            note,
+                            created_at
+                        FROM loan_repayments
+                        WHERE customer_id = ?
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT ? OFFSET ?
+                        """,
+                (rs, rowNum) -> new RepaymentRecord(
+                        rs.getLong("id"),
+                        rs.getLong("loan_request_id"),
+                        rs.getLong("customer_id"),
+                        rs.getBigDecimal("amount_due"),
+                        rs.getBigDecimal("amount_paid"),
+                        rs.getDate("due_date").toLocalDate(),
+                        toInstant(rs.getTimestamp("paid_at")),
+                        RepaymentStatus.valueOf(rs.getString("payment_status")),
+                        rs.getInt("rating_delta"),
+                        rs.getString("note"),
+                        toInstant(rs.getTimestamp("created_at"))),
+                customerId, limit, offset);
     }
 
     public Optional<RepaymentRecord> findByIdAndCustomerId(Long id, Long customerId) {
         return jdbcTemplate.query(
-            """
-            SELECT
+                """
+                        SELECT
+                            id,
+                            loan_request_id,
+                            customer_id,
+                            amount_due,
+                            amount_paid,
+                            due_date,
+                            paid_at,
+                            payment_status,
+                            rating_delta,
+                            note,
+                            created_at
+                        FROM loan_repayments
+                        WHERE id = ? AND customer_id = ?
+                        """,
+                (rs, rowNum) -> new RepaymentRecord(
+                        rs.getLong("id"),
+                        rs.getLong("loan_request_id"),
+                        rs.getLong("customer_id"),
+                        rs.getBigDecimal("amount_due"),
+                        rs.getBigDecimal("amount_paid"),
+                        rs.getDate("due_date").toLocalDate(),
+                        toInstant(rs.getTimestamp("paid_at")),
+                        RepaymentStatus.valueOf(rs.getString("payment_status")),
+                        rs.getInt("rating_delta"),
+                        rs.getString("note"),
+                        toInstant(rs.getTimestamp("created_at"))),
                 id,
-                loan_request_id,
-                customer_id,
-                amount_due,
-                amount_paid,
-                due_date,
-                paid_at,
-                payment_status,
-                rating_delta,
-                note,
-                created_at
-            FROM loan_repayments
-            WHERE id = ? AND customer_id = ?
-            """,
-            (rs, rowNum) -> new RepaymentRecord(
-                rs.getLong("id"),
-                rs.getLong("loan_request_id"),
-                rs.getLong("customer_id"),
-                rs.getBigDecimal("amount_due"),
-                rs.getBigDecimal("amount_paid"),
-                rs.getDate("due_date").toLocalDate(),
-                toInstant(rs.getTimestamp("paid_at")),
-                RepaymentStatus.valueOf(rs.getString("payment_status")),
-                rs.getInt("rating_delta"),
-                rs.getString("note"),
-                toInstant(rs.getTimestamp("created_at"))
-            ),
-            id,
-            customerId
-        ).stream().findFirst();
+                customerId).stream().findFirst();
     }
 
     public BigDecimal sumAmountPaidByLoanRequestAndCustomer(Long loanRequestId, Long customerId) {
         BigDecimal total = jdbcTemplate.queryForObject(
-            """
-            SELECT COALESCE(SUM(amount_paid), 0)
-            FROM loan_repayments
-            WHERE loan_request_id = ? AND customer_id = ?
-            """,
-            BigDecimal.class,
-            loanRequestId,
-            customerId
-        );
+                """
+                        SELECT COALESCE(SUM(amount_paid), 0)
+                        FROM loan_repayments
+                        WHERE loan_request_id = ? AND customer_id = ?
+                        """,
+                BigDecimal.class,
+                loanRequestId,
+                customerId);
         return total != null ? total : BigDecimal.ZERO;
     }
 

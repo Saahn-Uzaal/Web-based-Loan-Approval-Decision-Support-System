@@ -23,7 +23,6 @@ import { labelDssRecommendation, labelLoanStatus, labelRiskRank } from "@/shared
 
 const recommendationOrder = [
   "APPROVE_RECOMMENDED",
-  "ESCALATE_RECOMMENDED",
   "REJECT_RECOMMENDED"
 ];
 
@@ -109,8 +108,7 @@ export default function StaffDashboardPage() {
 
   const dashboard = useMemo(() => {
     const totalQueue = rows.length;
-    const pending = rows.filter((row) => row.status === "PENDING").length;
-    const waitingSupervisor = rows.filter((row) => row.status === "WAITING_SUPERVISOR").length;
+    const pending = rows.filter((row) => row.status === "PENDING" || row.status === "APPOINTMENT_SCHEDULED").length;
     const totalAmount = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
     const averageAmount = totalQueue > 0 ? totalAmount / totalQueue : 0;
 
@@ -125,7 +123,9 @@ export default function StaffDashboardPage() {
     }));
 
     const priorityRows = [...rows]
-      .filter((row) => row.status === "WAITING_SUPERVISOR" || row.dssRecommendation === "REJECT_RECOMMENDED")
+      .filter((row) =>
+        row.status === "PENDING" || row.status === "APPOINTMENT_SCHEDULED" || row.dssRecommendation === "REJECT_RECOMMENDED"
+      )
       .sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0))
       .slice(0, 6);
 
@@ -136,7 +136,6 @@ export default function StaffDashboardPage() {
     return {
       totalQueue,
       pending,
-      waitingSupervisor,
       totalAmount,
       averageAmount,
       recommendationRows,
@@ -197,14 +196,6 @@ export default function StaffDashboardPage() {
             </Grid>
             <Grid item xs={12} sm={6} lg={3}>
               <MetricCard
-                title="Chờ quản lý duyệt"
-                value={dashboard.waitingSupervisor}
-                description="Hồ sơ đã được chuyển cấp cao hơn để xem xét."
-                color="#0288d1"
-              />
-            </Grid>
-            <Grid item xs={12} sm={6} lg={3}>
-              <MetricCard
                 title="Tổng số tiền trong hàng đợi"
                 value={formatVnd(dashboard.totalAmount)}
                 description={`Giá trị trung bình mỗi hồ sơ: ${formatVnd(dashboard.averageAmount)}`}
@@ -261,7 +252,7 @@ export default function StaffDashboardPage() {
                               <Chip
                                 size="small"
                                 label={labelLoanStatus(row.status)}
-                                color={row.status === "WAITING_SUPERVISOR" ? "info" : "warning"}
+                                color={row.dssRecommendation === "REJECT_RECOMMENDED" ? "error" : "warning"}
                               />
                             </TableCell>
                             <TableCell align="right">

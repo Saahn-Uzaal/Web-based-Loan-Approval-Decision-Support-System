@@ -1,9 +1,7 @@
-﻿import {
+import {
   ArrowForwardRounded as ArrowIcon,
-
   AutoGraphRounded as ScoreIcon,
   CheckCircleRounded as CheckIcon,
-
   ManageSearchRounded as VerifyIcon,
   PaymentsRounded as PaymentIcon,
   SavingsRounded as LoanIcon,
@@ -23,7 +21,7 @@ import {
 import { alpha } from "@mui/material/styles";
 import { Link as RouterLink } from "react-router-dom";
 import { useAuth } from "@/features/auth/context/AuthContext";
-import { labelRole } from "@/shared/utils/labels";
+import { labelDssRecommendation, labelRole } from "@/shared/utils/labels";
 
 const highlights = [
   {
@@ -33,14 +31,14 @@ const highlights = [
     color: "#b85c38"
   },
   {
-    title: "KYC / AML / Fraud trong cùng luồng",
+    title: "KYC / AML / gian lận trong cùng luồng",
     description: "Nhân viên kiểm tra hồ sơ, định danh, thu nhập và cờ gian lận ngay trên một màn hình thẩm định.",
     icon: <VerifyIcon fontSize="small" />,
     color: "#0f766e"
   },
   {
     title: "Từ phê duyệt đến thanh toán",
-    description: "Sinh hợp đồng vay, theo dõi dư nợ và cập nhật payment rating sau mỗi kỳ thanh toán.",
+    description: "Sinh hợp đồng vay, theo dõi dư nợ và cập nhật điểm tín nhiệm thanh toán sau mỗi kỳ trả nợ.",
     icon: <PaymentIcon fontSize="small" />,
     color: "#0f4c81"
   }
@@ -55,17 +53,17 @@ const processSteps = [
   {
     step: "02",
     title: "Hệ thống chấm điểm",
-    description: "DSS đánh giá credit score, risk rank và recommendation dựa trên dữ liệu thực tế."
+    description: "DSS đánh giá điểm tín dụng, hạng rủi ro và khuyến nghị dựa trên dữ liệu thực tế."
   },
   {
     step: "03",
     title: "Nhân viên xác minh",
-    description: "KYC, AML, income verification và fraud check được tổng hợp trong quy trình thẩm định."
+    description: "KYC, AML, xác minh thu nhập và kiểm tra gian lận được tổng hợp trong quy trình thẩm định."
   },
   {
     step: "04",
     title: "Ra quyết định và theo dõi",
-    description: "Phê duyệt hoặc từ chối, sinh hợp đồng, ghi nhận thanh toán và audit log."
+    description: "Phê duyệt hoặc từ chối, sinh hợp đồng, ghi nhận thanh toán và lưu nhật ký kiểm toán."
   }
 ];
 
@@ -85,8 +83,8 @@ const roleCards = [
     title: "Nhân viên",
     items: [
       "Xem hàng đợi thẩm định",
-      "Cập nhật xác minh KYC / AML / Fraud",
-      "Ra quyết định APPROVE / REJECT / ESCALATE"
+      "Cập nhật xác minh KYC / AML / gian lận",
+      "Ra quyết định duyệt / từ chối"
     ],
     color: "#0f766e"
   },
@@ -291,7 +289,7 @@ export default function LandingPage() {
               </Box>
               <Stack spacing={0.25}>
                 <Typography sx={{ fontFamily: "var(--landing-display)", fontWeight: 800 }}>
-                  Loan Approval DSS
+                  Hệ thống hỗ trợ quyết định cho vay
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   Nền tảng xét duyệt khoản vay theo quy trình nghiệp vụ
@@ -346,7 +344,7 @@ export default function LandingPage() {
           <Grid item xs={12} md={7}>
             <Stack spacing={3}>
               <Chip
-                label="Loan workflow / DSS / KYC / Repayment"
+                label="Luồng vay / DSS / KYC / Thanh toán"
                 sx={{
                   alignSelf: "flex-start",
                   bgcolor: "rgba(184,92,56,0.12)",
@@ -419,8 +417,8 @@ export default function LandingPage() {
               <Grid container spacing={2} sx={{ pt: 1 }}>
                 {[
                   { label: "Vai trò vận hành", value: "3 lớp" },
-                  { label: "Khối nghiệp vụ", value: "DSS + Risk + Verification" },
-                  { label: "Theo dõi sau duyệt", value: "Contract + Repayment" }
+                  { label: "Khối nghiệp vụ", value: "DSS + Rủi ro + Xác minh" },
+                  { label: "Theo dõi sau duyệt", value: "Hợp đồng + Thanh toán" }
                 ].map((metric, index) => (
                   <Grid item xs={12} sm={4} key={metric.label}>
                     <Paper
@@ -470,7 +468,7 @@ export default function LandingPage() {
                   <Stack direction="row" justifyContent="space-between" alignItems="center">
                     <Stack spacing={0.5}>
                       <Typography variant="overline" sx={{ letterSpacing: "0.16em", color: "var(--landing-accent)" }}>
-                        Control Preview
+                        Xem nhanh điều phối
                       </Typography>
                       <Typography variant="h5" sx={{ fontFamily: "var(--landing-display)", fontWeight: 700 }}>
                         Hành trình thẩm định trong một màn hình
@@ -497,11 +495,15 @@ export default function LandingPage() {
                   >
                     <Stack spacing={1.25}>
                       <Stack direction="row" justifyContent="space-between" alignItems="center">
-                        <Typography fontWeight={700}>DSS recommendation</Typography>
-                        <Chip label="APPROVE_RECOMMENDED" size="small" sx={{ bgcolor: "#fff", fontWeight: 700 }} />
+                        <Typography fontWeight={700}>Khuyến nghị DSS</Typography>
+                        <Chip
+                          label={labelDssRecommendation("APPROVE_RECOMMENDED")}
+                          size="small"
+                          sx={{ bgcolor: "#fff", fontWeight: 700 }}
+                        />
                       </Stack>
                       <Typography variant="body2" color="text.secondary">
-                        Credit score 792, risk rank A, projected DTI 31.4%, hồ sơ đủ điều kiện vào vòng phê duyệt nhanh.
+                        Điểm tín dụng 792, hạng rủi ro A, DTI dự kiến 31.4%, hồ sơ đủ điều kiện vào vòng phê duyệt nhanh.
                       </Typography>
                     </Stack>
                   </Paper>
@@ -519,16 +521,16 @@ export default function LandingPage() {
                       >
                         <Stack spacing={1.25}>
                           <Typography variant="body2" color="text.secondary">
-                            Verification
+                            Xác minh
                           </Typography>
                           <Stack direction="row" spacing={1} alignItems="center">
                             <ShieldIcon sx={{ color: "var(--landing-accent-2)" }} />
                             <Typography variant="h6" sx={{ fontFamily: "var(--landing-display)", fontWeight: 700 }}>
-                              KYC / AML / Fraud
+                              KYC / AML / Gian lận
                             </Typography>
                           </Stack>
                           <Typography variant="body2">
-                            KYC passed, AML passed, fraud flag clear.
+                            KYC đạt, AML đạt, không có cờ gian lận.
                           </Typography>
                         </Stack>
                       </Paper>
@@ -545,7 +547,7 @@ export default function LandingPage() {
                       >
                         <Stack spacing={1.25}>
                           <Typography variant="body2" color="text.secondary">
-                            Contract & repayment
+                            Hợp đồng và thanh toán
                           </Typography>
                           <Stack direction="row" spacing={1} alignItems="center">
                             <PaymentIcon sx={{ color: "var(--landing-accent-3)" }} />
@@ -567,7 +569,7 @@ export default function LandingPage() {
                     {[
                       "Khách hàng khai báo thông tin tài chính và khoản nợ.",
                       "Nhân viên thẩm định truy cập hồ sơ tập trung theo hàng đợi.",
-                      "Audit log lưu lại các hành động quan trọng để đối soát."
+                      "Nhật ký kiểm toán lưu lại các hành động quan trọng để đối soát."
                     ].map((text) => (
                       <Stack key={text} direction="row" spacing={1.25} alignItems="flex-start">
                         <CheckIcon sx={{ mt: 0.2, color: "var(--landing-accent)" }} fontSize="small" />
@@ -596,13 +598,13 @@ export default function LandingPage() {
               >
                 <Stack spacing={0.5}>
                   <Typography variant="body2" color="text.secondary">
-                    Audit trail
+                    Dấu vết kiểm toán
                   </Typography>
                   <Typography variant="h5" sx={{ fontFamily: "var(--landing-display)", fontWeight: 800 }}>
                     100%
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    Các bước phê duyệt quan trọng đều có log.
+                    Các bước phê duyệt quan trọng đều có nhật ký.
                   </Typography>
                 </Stack>
               </Box>
@@ -614,7 +616,7 @@ export default function LandingPage() {
           <SectionHeading
             eyebrow="Điểm nhấn"
             title="Trang chủ không chỉ là màn hình chờ, mà là bản đồ nghiệp vụ trước khi đăng nhập."
-            description="Thiết kế mới biến điểm vào hệ thống thành một landing page rõ bối cảnh, giúp người dùng biết họ sẽ làm gì trước khi xác thực."
+            description="Thiết kế mới biến điểm vào hệ thống thành một trang giới thiệu rõ bối cảnh, giúp người dùng biết họ sẽ làm gì trước khi xác thực."
             align="center"
           />
 
@@ -631,7 +633,7 @@ export default function LandingPage() {
           <SectionHeading
             eyebrow="Quy trình"
             title="Luồng xét duyệt được trình bày theo đúng cách hệ thống đang vận hành."
-            description="Từ nộp hồ sơ, chấm điểm DSS, xác minh, ra quyết định đến hợp đồng và thanh toán, landing page cho thấy toàn bộ hành trình chỉ trong vài khối nội dung."
+            description="Từ nộp hồ sơ, chấm điểm DSS, xác minh, ra quyết định đến hợp đồng và thanh toán, trang giới thiệu cho thấy toàn bộ hành trình chỉ trong vài khối nội dung."
           />
 
           <Grid container spacing={2.5} sx={{ mt: 2 }}>
@@ -727,7 +729,7 @@ export default function LandingPage() {
                 Vào hệ thống từ đây, nhưng không buộc người dùng đăng nhập ngay khi vừa mở trang.
               </Typography>
               <Typography sx={{ color: alpha("#fff", 0.72), maxWidth: 680 }}>
-                CTA được đặt rõ ràng sau khi người dùng đã hiểu mục tiêu của nền tảng, thay vì bị đẩy thẳng vào form xác thực.
+                Nút hành động được đặt rõ ràng sau khi người dùng đã hiểu mục tiêu của nền tảng, thay vì bị đẩy thẳng vào biểu mẫu xác thực.
               </Typography>
             </Stack>
 
@@ -780,10 +782,10 @@ export default function LandingPage() {
           }}
         >
           <Typography variant="body2">
-            Web-based Loan Approval Decision Support System
+            Hệ thống hỗ trợ quyết định cho vay trên nền web
           </Typography>
           <Typography variant="body2">
-            Public landing page trước bước xác thực
+            Trang giới thiệu công khai trước bước xác thực
           </Typography>
         </Stack>
       </Container>

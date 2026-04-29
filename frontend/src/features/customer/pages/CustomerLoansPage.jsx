@@ -17,17 +17,38 @@ import { Link as RouterLink } from "react-router-dom";
 import { getMyLoansApi } from "@/features/customer/api/loanApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd } from "@/shared/utils/currency";
-import { labelLoanPurpose, labelLoanStatus } from "@/shared/utils/labels";
+import { labelLoanPurpose, labelLoanStatus, labelLoanType } from "@/shared/utils/labels";
 
 function StatusChip({ status }) {
   const colorMap = {
+    APPOINTMENT_SCHEDULED: "info",
     APPROVED: "success",
+    CONTRACTED: "info",
+    DISBURSED: "primary",
+    ACTIVE: "primary",
+    CLOSED: "default",
     REJECTED: "error",
-    PENDING: "warning",
-    WAITING_SUPERVISOR: "info"
+    PENDING: "warning"
   };
 
   return <Chip size="small" color={colorMap[status] || "default"} label={labelLoanStatus(status)} />;
+}
+
+function PaymentDueChip({ loan }) {
+  if (!loan.nextDueDate || Number(loan.remainingRepayableAmount || 0) <= 0) {
+    return <Typography variant="body2" color="text.secondary">-</Typography>;
+  }
+  if (loan.nextPaymentOverdue) {
+    const days = Number(loan.nextPaymentOverdueDays || 0);
+    return (
+      <Chip
+        size="small"
+        color="error"
+        label={days > 0 ? `Trễ hạn ${days} ngày` : "Trễ hạn"}
+      />
+    );
+  }
+  return <Chip size="small" color="success" label={`Đến hạn ${loan.nextDueDate}`} />;
 }
 
 export default function CustomerLoansPage() {
@@ -73,7 +94,7 @@ export default function CustomerLoansPage() {
     <Stack spacing={2}>
       <Typography variant="h4">Hồ sơ vay của tôi</Typography>
       <Typography color="text.secondary">
-        Theo dõi trạng thái và xem quyết định cuối cùng kèm lý do.
+        Theo dõi trạng thái, lịch đến hạn và xem quyết định cuối cùng kèm lý do.
       </Typography>
       {error && <Alert severity="error">{error}</Alert>}
       {loading && (
@@ -96,10 +117,13 @@ export default function CustomerLoansPage() {
           <TableHead>
             <TableRow>
               <TableCell>Mã hồ sơ</TableCell>
-              <TableCell>Số tiền</TableCell>
+              <TableCell>Loại vay</TableCell>
+              <TableCell>Số tiền yêu cầu</TableCell>
+              <TableCell>Số tiền phê duyệt</TableCell>
               <TableCell>Kỳ hạn</TableCell>
               <TableCell>Mục đích</TableCell>
               <TableCell>Trạng thái</TableCell>
+              <TableCell>Kỳ thanh toán</TableCell>
               <TableCell align="right">Thao tác</TableCell>
             </TableRow>
           </TableHead>
@@ -107,11 +131,16 @@ export default function CustomerLoansPage() {
             {rows.map((row) => (
               <TableRow key={row.id} hover>
                 <TableCell>#{row.id}</TableCell>
+                <TableCell>{labelLoanType(row.loanType)}</TableCell>
                 <TableCell>{formatVnd(row.amount)}</TableCell>
+                <TableCell>{row.approvedAmount != null ? formatVnd(row.approvedAmount) : "-"}</TableCell>
                 <TableCell>{row.termMonths} tháng</TableCell>
                 <TableCell>{labelLoanPurpose(row.purpose)}</TableCell>
                 <TableCell>
                   <StatusChip status={row.status} />
+                </TableCell>
+                <TableCell>
+                  <PaymentDueChip loan={row} />
                 </TableCell>
                 <TableCell align="right">
                   <Button

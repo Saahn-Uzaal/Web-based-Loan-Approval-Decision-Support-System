@@ -1,4 +1,4 @@
-﻿import {
+import {
   Alert,
   Button,
   Chip,
@@ -21,13 +21,17 @@ import { Link as RouterLink } from "react-router-dom";
 import { getStaffRequestsApi } from "@/features/staff/api/staffApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd } from "@/shared/utils/currency";
-import { labelDssRecommendation, labelLoanStatus } from "@/shared/utils/labels";
+import { labelDssRecommendation, labelLoanStatus, labelLoanType } from "@/shared/utils/labels";
 
 function StatusChip({ status }) {
   const colorMap = {
     PENDING: "warning",
-    WAITING_SUPERVISOR: "info",
+    APPOINTMENT_SCHEDULED: "info",
     APPROVED: "success",
+    CONTRACTED: "info",
+    DISBURSED: "primary",
+    ACTIVE: "primary",
+    CLOSED: "default",
     REJECTED: "error"
   };
 
@@ -36,10 +40,11 @@ function StatusChip({ status }) {
 
 export default function StaffRequestsPage() {
   const { accessToken } = useAuth();
-  const [status, setStatus] = useState("PENDING");
+  const [status, setStatus] = useState("");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const statusLabel = status ? labelLoanStatus(status) : "tất cả trạng thái";
 
   useEffect(() => {
     let active = true;
@@ -89,8 +94,13 @@ export default function StaffRequestsPage() {
             label="Lọc trạng thái"
             onChange={(event) => setStatus(event.target.value)}
           >
+            <MenuItem value="">Tất cả</MenuItem>
             <MenuItem value="PENDING">Chờ xử lý</MenuItem>
-            <MenuItem value="WAITING_SUPERVISOR">Chờ quản lý duyệt</MenuItem>
+            <MenuItem value="APPOINTMENT_SCHEDULED">Đã lên lịch hẹn</MenuItem>
+            <MenuItem value="APPROVED">Đã duyệt</MenuItem>
+            <MenuItem value="CONTRACTED">Đã ký hợp đồng</MenuItem>
+            <MenuItem value="DISBURSED">Đã giải ngân</MenuItem>
+            <MenuItem value="ACTIVE">Đang vay</MenuItem>
           </Select>
         </FormControl>
       </Paper>
@@ -109,7 +119,7 @@ export default function StaffRequestsPage() {
       {!loading && rows.length === 0 && (
         <Paper sx={{ p: 3 }}>
           <Typography variant="body2" color="text.secondary">
-            Không có hồ sơ nào ở trạng thái {labelLoanStatus(status)}.
+            Không có hồ sơ nào ở bộ lọc {statusLabel}.
           </Typography>
         </Paper>
       )}
@@ -119,6 +129,7 @@ export default function StaffRequestsPage() {
           <TableHead>
             <TableRow>
               <TableCell>Mã hồ sơ</TableCell>
+              <TableCell>Loại vay</TableCell>
               <TableCell>Khách hàng</TableCell>
               <TableCell>Số tiền</TableCell>
               <TableCell>Khuyến nghị DSS</TableCell>
@@ -130,11 +141,10 @@ export default function StaffRequestsPage() {
             {rows.map((row) => (
               <TableRow key={row.id} hover>
                 <TableCell>#{row.id}</TableCell>
+                <TableCell>{labelLoanType(row.loanType)}</TableCell>
                 <TableCell>{row.customerName || row.customerEmail}</TableCell>
                 <TableCell>{formatVnd(row.amount)}</TableCell>
-                <TableCell>
-                  {labelDssRecommendation(row.dssRecommendation)}
-                </TableCell>
+                <TableCell>{labelDssRecommendation(row.dssRecommendation)}</TableCell>
                 <TableCell>
                   <StatusChip status={row.status} />
                 </TableCell>

@@ -15,8 +15,12 @@ const CustomerLoansPage = lazy(() => import("@/features/customer/pages/CustomerL
 const CustomerPaymentsPage = lazy(() => import("@/features/customer/pages/CustomerPaymentsPage"));
 const CustomerProfilePage = lazy(() => import("@/features/customer/pages/CustomerProfilePage"));
 const StaffDashboardPage = lazy(() => import("@/features/staff/pages/StaffDashboardPage"));
+const StaffInformationVerificationDetailPage = lazy(() => import("@/features/staff/pages/StaffInformationVerificationDetailPage"));
+const StaffInformationVerificationsPage = lazy(() => import("@/features/staff/pages/StaffInformationVerificationsPage"));
+const StaffPaymentConfirmationsPage = lazy(() => import("@/features/staff/pages/StaffPaymentConfirmationsPage"));
 const StaffRequestDetailPage = lazy(() => import("@/features/staff/pages/StaffRequestDetailPage"));
 const StaffRequestsPage = lazy(() => import("@/features/staff/pages/StaffRequestsPage"));
+const StaffSecuredProceduresPage = lazy(() => import("@/features/staff/pages/StaffSecuredProceduresPage"));
 const StaffUserCreatePage = lazy(() => import("@/features/staff/pages/StaffUserCreatePage"));
 
 function SuspenseWrapper({ children }) {
@@ -111,6 +115,54 @@ export const router = createBrowserRouter([
         )
       },
       {
+        path: "staff/information-verifications",
+        element: (
+          <RoleRoute allow={["STAFF"]}>
+            <SuspenseWrapper><StaffInformationVerificationsPage /></SuspenseWrapper>
+          </RoleRoute>
+        )
+      },
+      {
+        path: "staff/information-verifications/:customerId",
+        element: (
+          <RoleRoute allow={["STAFF"]}>
+            <SuspenseWrapper><StaffInformationVerificationDetailPage /></SuspenseWrapper>
+          </RoleRoute>
+        )
+      },
+      {
+        path: "staff/payment-confirmations",
+        element: (
+          <RoleRoute allow={["STAFF"]}>
+            <SuspenseWrapper><StaffPaymentConfirmationsPage /></SuspenseWrapper>
+          </RoleRoute>
+        )
+      },
+      {
+        path: "staff/payment-confirmations/:confirmationId",
+        element: (
+          <RoleRoute allow={["STAFF"]}>
+            <SuspenseWrapper><StaffPaymentConfirmationsPage /></SuspenseWrapper>
+          </RoleRoute>
+        )
+      },
+      {
+        path: "staff/secured-procedures",
+        element: (
+          <RoleRoute allow={["STAFF"]}>
+            <SuspenseWrapper><StaffSecuredProceduresPage /></SuspenseWrapper>
+          </RoleRoute>
+        )
+      },
+      {
+        path: "staff/secured-procedures/:loanRequestId",
+        element: (
+          <RoleRoute allow={["STAFF"]}>
+            <SuspenseWrapper><StaffSecuredProceduresPage /></SuspenseWrapper>
+          </RoleRoute>
+        )
+      },
+      {
         path: "staff/requests/:id",
         element: (
           <RoleRoute allow={["STAFF"]}>
@@ -127,9 +179,9 @@ export const router = createBrowserRouter([
         )
       },
       {
-        path: "staff/accounts/new",
+        path: "admin/accounts/new",
         element: (
-          <RoleRoute allow={["STAFF"]}>
+          <RoleRoute allow={["ADMIN"]}>
             <SuspenseWrapper><StaffUserCreatePage /></SuspenseWrapper>
           </RoleRoute>
         )

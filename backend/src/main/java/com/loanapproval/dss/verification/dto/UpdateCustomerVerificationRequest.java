@@ -6,6 +6,7 @@ import jakarta.validation.constraints.Size;
 public record UpdateCustomerVerificationRequest(
     VerificationStatus documentStatus,
     VerificationStatus identityStatus,
+    VerificationStatus faceMatchStatus,
     VerificationStatus incomeStatus,
     VerificationStatus kycStatus,
     VerificationStatus amlStatus,

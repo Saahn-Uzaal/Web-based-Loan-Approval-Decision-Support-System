@@ -21,6 +21,7 @@ public record DecisionInput(
     Boolean kycFailed,
     Boolean amlFailed,
     Boolean fraudFlag,
-    Boolean incomeVerified
+    Boolean incomeVerified,
+    BigDecimal projectedMonthlyPayment
 ) {
 }

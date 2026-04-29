@@ -1,4 +1,4 @@
-﻿server:
+server:
   port: ${SERVER_PORT:8080}
   error:
     include-message: always
@@ -17,6 +17,10 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+  servlet:
+    multipart:
+      max-file-size: ${SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE:10MB}
+      max-request-size: ${SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE:10MB}
 
 management:
   endpoints:
@@ -43,4 +47,10 @@ app:
       enabled: ${APP_BOOTSTRAP_ADMIN_ENABLED:true}
       email: ${APP_BOOTSTRAP_ADMIN_EMAIL:admin@gmail.com}
       password: ${APP_BOOTSTRAP_ADMIN_PASSWORD:123456}
-
+    demo:
+      enabled: ${APP_BOOTSTRAP_DEMO_ENABLED:true}
+      password: ${APP_BOOTSTRAP_DEMO_PASSWORD:123456}
+  storage:
+    customer-payslips-path: ${APP_STORAGE_CUSTOMER_PAYSLIPS_PATH:./storage/profile-documents}
+    loan-documents-path: ${APP_STORAGE_LOAN_DOCUMENTS_PATH:./storage/loan-documents}
+    payment-proofs-path: ${APP_STORAGE_PAYMENT_PROOFS_PATH:./storage/payment-proofs}

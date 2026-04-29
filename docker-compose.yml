@@ -1,4 +1,4 @@
-﻿services:
+services:
   mysql:
     image: mysql:8.4
     container_name: loan-dss-mysql
@@ -13,7 +13,7 @@
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
+      test: [ "CMD-SHELL", "mysqladmin ping -h localhost -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -36,6 +36,10 @@
       APP_BOOTSTRAP_ADMIN_PASSWORD: ${APP_BOOTSTRAP_ADMIN_PASSWORD:-123456}
     ports:
       - "${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - backend_profile_documents:/app/storage/profile-documents
+      - backend_loan_documents:/app/storage/loan-documents
+      - backend_payment_proofs:/app/storage/payment-proofs
     depends_on:
       mysql:
         condition: service_healthy
@@ -56,4 +60,7 @@
 
 volumes:
   mysql_data:
+  backend_profile_documents:
+  backend_loan_documents:
+  backend_payment_proofs:
 

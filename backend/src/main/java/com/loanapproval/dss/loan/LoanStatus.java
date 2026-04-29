@@ -2,7 +2,11 @@ package com.loanapproval.dss.loan;
 
 public enum LoanStatus {
     PENDING,
-    WAITING_SUPERVISOR,
+    APPOINTMENT_SCHEDULED,
     APPROVED,
+    CONTRACTED,
+    DISBURSED,
+    ACTIVE,
+    CLOSED,
     REJECTED
 }

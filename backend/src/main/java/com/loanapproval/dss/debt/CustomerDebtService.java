@@ -1,5 +1,6 @@
 package com.loanapproval.dss.debt;
 
+import com.loanapproval.dss.customerinfo.CustomerInformationVerificationService;
 import com.loanapproval.dss.debt.dto.CreateDebtRequest;
 import com.loanapproval.dss.debt.dto.CustomerDebtResponse;
 import com.loanapproval.dss.debt.dto.DebtMetricsResponse;
@@ -17,13 +18,16 @@ public class CustomerDebtService {
 
     private final CustomerDebtRepository customerDebtRepository;
     private final CustomerProfileRepository customerProfileRepository;
+    private final CustomerInformationVerificationService customerInformationVerificationService;
 
     public CustomerDebtService(
         CustomerDebtRepository customerDebtRepository,
-        CustomerProfileRepository customerProfileRepository
+        CustomerProfileRepository customerProfileRepository,
+        CustomerInformationVerificationService customerInformationVerificationService
     ) {
         this.customerDebtRepository = customerDebtRepository;
         this.customerProfileRepository = customerProfileRepository;
+        this.customerInformationVerificationService = customerInformationVerificationService;
     }
 
     public List<CustomerDebtResponse> listMine(Long customerId) {
@@ -42,6 +46,7 @@ public class CustomerDebtService {
             sanitizeLenderName(request.lenderName())
         );
         recalculateAndSyncDti(customerId);
+        customerInformationVerificationService.markPending(customerId);
         return toResponse(created);
     }
 
@@ -49,13 +54,14 @@ public class CustomerDebtService {
     public void delete(Long customerId, Long debtId) {
         int deleted = customerDebtRepository.deleteOwned(debtId, customerId);
         if (deleted == 0) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Debt item not found");
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy khoản nợ");
         }
         recalculateAndSyncDti(customerId);
+        customerInformationVerificationService.markPending(customerId);
     }
 
     public DebtMetricsResponse metrics(Long customerId, BigDecimal newLoanMonthlyPayment) {
-        BigDecimal income = customerProfileRepository.findMonthlyIncomeByUserId(customerId).orElse(BigDecimal.ZERO);
+        BigDecimal income = customerProfileRepository.findEffectiveMonthlyIncomeByUserId(customerId).orElse(BigDecimal.ZERO);
         BigDecimal activeDebt = customerDebtRepository.sumActiveMonthlyDebt(customerId);
         BigDecimal baseDti = calculateDtiPercent(activeDebt, income);
         BigDecimal baseDscr = calculateDscr(income, activeDebt);
@@ -76,7 +82,7 @@ public class CustomerDebtService {
     }
 
     public BigDecimal recalculateAndSyncDti(Long customerId) {
-        BigDecimal income = customerProfileRepository.findMonthlyIncomeByUserId(customerId).orElse(null);
+        BigDecimal income = customerProfileRepository.findEffectiveMonthlyIncomeByUserId(customerId).orElse(null);
         if (income == null || income.compareTo(BigDecimal.ZERO) <= 0) {
             return null;
         }

@@ -7,6 +7,7 @@ public record CustomerVerificationResponse(
     Long customerId,
     VerificationStatus documentStatus,
     VerificationStatus identityStatus,
+    VerificationStatus faceMatchStatus,
     VerificationStatus incomeStatus,
     VerificationStatus kycStatus,
     VerificationStatus amlStatus,

@@ -24,25 +24,36 @@ public class RiskAssessmentService {
         DssResult dssResult,
         CustomerVerification verification
     ) {
+        RiskAssessment snapshot = evaluate(loanRequestId, input, dssResult, verification);
+        riskAssessmentRepository.upsert(snapshot);
+        return snapshot;
+    }
+
+    public RiskAssessment evaluate(
+        Long loanRequestId,
+        DecisionInput input,
+        DssResult dssResult,
+        CustomerVerification verification
+    ) {
         int creditRiskScore = calculateCreditRiskScore(input, dssResult);
         int fraudRiskScore = calculateFraudRiskScore(input, verification);
         int operationalRiskScore = calculateOperationalRiskScore(input, verification);
 
         List<String> reasons = new ArrayList<>();
         if (creditRiskScore >= 70) {
-            reasons.add("HIGH_CREDIT_RISK");
+            reasons.add("Rủi ro tín dụng cao");
         }
         if (fraudRiskScore >= 70) {
-            reasons.add("HIGH_FRAUD_RISK");
+            reasons.add("Rủi ro gian lận cao");
         }
         if (operationalRiskScore >= 70) {
-            reasons.add("HIGH_OPERATIONAL_RISK");
+            reasons.add("Rủi ro vận hành cao");
         }
         if (dssResult.riskRank() == RiskRank.D) {
-            reasons.add("DSS_RANK_D");
+            reasons.add("DSS xếp hạng D");
         }
         if (reasons.isEmpty()) {
-            reasons.add("NO_HIGH_RISK_FLAGS");
+            reasons.add("Không có cờ rủi ro cao");
         }
 
         RiskLevel overall = resolveOverallRiskLevel(creditRiskScore, fraudRiskScore, operationalRiskScore);
@@ -55,8 +66,11 @@ public class RiskAssessmentService {
             String.join(", ", reasons),
             java.time.Instant.now()
         );
-        riskAssessmentRepository.upsert(snapshot);
         return snapshot;
+    }
+
+    public void save(RiskAssessment riskAssessment) {
+        riskAssessmentRepository.upsert(riskAssessment);
     }
 
     private int calculateCreditRiskScore(DecisionInput input, DssResult dssResult) {

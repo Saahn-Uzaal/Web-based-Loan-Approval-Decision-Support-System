@@ -42,6 +42,7 @@ public class CustomerVerificationService {
             customerId,
             pick(request.documentStatus(), current.documentStatus()),
             pick(request.identityStatus(), current.identityStatus()),
+            pick(request.faceMatchStatus(), current.faceMatchStatus()),
             pick(request.incomeStatus(), current.incomeStatus()),
             pick(request.kycStatus(), current.kycStatus()),
             pick(request.amlStatus(), current.amlStatus()),
@@ -75,6 +76,7 @@ public class CustomerVerificationService {
             verification.customerId(),
             verification.documentStatus(),
             verification.identityStatus(),
+            verification.faceMatchStatus(),
             verification.incomeStatus(),
             verification.kycStatus(),
             verification.amlStatus(),
@@ -100,9 +102,10 @@ public class CustomerVerificationService {
 
     private String buildVerificationDetails(CustomerVerification verification) {
         return String.format(
-            "document=%s, identity=%s, income=%s, kyc=%s, aml=%s, fraud=%s",
+            "document=%s, identity=%s, faceMatch=%s, income=%s, kyc=%s, aml=%s, fraud=%s",
             verification.documentStatus(),
             verification.identityStatus(),
+            verification.faceMatchStatus(),
             verification.incomeStatus(),
             verification.kycStatus(),
             verification.amlStatus(),

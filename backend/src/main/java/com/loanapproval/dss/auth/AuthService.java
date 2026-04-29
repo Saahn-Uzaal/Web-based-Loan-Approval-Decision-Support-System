@@ -36,12 +36,12 @@ public class AuthService {
     public AuthResponse register(RegisterRequest request) {
         String normalizedEmail = request.email().trim().toLowerCase();
         if (userRepository.existsByEmail(normalizedEmail)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email đã tồn tại");
         }
 
         Role role = request.role() != null ? request.role() : Role.CUSTOMER;
-        if (role == Role.ADMIN) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Admin registration is not allowed");
+        if (role != Role.CUSTOMER) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Đăng ký công khai chỉ dành cho khách hàng");
         }
         UserAccount user = userRepository.create(
             normalizedEmail,
@@ -55,11 +55,11 @@ public class AuthService {
     public AuthResponse login(AuthRequest request) {
         String normalizedEmail = request.email().trim().toLowerCase();
         UserAccount user = userRepository.findByEmail(normalizedEmail)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials"));
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Email hoặc mật khẩu không đúng"));
 
         if (!passwordEncoder.matches(request.password(), user.passwordHash())) {
             log.warn("Failed login attempt for email={}", normalizedEmail);
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Email hoặc mật khẩu không đúng");
         }
         log.info("User logged in: userId={}, email={}", user.id(), normalizedEmail);
         return toAuthResponse(user);
@@ -67,7 +67,7 @@ public class AuthService {
 
     public UserResponse me(AuthenticatedUser authenticatedUser) {
         UserAccount user = userRepository.findById(authenticatedUser.id())
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid token"));
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Phiên đăng nhập không hợp lệ"));
         return toUserResponse(user);
     }
 

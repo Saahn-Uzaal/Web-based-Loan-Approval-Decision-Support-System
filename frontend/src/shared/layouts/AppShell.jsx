@@ -53,13 +53,16 @@ export function AppShell() {
             {user?.role === "STAFF" && (
               <>
                 <NavButton to="/staff/requests">Thẩm định</NavButton>
+                <NavButton to="/staff/information-verifications">Xác minh thông tin</NavButton>
+                <NavButton to="/staff/payment-confirmations">Xác nhận thanh toán</NavButton>
+                <NavButton to="/staff/secured-procedures">Thủ tục thế chấp</NavButton>
                 <NavButton to="/staff/dashboard">Bảng điều khiển</NavButton>
-                <NavButton to="/staff/accounts/new">Tạo tài khoản</NavButton>
               </>
             )}
             {user?.role === "ADMIN" && (
               <>
                 <NavButton to="/admin/users">Quản lý người dùng</NavButton>
+                <NavButton to="/admin/accounts/new">Tạo tài khoản</NavButton>
               </>
             )}
             <Chip
