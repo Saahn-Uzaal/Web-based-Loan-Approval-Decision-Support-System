@@ -1,3 +1,7 @@
 .git_outer_backup/
 .idea/
 .env
+*.md
+*.MD
+!README.md
+!README.MD

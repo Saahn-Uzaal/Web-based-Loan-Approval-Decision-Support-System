@@ -296,7 +296,7 @@ export default function LoginPage() {
               </Typography>
               <Typography color="text.secondary">
                 {isRegisterMode
-                  ? "Public register chỉ tạo tài khoản khách hàng. Tài khoản nhân viên được quản trị viên tạo trong khu vực admin."
+                  ? "Khu đăng ký công khai chỉ tạo tài khoản khách hàng. Tài khoản nhân viên được quản trị viên tạo trong khu vực quản trị."
                   : "Sử dụng email và mật khẩu của tài khoản đã có để truy cập đúng bảng điều khiển tương ứng."}
               </Typography>
             </Stack>

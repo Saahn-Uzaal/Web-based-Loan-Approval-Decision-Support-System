@@ -4,7 +4,7 @@ const vndFormatter = new Intl.NumberFormat("vi-VN", {
 
 export function formatVnd(value) {
   const amount = Number(value ?? 0);
-  return `${vndFormatter.format(Number.isFinite(amount) ? amount : 0)} VND`;
+  return `${vndFormatter.format(Number.isFinite(amount) ? amount : 0)} VNĐ`;
 }
 
 const nonDigitPattern = /\D/g;

@@ -1,0 +1,10 @@
+package com.loanapproval.dss.notification;
+
+public enum NotificationCategory {
+    INFORMATION_REVIEW_SUBMITTED,
+    INFORMATION_REVIEW_COMPLETED,
+    LOAN_APPLICATION_SUBMITTED,
+    LOAN_DECISION_UPDATED,
+    APPOINTMENT_SCHEDULED,
+    CONTRACT_CREATED
+}

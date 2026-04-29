@@ -48,8 +48,7 @@ public class SecuredLoanProcedureRepository {
                         )
                         LEFT JOIN secured_loan_procedures sp ON sp.loan_request_id = lr.id
                         WHERE lr.loan_type = 'SECURED'
-                          AND lr.status <> 'REJECTED'
-                          AND lr.status <> 'CLOSED'
+                          AND lr.status IN ('APPOINTMENT_SCHEDULED', 'APPROVED')
                         ORDER BY
                             CASE COALESCE(sp.status, 'DRAFT')
                                 WHEN 'COMPLETED' THEN 3

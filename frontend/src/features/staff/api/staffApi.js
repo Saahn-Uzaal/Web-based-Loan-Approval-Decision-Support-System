@@ -16,6 +16,13 @@ export function getStaffRequestsApi(token, status) {
   });
 }
 
+export function getStaffLoanOperationsApi(token, status) {
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  return apiRequest(`/api/staff/requests/operations${query}`, {
+    token
+  });
+}
+
 export function getStaffRequestDetailApi(token, id) {
   return apiRequest(`/api/staff/requests/${id}`, {
     token

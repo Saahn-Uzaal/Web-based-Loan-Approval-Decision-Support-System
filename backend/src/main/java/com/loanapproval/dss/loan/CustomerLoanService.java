@@ -14,6 +14,7 @@ import com.loanapproval.dss.loan.dto.CreateLoanRequest;
 import com.loanapproval.dss.loan.dto.LoanDetailResponse;
 import com.loanapproval.dss.loan.dto.LoanDocumentResponse;
 import com.loanapproval.dss.loan.dto.LoanSummaryResponse;
+import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.profile.CustomerProfile;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
 import com.loanapproval.dss.repayment.LoanRepaymentSnapshot;
@@ -53,6 +54,7 @@ public class CustomerLoanService {
     private final CustomerInformationVerificationService customerInformationVerificationService;
     private final LoanEligibilityService loanEligibilityService;
     private final RepaymentScheduleService repaymentScheduleService;
+    private final NotificationService notificationService;
 
     public CustomerLoanService(
             LoanRepository loanRepository,
@@ -68,7 +70,8 @@ public class CustomerLoanService {
             LoanContractService loanContractService,
             CustomerInformationVerificationService customerInformationVerificationService,
             LoanEligibilityService loanEligibilityService,
-            RepaymentScheduleService repaymentScheduleService) {
+            RepaymentScheduleService repaymentScheduleService,
+            NotificationService notificationService) {
         this.loanRepository = loanRepository;
         this.loanDocumentRepository = loanDocumentRepository;
         this.loanDocumentStorageService = loanDocumentStorageService;
@@ -83,6 +86,7 @@ public class CustomerLoanService {
         this.customerInformationVerificationService = customerInformationVerificationService;
         this.loanEligibilityService = loanEligibilityService;
         this.repaymentScheduleService = repaymentScheduleService;
+        this.notificationService = notificationService;
     }
 
     @Transactional
@@ -191,6 +195,9 @@ public class CustomerLoanService {
                         riskAssessment.operationalRiskScore(),
                         projectedDti != null ? projectedDti.toPlainString() : "N/A",
                         eligibility.eligibleLimit() != null ? eligibility.eligibleLimit().toPlainString() : "N/A"));
+        if (loan.status() == LoanStatus.PENDING) {
+            notificationService.notifyStaffLoanApplicationSubmitted(loan.id(), customerId, loan.loanType());
+        }
 
         return toDetailResponse(loan);
     }
@@ -315,6 +322,14 @@ public class CustomerLoanService {
                     "LOAN_APPLICATION_AUTO_REJECTED",
                     ComplianceOutcome.FAILED,
                     reason);
+            notificationService.notifyCustomerLoanDecisionUpdated(
+                    loan.id(),
+                    customerId,
+                    null,
+                    loan.loanType(),
+                    LoanStatus.REJECTED,
+                    reason,
+                    true);
             return;
         }
 
@@ -328,6 +343,14 @@ public class CustomerLoanService {
                     "LOAN_APPLICATION_AUTO_REJECTED",
                     ComplianceOutcome.FAILED,
                     reason);
+            notificationService.notifyCustomerLoanDecisionUpdated(
+                    loan.id(),
+                    customerId,
+                    null,
+                    loan.loanType(),
+                    LoanStatus.REJECTED,
+                    reason,
+                    true);
             return;
         }
 
@@ -350,6 +373,14 @@ public class CustomerLoanService {
                     "LOAN_APPLICATION_AUTO_APPROVED",
                     verification.isPending() ? ComplianceOutcome.INFO : ComplianceOutcome.PASSED,
                     reason);
+            notificationService.notifyCustomerLoanDecisionUpdated(
+                    loan.id(),
+                    customerId,
+                    null,
+                    loan.loanType(),
+                    LoanStatus.APPROVED,
+                    reason,
+                    true);
         }
     }
 

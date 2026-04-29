@@ -187,4 +187,16 @@ public class CustomerProfileRepository {
             userId
         );
     }
+
+    public void clearVerifiedMonthlyIncome(Long userId) {
+        jdbcTemplate.update(
+            """
+            UPDATE customer_profiles
+            SET verified_monthly_income = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            """,
+            userId
+        );
+    }
 }

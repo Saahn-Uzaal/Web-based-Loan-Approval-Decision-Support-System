@@ -23,8 +23,14 @@ import {
 } from "@/features/staff/api/informationVerificationApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
+import { clearFieldError, fieldErrorProps, mapFieldErrors } from "@/shared/utils/formErrors";
 import { formatFileSize } from "@/shared/utils/files";
 import { labelVerificationStatus } from "@/shared/utils/labels";
+
+const verificationFieldKeywords = {
+  verifiedMonthlyIncome: ["thu nhập", "lương", "verifiedMonthlyIncome"],
+  reason: ["lý do", "từ chối", "reason"]
+};
 
 function StatusChip({ status }) {
   const colorMap = {
@@ -48,6 +54,7 @@ export default function StaffInformationVerificationDetailPage() {
   const [submitting, setSubmitting] = useState(false);
   const [downloadingPayslip, setDownloadingPayslip] = useState(false);
   const [verifiedMonthlyIncome, setVerifiedMonthlyIncome] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
 
   useEffect(() => {
     let active = true;
@@ -58,6 +65,7 @@ export default function StaffInformationVerificationDetailPage() {
       }
       setLoading(true);
       setError("");
+      setFieldErrors({});
       try {
         const response = await getInformationVerificationDetailApi(accessToken, customerId);
         if (!active) {
@@ -92,9 +100,16 @@ export default function StaffInformationVerificationDetailPage() {
     if (!detail) {
       return;
     }
+    if (action === "APPROVE" && !verifiedMonthlyIncome) {
+      const message = "Vui lòng nhập thu nhập đã xác minh trước khi chấp thuận hồ sơ.";
+      setSubmitError(message);
+      setFieldErrors({ verifiedMonthlyIncome: message });
+      return;
+    }
     setSubmitting(true);
     setSubmitError("");
     setSubmitSuccess("");
+    setFieldErrors({});
     try {
       await reviewInformationVerificationApi(accessToken, detail.customerId, {
         action,
@@ -117,10 +132,22 @@ export default function StaffInformationVerificationDetailPage() {
           : "Đã từ chối thông tin kê khai của khách hàng."
       );
     } catch (err) {
-      setSubmitError(err.message || "Không cập nhật được trạng thái xác minh");
+      const message = err.message || "Không cập nhật được trạng thái xác minh";
+      setSubmitError(message);
+      setFieldErrors(mapFieldErrors(message, verificationFieldKeywords));
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleVerifiedIncomeChange = (event) => {
+    setFieldErrors((prev) => clearFieldError(prev, "verifiedMonthlyIncome"));
+    setVerifiedMonthlyIncome(formatVndInput(event.target.value));
+  };
+
+  const handleReasonChange = (event) => {
+    setFieldErrors((prev) => clearFieldError(prev, "reason"));
+    setReason(event.target.value);
   };
 
   const handleDownloadPayslip = async () => {
@@ -272,21 +299,26 @@ export default function StaffInformationVerificationDetailPage() {
                 label="Thu nhập xác minh (VNĐ)"
                 type="text"
                 value={verifiedMonthlyIncome}
-                onChange={(event) => setVerifiedMonthlyIncome(formatVndInput(event.target.value))}
+                onChange={handleVerifiedIncomeChange}
                 disabled={submitting}
                 placeholder="Nhập thu nhập đã đối chiếu phiếu lương (bắt buộc khi chấp thuận)"
                 fullWidth
                 inputProps={{ inputMode: "numeric" }}
-                helperText="Số tiền thực tế trên phiếu lương, sẽ được dùng cho việc chấm điểm tín dụng và tính hạn mức."
+                {...fieldErrorProps(
+                  fieldErrors,
+                  "verifiedMonthlyIncome",
+                  "Số tiền thực tế trên phiếu lương, sẽ được dùng cho việc chấm điểm tín dụng và tính hạn mức."
+                )}
               />
               <TextField
                 label="Lý do từ chối"
                 multiline
                 minRows={3}
                 value={reason}
-                onChange={(event) => setReason(event.target.value)}
+                onChange={handleReasonChange}
                 disabled={submitting}
                 placeholder="Nhập lý do nếu cần từ chối thông tin kê khai."
+                {...fieldErrorProps(fieldErrors, "reason")}
               />
               <Divider />
               <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>

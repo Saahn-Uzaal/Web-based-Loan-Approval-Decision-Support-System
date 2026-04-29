@@ -380,13 +380,13 @@ function StaffHome({ accessToken }) {
 
   const stats = useMemo(() => {
     const total = requests.length;
-    const pending = requests.filter((request) => request.status === "PENDING" || request.status === "APPOINTMENT_SCHEDULED").length;
+    const pending = requests.filter((request) => request.status === "PENDING").length;
     return { total, pending };
   }, [requests]);
 
   const urgentRequests = useMemo(
     () => requests
-      .filter((request) => request.status === "PENDING" || request.status === "APPOINTMENT_SCHEDULED")
+      .filter((request) => request.status === "PENDING")
       .slice(0, 5),
     [requests]
   );
@@ -476,6 +476,15 @@ function StaffHome({ accessToken }) {
             description="Thống kê và phân tích tổng quan hồ sơ vay"
             to="/staff/dashboard"
             color="secondary.main"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={4}>
+          <QuickActionCard
+            icon={<LoanIcon />}
+            title="Vận hành khoản vay"
+            description="Theo dõi lịch hẹn, hợp đồng, giải ngân và khoản vay đang hoạt động"
+            to="/staff/loan-operations"
+            color="success.main"
           />
         </Grid>
       </Grid>
@@ -579,7 +588,7 @@ function AdminHome() {
           <QuickActionCard
             icon={<ProfileIcon />}
             title="Tạo tài khoản"
-            description="Tạo tài khoản khách hàng hoặc nhân viên qua endpoint admin"
+            description="Tạo tài khoản khách hàng hoặc nhân viên qua khu vực quản trị"
             to="/admin/accounts/new"
             color="info.main"
           />
@@ -603,11 +612,11 @@ function AdminHome() {
               <Typography variant="h6">Kiến trúc hệ thống</Typography>
               <Divider />
               {[
-                { label: "Frontend", value: "React 18 + Vite + MUI" },
-                { label: "Backend", value: "Java 17 + Spring Boot 3.5" },
+                { label: "Giao diện web", value: "React 18 + Vite + MUI" },
+                { label: "Máy chủ ứng dụng", value: "Java 17 + Spring Boot 3.5" },
                 { label: "Cơ sở dữ liệu", value: "MySQL 8.4 + Flyway" },
-                { label: "Xác thực", value: "JWT phi trạng thái + BCrypt" },
-                { label: "Phân quyền", value: "RBAC (Khách hàng, Nhân viên, Quản trị)" }
+                { label: "Xác thực", value: "JWT không lưu phiên + BCrypt" },
+                { label: "Phân quyền", value: "Theo vai trò (Khách hàng, Nhân viên, Quản trị)" }
               ].map((item) => (
                 <Stack key={item.label} direction="row" justifyContent="space-between">
                   <Typography variant="body2" color="text.secondary">{item.label}</Typography>

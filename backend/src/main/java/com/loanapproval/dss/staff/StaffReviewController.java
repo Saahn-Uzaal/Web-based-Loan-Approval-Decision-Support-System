@@ -54,6 +54,20 @@ public class StaffReviewController {
         return staffReviewService.listReviewQueuePaged(status, page, size);
     }
 
+    @GetMapping("/operations")
+    public List<StaffRequestSummaryResponse> listOperationQueue(
+            @RequestParam(value = "status", required = false) LoanStatus status) {
+        return staffReviewService.listOperationQueue(status);
+    }
+
+    @GetMapping("/operations/paged")
+    public PageResponse<StaffRequestSummaryResponse> listOperationQueuePaged(
+            @RequestParam(value = "status", required = false) LoanStatus status,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        return staffReviewService.listOperationQueuePaged(status, page, size);
+    }
+
     @GetMapping("/{id}")
     public StaffRequestDetailResponse getRequestDetail(@PathVariable("id") Long id) {
         return staffReviewService.getRequestDetail(id);

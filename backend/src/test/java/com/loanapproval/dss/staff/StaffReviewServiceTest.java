@@ -24,6 +24,7 @@ import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.loan.LoanType;
+import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.staff.dto.StaffDecisionRequest;
 import com.loanapproval.dss.staff.dto.StaffDecisionResponse;
 import com.loanapproval.dss.staff.dto.StaffRequestDetailResponse;
@@ -72,8 +73,41 @@ class StaffReviewServiceTest {
     @Mock
     private LoanApprovalReassessmentService loanApprovalReassessmentService;
 
+    @Mock
+    private NotificationService notificationService;
+
     @InjectMocks
     private StaffReviewService staffReviewService;
+
+    @Test
+    void shouldKeepReviewQueueLimitedToPendingLoans() {
+        when(staffReviewRepository.findReviewQueue(LoanStatus.PENDING)).thenReturn(List.of());
+
+        assertThat(staffReviewService.listReviewQueue(LoanStatus.PENDING)).isEmpty();
+        assertThatThrownBy(() -> staffReviewService.listReviewQueue(LoanStatus.APPROVED))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> {
+                    ResponseStatusException exception = (ResponseStatusException) error;
+                    assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                });
+
+        verify(staffReviewRepository).findReviewQueue(LoanStatus.PENDING);
+    }
+
+    @Test
+    void shouldExposePostDecisionLoansThroughOperationQueue() {
+        when(staffReviewRepository.findOperationQueue(LoanStatus.CONTRACTED)).thenReturn(List.of());
+
+        assertThat(staffReviewService.listOperationQueue(LoanStatus.CONTRACTED)).isEmpty();
+        assertThatThrownBy(() -> staffReviewService.listOperationQueue(LoanStatus.PENDING))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> {
+                    ResponseStatusException exception = (ResponseStatusException) error;
+                    assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                });
+
+        verify(staffReviewRepository).findOperationQueue(LoanStatus.CONTRACTED);
+    }
 
     @Test
     void shouldMoveSecuredApprovalToAppointmentScheduled() {
@@ -153,6 +187,22 @@ class StaffReviewServiceTest {
                         eq(reassessment.approvedAnnualRate()),
                         eq(reassessment.approvedMonthlyPayment()),
                         eq(reassessment.decisionPolicyVersion()));
+        verify(notificationService)
+                .notifyCustomerLoanDecisionUpdated(
+                        eq(loanRequestId),
+                        eq(customerId),
+                        eq(staffUserId),
+                        eq(LoanType.SECURED),
+                        eq(LoanStatus.APPOINTMENT_SCHEDULED),
+                        contains("Head Office"),
+                        eq(false));
+        verify(notificationService)
+                .notifyCustomerAppointmentScheduled(
+                        loanRequestId,
+                        customerId,
+                        staffUserId,
+                        scheduledAt,
+                        "Head Office");
     }
 
     @Test
@@ -227,7 +277,7 @@ class StaffReviewServiceTest {
                 loan.termMonths(),
                 loan.purpose(),
                 loan.collateralType(),
-                "Lich hen gap mat",
+                "Lịch hẹn gặp mặt",
                 loan.eligibleLimit(),
                 loan.approvedAmount(),
                 loan.approvedTermMonths(),

@@ -3,11 +3,7 @@ import {
   Button,
   Chip,
   CircularProgress,
-  FormControl,
-  InputLabel,
-  MenuItem,
   Paper,
-  Select,
   Stack,
   Table,
   TableBody,
@@ -40,11 +36,9 @@ function StatusChip({ status }) {
 
 export default function StaffRequestsPage() {
   const { accessToken } = useAuth();
-  const [status, setStatus] = useState("");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const statusLabel = status ? labelLoanStatus(status) : "tất cả trạng thái";
 
   useEffect(() => {
     let active = true;
@@ -56,7 +50,7 @@ export default function StaffRequestsPage() {
       setLoading(true);
       setError("");
       try {
-        const response = await getStaffRequestsApi(accessToken, status);
+        const response = await getStaffRequestsApi(accessToken);
         if (!active) {
           return;
         }
@@ -77,33 +71,14 @@ export default function StaffRequestsPage() {
     return () => {
       active = false;
     };
-  }, [accessToken, status]);
+  }, [accessToken]);
 
   return (
     <Stack spacing={2}>
       <Typography variant="h4">Hàng đợi thẩm định</Typography>
       <Typography color="text.secondary">
-        Thẩm định hồ sơ và xem khuyến nghị từ DSS.
+        Chỉ hiển thị các hồ sơ đang chờ quyết định thẩm định ban đầu.
       </Typography>
-      <Paper sx={{ p: 2 }}>
-        <FormControl sx={{ minWidth: 240 }}>
-          <InputLabel id="status-filter-label">Lọc trạng thái</InputLabel>
-          <Select
-            labelId="status-filter-label"
-            value={status}
-            label="Lọc trạng thái"
-            onChange={(event) => setStatus(event.target.value)}
-          >
-            <MenuItem value="">Tất cả</MenuItem>
-            <MenuItem value="PENDING">Chờ xử lý</MenuItem>
-            <MenuItem value="APPOINTMENT_SCHEDULED">Đã lên lịch hẹn</MenuItem>
-            <MenuItem value="APPROVED">Đã duyệt</MenuItem>
-            <MenuItem value="CONTRACTED">Đã ký hợp đồng</MenuItem>
-            <MenuItem value="DISBURSED">Đã giải ngân</MenuItem>
-            <MenuItem value="ACTIVE">Đang vay</MenuItem>
-          </Select>
-        </FormControl>
-      </Paper>
 
       {error && <Alert severity="error">{error}</Alert>}
 
@@ -119,7 +94,7 @@ export default function StaffRequestsPage() {
       {!loading && rows.length === 0 && (
         <Paper sx={{ p: 3 }}>
           <Typography variant="body2" color="text.secondary">
-            Không có hồ sơ nào ở bộ lọc {statusLabel}.
+            Không có hồ sơ nào đang chờ thẩm định.
           </Typography>
         </Paper>
       )}

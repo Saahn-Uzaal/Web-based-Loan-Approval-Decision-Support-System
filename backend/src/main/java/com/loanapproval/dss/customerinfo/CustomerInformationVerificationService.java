@@ -7,6 +7,7 @@ import com.loanapproval.dss.customerinfo.dto.ReviewCustomerInformationRequest;
 import com.loanapproval.dss.customerinfo.dto.StaffCustomerInformationDetailResponse;
 import com.loanapproval.dss.customerinfo.dto.StaffCustomerInformationSummaryResponse;
 import com.loanapproval.dss.debt.CustomerDebtRepository;
+import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
 import com.loanapproval.dss.verification.CustomerVerification;
 import com.loanapproval.dss.verification.CustomerVerificationRepository;
@@ -28,19 +29,22 @@ public class CustomerInformationVerificationService {
     private final CustomerDebtRepository customerDebtRepository;
     private final CustomerVerificationRepository customerVerificationRepository;
     private final ComplianceAuditService complianceAuditService;
+    private final NotificationService notificationService;
 
     public CustomerInformationVerificationService(
         CustomerInformationVerificationRepository customerInformationVerificationRepository,
         CustomerProfileRepository customerProfileRepository,
         CustomerDebtRepository customerDebtRepository,
         CustomerVerificationRepository customerVerificationRepository,
-        ComplianceAuditService complianceAuditService
+        ComplianceAuditService complianceAuditService,
+        NotificationService notificationService
     ) {
         this.customerInformationVerificationRepository = customerInformationVerificationRepository;
         this.customerProfileRepository = customerProfileRepository;
         this.customerDebtRepository = customerDebtRepository;
         this.customerVerificationRepository = customerVerificationRepository;
         this.complianceAuditService = complianceAuditService;
+        this.notificationService = notificationService;
     }
 
     public CustomerInformationVerification getOrDefault(Long customerId) {
@@ -127,10 +131,14 @@ public class CustomerInformationVerificationService {
         }
         if (status == VerificationStatus.PASSED) {
             reason = null;
-            if (request.verifiedMonthlyIncome() != null) {
-                customerProfileRepository.updateVerifiedMonthlyIncome(
-                    customerId, request.verifiedMonthlyIncome());
+            if (request.verifiedMonthlyIncome() == null || request.verifiedMonthlyIncome().compareTo(BigDecimal.ZERO) <= 0) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Cần nhập thu nhập đã xác minh lớn hơn 0 trước khi chấp thuận hồ sơ"
+                );
             }
+            customerProfileRepository.updateVerifiedMonthlyIncome(
+                customerId, request.verifiedMonthlyIncome());
             recalculateCustomerDti(customerId);
         }
 
@@ -155,6 +163,7 @@ public class CustomerInformationVerificationService {
                 ? "customer information approved"
                 : "customer information rejected: " + reason
         );
+        notificationService.notifyCustomerInformationReviewCompleted(customerId, staffUserId, status, reason);
 
         return toResponse(getOrDefault(customerId));
     }
@@ -163,6 +172,7 @@ public class CustomerInformationVerificationService {
     public void markPending(Long customerId) {
         customerInformationVerificationRepository.markPending(customerId);
         syncPendingLoanApprovalVerification(customerId);
+        notificationService.notifyStaffInformationReviewSubmitted(customerId);
     }
 
     public void assertApprovedForLoanCreation(Long customerId) {

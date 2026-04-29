@@ -1,275 +1,249 @@
-# Hệ thống hỗ trợ quyết định phê duyệt khoản vay trên nền web
+# Web-based Loan Approval Decision Support System
 
-Hệ thống web hỗ trợ quyết định phê duyệt khoản vay, bao gồm:
-- Quy trình nộp hồ sơ vay của khách hàng.
-- DSS chấm điểm tín dụng và khuyến nghị phê duyệt.
-- Xác minh KYC / AML / gian lận cho nhân viên thẩm định.
-- Quy trình duyệt hoặc từ chối hồ sơ vay.
-- Sinh hợp đồng vay, theo dõi thanh toán và điểm tín nhiệm thanh toán.
-- Nhật ký tuân thủ / kiểm toán cho các hành động quan trọng.
+Ứng dụng web hỗ trợ thẩm định và vận hành khoản vay. Hệ thống mô phỏng đầy đủ các bước từ khách hàng khai báo hồ sơ, DSS chấm điểm và khuyến nghị, nhân viên thẩm định, xử lý thủ tục thế chấp, ký hợp đồng, giải ngân, đến xác nhận thanh toán và theo dõi điểm tín nhiệm.
 
-Tài liệu cài đặt nhanh trên máy mới: [GETTING_STARTED.md](GETTING_STARTED.md)
+## Tính năng chính
 
-## 1. Tổng quan nghiệp vụ
+- Đăng ký, đăng nhập bằng JWT và phân quyền theo vai trò `CUSTOMER`, `STAFF`, `ADMIN`.
+- Khách hàng cập nhật hồ sơ cá nhân, thu nhập, phiếu lương và danh sách khoản nợ.
+- Nhân viên xác minh thông tin khách hàng trước khi khách được tạo hồ sơ vay mới.
+- Khách hàng tạo hồ sơ vay tín chấp hoặc vay thế chấp kèm chứng từ.
+- DSS tính điểm tín dụng, DTI, DSCR, xếp hạng rủi ro và khuyến nghị duyệt/từ chối/xem xét thêm.
+- Hàng đợi thẩm định tách riêng với hàng đợi vận hành khoản vay.
+- Luồng vay thế chấp có lịch hẹn, mẫu xử lý thủ tục, tái thẩm định DSS và hợp đồng không lệch điều khoản.
+- Hợp đồng và lịch trả nợ dùng điều khoản đã được DSS xác nhận lại.
+- Khách hàng gửi biên lai thanh toán, nhân viên đối chiếu rồi hệ thống mới ghi nhận thanh toán.
+- Thông báo trong ứng dụng cho các sự kiện nghiệp vụ quan trọng.
+- Giao diện customer/staff hiển thị lỗi ngay tại field bằng viền đỏ và helper text.
 
-Luồng xử lý chính:
-1. Khách hàng tạo hoặc cập nhật hồ sơ tài chính.
-2. Khách hàng khai báo danh sách các khoản nợ hiện tại.
-3. Hệ thống tự tính DTI và DSCR từ thu nhập và các khoản nợ.
-4. Khách hàng tạo hồ sơ vay.
-5. DSS chấm điểm tín dụng, xếp hạng rủi ro và sinh khuyến nghị.
-6. Hệ thống đánh giá rủi ro theo các nhóm tín dụng / gian lận / vận hành.
-7. Nhân viên xác minh hồ sơ, KYC, AML, xác minh thu nhập và gian lận.
-8. Nhân viên ra quyết định cuối: `APPROVE` hoặc `REJECT`.
-9. Nếu được duyệt, hệ thống sinh hợp đồng vay và lịch trả nợ.
-10. Khách hàng ghi nhận thanh toán, hệ thống cập nhật dư nợ và điểm tín nhiệm thanh toán.
+## Vai trò
 
-## 2. Vai trò chính
+`CUSTOMER`
 
-### `CUSTOMER`
-- Cập nhật hồ sơ cá nhân và tài chính.
-- Quản lý các khoản nợ đang có.
-- Tạo và theo dõi hồ sơ vay.
-- Xem hợp đồng và thanh toán khoản vay đã duyệt.
+- Quản lý hồ sơ cá nhân, thu nhập, phiếu lương và khoản nợ.
+- Theo dõi trạng thái xác minh thông tin.
+- Tạo hồ sơ vay tín chấp hoặc thế chấp.
+- Xem hợp đồng, lịch trả nợ và gửi biên lai xác nhận thanh toán.
 
-### `STAFF`
-- Xem hàng đợi thẩm định.
-- Cập nhật trạng thái xác minh KYC / AML / Gian lận / Thu nhập.
-- Xem chi tiết hồ sơ: hồ sơ khách hàng, DSS, rủi ro, xác minh, hợp đồng, kiểm toán.
-- Gửi quyết định xử lý hồ sơ vay.
+`STAFF`
 
-### `ADMIN`
-- Quản lý tài khoản khách hàng và nhân viên.
+- Xác minh hồ sơ khách hàng và thu nhập đã đối chiếu.
+- Xem hàng đợi thẩm định chỉ gồm hồ sơ đang chờ xử lý.
+- Duyệt, từ chối hoặc lên lịch hẹn cho khoản vay thế chấp.
+- Xử lý thủ tục thế chấp, hoàn tất hợp đồng, giải ngân.
+- Đối chiếu biên lai thanh toán và ghi nhận kết quả đúng hạn/trễ hạn.
+
+`ADMIN`
+
+- Quản lý tài khoản người dùng.
+- Tạo tài khoản nhân viên/khách hàng.
 - Xóa người dùng cùng dữ liệu nghiệp vụ liên quan theo logic hệ thống.
 
-## 3. Điểm nổi bật đã hoàn thành
+## Luồng nghiệp vụ
 
-- Xác thực JWT phi trạng thái + RBAC theo vai trò.
-- DSS có giải thích (`explanation`) và quy tắc khuyến nghị rõ ràng.
-- Đánh giá rủi ro tổng hợp thành `LOW`, `MEDIUM`, `HIGH`.
-- Mô-đun xác minh nghiệp vụ: giấy tờ, định danh, thu nhập, KYC, AML, gian lận.
-- Mô-đun hợp đồng vay với công thức EMI.
-- Mô-đun nhật ký kiểm toán tuân thủ.
-- DTI không nhập tay trên giao diện, đồng bộ từ danh sách khoản nợ.
-- Trang thanh toán có tính nợ còn lại và chặn thanh toán khi khoản vay đã tất toán.
-- Frontend có trang giới thiệu công khai trước bước đăng nhập và bảng điều khiển được bảo vệ theo vai trò.
-- Trang đăng nhập đã được làm lại để đồng bộ với trang giới thiệu và luồng điều hướng được bảo vệ.
+1. Khách hàng đăng ký hoặc đăng nhập.
+2. Khách hàng hoàn thiện hồ sơ cá nhân, thu nhập, phiếu lương và danh sách khoản nợ.
+3. Nhân viên xác minh thông tin khách hàng. Khi khách sửa hồ sơ hoặc chứng từ, thu nhập đã xác minh bị vô hiệu hóa và trạng thái quay về chờ xác minh.
+4. Khách hàng tạo hồ sơ vay.
+5. DSS chấm điểm tín dụng, tính DTI/DSCR, đánh giá rủi ro và sinh khuyến nghị.
+6. Nhân viên thẩm định hồ sơ trong hàng đợi thẩm định.
+7. Với vay thế chấp, nhân viên lên lịch hẹn và hoàn thiện mẫu thủ tục thế chấp.
+8. Khi hoàn tất thủ tục thế chấp, hệ thống tái thẩm định DSS bằng dữ liệu sau thẩm định và chỉ cho hoàn tất nếu khoản thanh toán hằng tháng khớp DSS.
+9. Hợp đồng, lịch trả nợ và điều khoản thanh toán được sinh từ kết quả DSS đã xác nhận.
+10. Sau giải ngân, khách hàng gửi biên lai. Nhân viên đối chiếu rồi hệ thống ghi nhận thanh toán và cập nhật điểm tín nhiệm.
 
-## 4. Kiến trúc kỹ thuật
+## Kiến trúc
 
-- Frontend: React 18 + Vite + MUI + React Router.
-- Backend: Java 17 + Spring Boot 3.5 + Spring Security + Validation + JDBC.
-- Database: MySQL 8.4.
-- Migration: Flyway (`V1` -> `V5`).
-- Container: Docker Compose (`mysql`, `backend`, `frontend`).
+Backend:
 
-## 5. Cấu trúc thư mục
+- Java 17
+- Spring Boot 3.5
+- Spring Security
+- Spring Validation
+- Spring JDBC
+- Flyway
+- MySQL 8.4
+- JJWT
+
+Frontend:
+
+- React 18
+- Vite 5
+- Material UI 5
+- React Router 6
+
+Hạ tầng local:
+
+- Docker Compose gồm `mysql`, `backend`, `frontend`
+- File upload được lưu vào volume/container storage cho phiếu lương, chứng từ vay và biên lai thanh toán.
+
+## Cấu trúc thư mục
 
 ```text
 .
 |- backend
 |  |- src/main/java/com/loanapproval/dss
-|  |  |- auth, security, admin
-|  |  |- profile, debt, loan, dss
-|  |  |- verification, risk, contract, repayment
-|  |  `- compliance, shared, health, staff
+|  |  |- admin
+|  |  |- auth
+|  |  |- compliance
+|  |  |- contract
+|  |  |- customerinfo
+|  |  |- debt
+|  |  |- demo
+|  |  |- dss
+|  |  |- health
+|  |  |- loan
+|  |  |- notification
+|  |  |- profile
+|  |  |- repayment
+|  |  |- risk
+|  |  |- security
+|  |  |- staff
+|  |  |- verification
+|  |  `- shared
 |  |- src/main/resources/db/migration
+|  |- src/test
 |  |- Dockerfile
 |  `- pom.xml
 |- frontend
 |  |- src
 |  |  |- app
 |  |  |- features
-|  |  |  |- auth, admin, customer, staff
+|  |  |  |- admin
+|  |  |  |- auth
+|  |  |  |- customer
+|  |  |  `- staff
 |  |  `- shared
 |  |- Dockerfile
+|  |- package.json
 |  `- vite.config.js
 |- docker-compose.yml
-|- TESTING.md
-`- .env.example
+|- .env.example
+`- README.md
 ```
 
-## 6. Dữ liệu và schema chính
+## Database và migration
 
-Các bảng cốt lõi:
-- `users`
-- `customer_profiles`
-- `customer_debts`
-- `loan_requests`
-- `dss_results`
-- `risk_assessments`
-- `customer_verifications`
-- `loan_contracts`
-- `loan_repayments`
-- `decision_audits`
-- `compliance_audit_logs`
+Flyway migration hiện có từ `V1` đến `V18`, bao gồm:
 
-Migration hiện có:
-- `V1__init_schema.sql`
-- `V2__add_admin_role.sql`
-- `V3__add_customer_repayments_and_rating.sql`
-- `V4__add_blueprint_business_modules.sql`
-- `V5__add_loan_requests_indexes.sql`
+- Schema người dùng, hồ sơ khách hàng, khoản nợ, hồ sơ vay.
+- Vai trò admin và bootstrap tài khoản.
+- Thanh toán, điểm tín nhiệm và lịch trả nợ.
+- Thông tin xác minh khách hàng, phiếu lương và chứng từ vay.
+- Loại hồ sơ vay tín chấp/thế chấp.
+- Lịch hẹn và thủ tục thế chấp.
+- Điều khoản hợp đồng, lịch thanh toán và tái thẩm định DSS.
+- Yêu cầu xác nhận biên lai thanh toán.
+- Thông báo trong ứng dụng.
 
-## 7. DSS và logic rủi ro
-
-Đầu vào DSS:
-- Thu nhập tháng, DTI, tổng nợ hiện tại.
-- Tuổi, thời gian làm việc, điểm lịch sử tín dụng.
-- Mục đích vay, giá trị tài sản đảm bảo.
-- Điểm tín nhiệm thanh toán.
-- Trạng thái xác minh: KYC / AML / Thu nhập / Gian lận.
-
-Đầu ra DSS:
-- `creditScore` (`300-850`)
-- `riskRank` (`A`, `B`, `C`, `D`)
-- `customerSegment`
-- `recommendation` (`APPROVE_RECOMMENDED`, `ESCALATE_RECOMMENDED`, `REJECT_RECOMMENDED`)
-- `explanation`
-
-Quy tắc chính:
-- `A + low DTI` -> đề xuất duyệt.
-- `D` hoặc không đạt tuân thủ nghiêm trọng -> đề xuất từ chối.
-- `B/C + borderline` -> cần xem xét thêm trước khi ra quyết định.
-
-Đánh giá rủi ro:
-- Chấm 3 nhóm rủi ro: `tín dụng`, `gian lận`, `vận hành`.
-- Tổng hợp thành `overallRiskLevel`: `LOW`, `MEDIUM`, `HIGH`.
-- Lưu snapshot tại `risk_assessments`.
-
-## 8. DTI, khoản nợ và hồ sơ
-
-- Khách hàng không nhập DTI thủ công trên giao diện.
-- Khách hàng khai báo danh sách khoản nợ gồm:
-  - tên khoản nợ
-  - trả hàng tháng
-  - dư nợ còn lại
-  - đơn vị cho vay
-- Hệ thống tự tính:
-  - `totalMonthlyDebt`
-  - `debtToIncomeRatio`
-  - `debtServiceCoverageRatio`
-- Khi thêm hoặc xóa khoản nợ, DTI trong hồ sơ được đồng bộ lại tự động.
-
-## 9. Thanh toán, nợ còn lại và điểm tín nhiệm
-
-Nghiệp vụ thanh toán:
-- Chỉ cho phép thanh toán với khoản vay `APPROVED`.
-- Backend tính số tiền đến hạn theo hợp đồng vay; dùng phép chia đơn giản khi chưa có hợp đồng.
-- Backend chặn thanh toán nếu khoản vay đã trả hết.
-- Frontend hiển thị:
-  - nợ còn lại hiện tại
-  - nợ còn lại sau khi nhập số tiền trả
-  - lịch sử thanh toán
-- Nếu tất toán, khoản vay sẽ biến mất khỏi danh sách có thể thanh toán.
-
-Điểm tín nhiệm:
-- Trả đủ hoặc vượt mức đến hạn -> `ON_TIME`, cộng điểm.
-- Trả thiếu -> `LATE`, trừ điểm.
-- Điểm thanh toán lưu tại `customer_profiles.payment_rating`.
-
-## 10. Tuân thủ và bảo mật
-
-- Xác thực JWT phi trạng thái.
-- Phân quyền bằng `@PreAuthorize`.
-- CORS cho môi trường local.
-- Băm mật khẩu bằng BCrypt.
-- Nhật ký kiểm toán cho các hành động:
-  - cập nhật xác minh
-  - đánh giá hồ sơ
-  - quyết định của nhân viên
-  - tạo hợp đồng
-
-## 11. Điều hướng frontend
-
-Các đường dẫn công khai:
-- `/`: trang giới thiệu chung trước bước đăng nhập.
-- `/login`: trang đăng nhập / đăng ký.
-
-Các đường dẫn được bảo vệ:
-- `/dashboard`: trang chủ theo vai trò sau khi đăng nhập.
-- `/customer/*`, `/staff/*`, `/admin/*`: các màn hình nghiệp vụ tương ứng.
-
-Luồng hiện tại:
-1. Người dùng vào trang giới thiệu tại `/`.
-2. Chọn CTA để vào `/login`.
-3. Sau khi xác thực thành công, hệ thống điều hướng sang `/dashboard` hoặc đường dẫn được bảo vệ đã yêu cầu trước đó.
-
-## 12. API chính
+## API chính
 
 Auth:
+
 - `POST /api/auth/register`
 - `POST /api/auth/login`
 - `GET /api/auth/me`
 
 Admin:
-- `GET /api/admin/users?role=CUSTOMER|STAFF`
+
+- `GET /api/admin/users`
+- `POST /api/admin/users`
 - `DELETE /api/admin/users/{id}`
 
-Customer Profile + Debt:
+Customer:
+
 - `GET /api/customer/profile`
 - `PUT /api/customer/profile`
+- `GET /api/customer/profile/payslip`
+- `GET /api/customer/information-verification`
 - `GET /api/customer/debts`
 - `GET /api/customer/debts/metrics`
 - `POST /api/customer/debts`
 - `DELETE /api/customer/debts/{id}`
-
-Customer Loan + Contract:
 - `POST /api/customer/loans`
 - `GET /api/customer/loans`
-- `GET /api/customer/loans/paged?page=0&size=10`
+- `GET /api/customer/loans/paged`
 - `GET /api/customer/loans/{id}`
+- `GET /api/customer/loans/{id}/documents/{documentType}`
 - `GET /api/customer/contracts/{loanRequestId}`
-
-Customer Payment:
 - `GET /api/customer/payments`
-- `GET /api/customer/payments/paged?page=0&size=10`
-- `POST /api/customer/payments`
-- Body: `{ "loanRequestId", "amountPaid", "dueDate", "paidAt?", "note?" }`
+- `GET /api/customer/payments/paged`
+- `POST /api/customer/payments/confirmations`
+- `GET /api/customer/payments/confirmations/{confirmationId}/proof`
 
 Staff:
-- `GET /api/staff/requests?status=PENDING|WAITING_SUPERVISOR`
-- `GET /api/staff/requests/paged?page=0&size=10&status=...`
+
+- `GET /api/staff/information-verifications`
+- `GET /api/staff/information-verifications/{customerId}`
+- `GET /api/staff/information-verifications/{customerId}/payslip`
+- `POST /api/staff/information-verifications/{customerId}/decision`
+- `GET /api/staff/requests`
+- `GET /api/staff/requests/paged`
+- `GET /api/staff/requests/operations`
+- `GET /api/staff/requests/operations/paged`
 - `GET /api/staff/requests/{id}`
 - `POST /api/staff/requests/{id}/decision`
-- Body: `{ "action": "APPROVE|REJECT", "scheduledAt?": "...", "appointmentNote?": "..." }`
-
-Verification:
+- `POST /api/staff/requests/{id}/complete-contract`
+- `POST /api/staff/requests/{id}/disburse`
+- `GET /api/staff/requests/{id}/documents/{documentType}`
+- `GET /api/staff/secured-procedures`
+- `GET /api/staff/secured-procedures/{loanRequestId}`
+- `PUT /api/staff/secured-procedures/{loanRequestId}`
+- `GET /api/staff/payment-confirmations`
+- `GET /api/staff/payment-confirmations/{confirmationId}`
+- `POST /api/staff/payment-confirmations/{confirmationId}/review`
+- `GET /api/staff/payment-confirmations/{confirmationId}/proof`
 - `GET /api/staff/verifications/{customerId}`
 - `PUT /api/staff/verifications/{customerId}`
 
+Notifications:
+
+- `GET /api/notifications`
+- `POST /api/notifications/{id}/read`
+- `POST /api/notifications/read-all`
+
 Health:
+
 - `GET /api/health`
 - `GET /actuator/health`
 - `GET /actuator/info`
 
-## 13. Chạy nhanh bằng Docker
+## Chạy bằng Docker
 
-1. Tạo file môi trường:
+Tạo file môi trường:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-2. Build và chạy:
+Build và chạy:
 
 ```powershell
 docker compose up --build -d
 ```
 
-3. Truy cập:
+Truy cập:
+
 - Frontend: `http://localhost:5173`
 - Backend: `http://localhost:8080`
-- MySQL: `localhost:3306` hoặc theo `.env`
+- MySQL: `localhost:3306`
 
-4. Tài khoản admin mặc định:
-- Email: `admin@gmail.com`
-- Password: `123456`
+Tài khoản bootstrap mặc định:
 
-Lưu ý:
-- Nếu database cũ đã từng seed `admin@loan.local`, backend sẽ tự migrate sang admin mặc định mới nếu email mới chưa tồn tại.
+- Admin: `admin@gmail.com` / `123456`
+- Staff demo: `staff.demo@loan.local` / `123456`
+- Customer demo: `customer.demo@loan.local` / `123456`
+- Customer pending: `customer.pending@loan.local` / `123456`
+- Customer failed: `customer.failed@loan.local` / `123456`
 
-## 14. Chạy local không Docker
+## Chạy local không Docker
+
+Yêu cầu:
+
+- Java 17
+- Maven
+- Node.js
+- MySQL 8.x
 
 Backend:
 
@@ -286,13 +260,32 @@ npm install
 npm run dev
 ```
 
-## 15. Build và kiểm thử
+## Biến môi trường thường dùng
 
-Backend build:
+```text
+MYSQL_DATABASE=loan_dss
+MYSQL_USER=loan_user
+MYSQL_PASSWORD=loan_password
+MYSQL_ROOT_PASSWORD=root_password
+MYSQL_PORT=3306
+SPRING_PROFILES_ACTIVE=dev
+BACKEND_PORT=8080
+FRONTEND_PORT=5173
+APP_JWT_SECRET=...
+APP_BOOTSTRAP_ADMIN_ENABLED=true
+APP_BOOTSTRAP_ADMIN_EMAIL=admin@gmail.com
+APP_BOOTSTRAP_ADMIN_PASSWORD=123456
+APP_BOOTSTRAP_DEMO_ENABLED=true
+APP_BOOTSTRAP_DEMO_PASSWORD=123456
+```
+
+## Build và test
+
+Backend tests:
 
 ```powershell
 cd backend
-mvn -B -DskipTests clean package
+mvn test
 ```
 
 Frontend build:
@@ -302,18 +295,16 @@ cd frontend
 npm run build
 ```
 
-Backend unit test:
+Backend package:
 
 ```powershell
 cd backend
-mvn test
+mvn -DskipTests clean package
 ```
 
-Kịch bản test chi tiết xem thêm tại `TESTING.md`.
+## Ghi chú triển khai
 
-## 16. Ghi chú phát triển
-
-- Frontend tổ chức theo hướng feature-based (`features/*`, `shared/*`).
-- API frontend dùng `VITE_API_BASE_URL`.
-- Tiền tệ trên giao diện được chuẩn hóa theo `vi-VN`.
-- Dự án ưu tiên luồng nghiệp vụ tín dụng thực tế hơn CRUD thuần túy.
+- `.md` ngoài `README.md` không được đưa lên repository.
+- `.env` không được commit.
+- `frontend/dist`, `frontend/node_modules`, `backend/target` là output build/local dependency và không nên commit.
+- API frontend dùng `VITE_API_BASE_URL`; khi chạy Docker giá trị mặc định trỏ tới backend local.

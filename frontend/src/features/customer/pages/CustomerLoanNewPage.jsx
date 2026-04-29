@@ -21,6 +21,7 @@ import { createLoanApi } from "@/features/customer/api/loanApi";
 import { getMyProfileApi } from "@/features/customer/api/profileApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
+import { clearFieldError, fieldErrorProps, mapFieldErrors } from "@/shared/utils/formErrors";
 import { LOAN_IMAGE_ACCEPT, formatFileSize, isAcceptedLoanImageFile } from "@/shared/utils/files";
 import {
   labelCollateralType,
@@ -46,9 +47,28 @@ const emptyForm = {
   collateralValue: ""
 };
 
-function FilePicker({ label, file, disabled, onChange }) {
+const loanFieldKeywords = {
+  amount: ["số tiền vay", "số tiền yêu cầu", "khoản vay"],
+  termMonths: ["kỳ hạn", "thời hạn"],
+  collateralValue: ["giá trị tài sản", "tài sản bảo đảm"],
+  vehicleRegistration: ["giấy tờ xe", "đăng ký xe", "vehicle registration"],
+  licensePlateImage: ["biển số xe", "license plate"],
+  idCardFront: ["cccd mặt trước", "mặt trước cccd", "id card front"],
+  idCardBack: ["cccd mặt sau", "mặt sau cccd", "id card back"],
+  faceCapture: ["ảnh khuôn mặt", "khuôn mặt", "face"]
+};
+
+function FilePicker({ label, file, disabled, onChange, error, helperText }) {
   return (
-    <Paper variant="outlined" sx={{ p: 2, height: "100%" }}>
+    <Paper
+      variant="outlined"
+      sx={{
+        p: 2,
+        height: "100%",
+        borderColor: error ? "error.main" : "divider",
+        borderWidth: error ? 2 : 1
+      }}
+    >
       <Stack spacing={1.25}>
         <Typography variant="subtitle2">{label}</Typography>
         <Button component="label" variant="outlined" disabled={disabled} sx={{ alignSelf: "flex-start" }}>
@@ -58,6 +78,11 @@ function FilePicker({ label, file, disabled, onChange }) {
         {file && (
           <Typography variant="body2" color="text.secondary">
             {file.name} ({formatFileSize(file.size)})
+          </Typography>
+        )}
+        {helperText && (
+          <Typography variant="caption" color={error ? "error" : "text.secondary"}>
+            {helperText}
           </Typography>
         )}
       </Stack>
@@ -82,6 +107,7 @@ export default function CustomerLoanNewPage() {
   const [informationVerification, setInformationVerification] = useState(null);
   const [profile, setProfile] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const [fieldErrors, setFieldErrors] = useState({});
   const [files, setFiles] = useState(emptyFiles);
 
   useEffect(() => {
@@ -151,10 +177,11 @@ export default function CustomerLoanNewPage() {
     if (form.loanType === "SECURED") {
       return "Vay bằng giấy tờ xe, cần ảnh giấy tờ xe và ảnh biển số xe tương ứng. Nhân viên sẽ liên hệ đặt lịch hẹn sau khi tiếp nhận.";
     }
-    return "Vay tín chấp cần CCCD hai mặt và ảnh khuôn mặt chụp trực tiếp bằng camera trên trình duyệt.";
+    return "Vay tín chấp cần CCCD hai mặt và ảnh khuôn mặt chụp trực tiếp bằng máy ảnh trên trình duyệt.";
   }, [form.loanType]);
 
   const handleChange = (name) => (event) => {
+    setFieldErrors((prev) => clearFieldError(prev, name));
     setForm((prev) => ({
       ...prev,
       [name]: event.target.value
@@ -162,6 +189,7 @@ export default function CustomerLoanNewPage() {
   };
 
   const handleMoneyChange = (name) => (event) => {
+    setFieldErrors((prev) => clearFieldError(prev, name));
     setForm((prev) => ({
       ...prev,
       [name]: formatVndInput(event.target.value)
@@ -176,17 +204,21 @@ export default function CustomerLoanNewPage() {
       ...prev,
       loanType: value
     }));
+    setFieldErrors({});
     setError("");
   };
 
   const handleFileChange = (name) => (event) => {
+    setFieldErrors((prev) => clearFieldError(prev, name));
     const file = event.target.files?.[0] ?? null;
     if (!file) {
       setFiles((prev) => ({ ...prev, [name]: null }));
       return;
     }
     if (!isAcceptedLoanImageFile(file)) {
-      setError("Chỉ chấp nhận ảnh JPG, JPEG, PNG hoặc WEBP cho chứng từ hồ sơ vay.");
+      const message = "Chỉ chấp nhận ảnh JPG, JPEG, PNG hoặc WEBP cho chứng từ hồ sơ vay.";
+      setError(message);
+      setFieldErrors({ [name]: message });
       event.target.value = "";
       return;
     }
@@ -214,7 +246,7 @@ export default function CustomerLoanNewPage() {
       }
       setCameraActive(true);
     } catch (err) {
-      setCameraError(err.message || "Không mở được camera. Vui lòng cấp quyền camera để chụp ảnh khuôn mặt.");
+      setCameraError(err.message || "Không mở được máy ảnh. Vui lòng cấp quyền máy ảnh để chụp ảnh khuôn mặt.");
     }
   };
 
@@ -233,11 +265,12 @@ export default function CustomerLoanNewPage() {
     canvas.toBlob(
       (blob) => {
         if (!blob) {
-          setCameraError("Không chụp được ảnh khuôn mặt từ camera.");
+          setCameraError("Không chụp được ảnh khuôn mặt từ máy ảnh.");
           return;
         }
         const faceFile = new File([blob], `face-capture-${Date.now()}.jpg`, { type: "image/jpeg" });
         setFiles((prev) => ({ ...prev, faceCapture: faceFile }));
+        setFieldErrors((prev) => clearFieldError(prev, "faceCapture"));
         setCameraError("");
         stopCamera();
       },
@@ -277,7 +310,7 @@ export default function CustomerLoanNewPage() {
       return "Vui lòng tải ảnh CCCD mặt sau.";
     }
     if (!files.faceCapture) {
-      return "Vui lòng chụp ảnh khuôn mặt hiện tại bằng camera.";
+      return "Vui lòng chụp ảnh khuôn mặt hiện tại bằng máy ảnh.";
     }
     return "";
   };
@@ -285,11 +318,13 @@ export default function CustomerLoanNewPage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
+    setFieldErrors({});
     setSuccessMessage("");
 
     const validationError = validateSubmit();
     if (validationError) {
       setError(validationError);
+      setFieldErrors(mapFieldErrors(validationError, loanFieldKeywords));
       return;
     }
 
@@ -327,7 +362,9 @@ export default function CustomerLoanNewPage() {
       setFiles(emptyFiles);
       navigate(`/customer/loans/${created.id}`);
     } catch (err) {
-      setError(err.message || "Không tạo được hồ sơ vay");
+      const message = err.message || "Không tạo được hồ sơ vay";
+      setError(message);
+      setFieldErrors(mapFieldErrors(message, loanFieldKeywords));
     } finally {
       setSubmitting(false);
     }
@@ -407,6 +444,7 @@ export default function CustomerLoanNewPage() {
                 fullWidth
                 disabled={submitting || blockedByVerification || loading}
                 inputProps={{ inputMode: "numeric" }}
+                {...fieldErrorProps(fieldErrors, "amount")}
               />
             </Grid>
             <Grid item xs={12} md={4}>
@@ -418,6 +456,7 @@ export default function CustomerLoanNewPage() {
                 required
                 fullWidth
                 disabled={submitting || blockedByVerification || loading}
+                {...fieldErrorProps(fieldErrors, "termMonths")}
               />
             </Grid>
             <Grid item xs={12} md={4}>
@@ -485,7 +524,11 @@ export default function CustomerLoanNewPage() {
                     disabled={submitting || blockedByVerification}
                     inputProps={{ inputMode: "numeric" }}
                     placeholder="Ví dụ: 150.000.000"
-                    helperText="Nhập giá trị thị trường ước tính của tài sản"
+                    {...fieldErrorProps(
+                      fieldErrors,
+                      "collateralValue",
+                      "Nhập giá trị thị trường ước tính của tài sản"
+                    )}
                   />
                 </Grid>
                 <Grid item xs={12} md={6}>
@@ -494,6 +537,8 @@ export default function CustomerLoanNewPage() {
                     file={files.vehicleRegistration}
                     disabled={submitting || blockedByVerification || loading}
                     onChange={handleFileChange("vehicleRegistration")}
+                    error={Boolean(fieldErrors.vehicleRegistration)}
+                    helperText={fieldErrors.vehicleRegistration}
                   />
                 </Grid>
                 <Grid item xs={12} md={6}>
@@ -502,6 +547,8 @@ export default function CustomerLoanNewPage() {
                     file={files.licensePlateImage}
                     disabled={submitting || blockedByVerification || loading}
                     onChange={handleFileChange("licensePlateImage")}
+                    error={Boolean(fieldErrors.licensePlateImage)}
+                    helperText={fieldErrors.licensePlateImage}
                   />
                 </Grid>
               </Grid>
@@ -519,6 +566,8 @@ export default function CustomerLoanNewPage() {
                     file={files.idCardFront}
                     disabled={submitting || blockedByVerification || loading}
                     onChange={handleFileChange("idCardFront")}
+                    error={Boolean(fieldErrors.idCardFront)}
+                    helperText={fieldErrors.idCardFront}
                   />
                 </Grid>
                 <Grid item xs={12} md={6}>
@@ -527,16 +576,26 @@ export default function CustomerLoanNewPage() {
                     file={files.idCardBack}
                     disabled={submitting || blockedByVerification || loading}
                     onChange={handleFileChange("idCardBack")}
+                    error={Boolean(fieldErrors.idCardBack)}
+                    helperText={fieldErrors.idCardBack}
                   />
                 </Grid>
                 <Grid item xs={12}>
-                  <Paper variant="outlined" sx={{ p: 2 }}>
+                  <Paper
+                    variant="outlined"
+                    sx={{
+                      p: 2,
+                      borderColor: fieldErrors.faceCapture ? "error.main" : "divider",
+                      borderWidth: fieldErrors.faceCapture ? 2 : 1
+                    }}
+                  >
                     <Stack spacing={1.5}>
                       <Typography variant="subtitle2">{labelLoanDocumentType("FACE_CAPTURE")}</Typography>
                       <Typography variant="body2" color="text.secondary">
-                        Ảnh khuôn mặt phải được chụp trực tiếp bằng camera, không hỗ trợ upload file cho bước này.
+                        Ảnh khuôn mặt phải được chụp trực tiếp bằng máy ảnh, không hỗ trợ tải tệp lên cho bước này.
                       </Typography>
                       {cameraError && <Alert severity="warning">{cameraError}</Alert>}
+                      {fieldErrors.faceCapture && <Alert severity="error">{fieldErrors.faceCapture}</Alert>}
                       {files.faceCapture && (
                         <Alert severity="success">
                           Đã chụp ảnh khuôn mặt ({formatFileSize(files.faceCapture.size)}).
@@ -567,7 +626,7 @@ export default function CustomerLoanNewPage() {
                             onClick={startCamera}
                             disabled={submitting || blockedByVerification || loading}
                           >
-                            Mở camera
+                            Mở máy ảnh
                           </Button>
                         )}
                         {cameraActive && (
@@ -576,7 +635,7 @@ export default function CustomerLoanNewPage() {
                               Chụp ảnh
                             </Button>
                             <Button variant="outlined" color="inherit" onClick={stopCamera} disabled={submitting}>
-                              Tắt camera
+                              Tắt máy ảnh
                             </Button>
                           </>
                         )}

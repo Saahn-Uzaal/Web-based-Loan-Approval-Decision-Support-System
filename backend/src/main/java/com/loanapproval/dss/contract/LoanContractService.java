@@ -7,6 +7,7 @@ import com.loanapproval.dss.loan.LoanEligibilityService;
 import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.loan.LoanType;
+import com.loanapproval.dss.notification.NotificationService;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
@@ -26,16 +27,19 @@ public class LoanContractService {
     private final ComplianceAuditService complianceAuditService;
     private final BigDecimal defaultAnnualInterestRate;
     private final LoanEligibilityService loanEligibilityService;
+    private final NotificationService notificationService;
 
     public LoanContractService(
             LoanContractRepository loanContractRepository,
             ComplianceAuditService complianceAuditService,
             @Value("${app.loan.default-annual-interest-rate:0.12}") BigDecimal defaultAnnualInterestRate,
-            LoanEligibilityService loanEligibilityService) {
+            LoanEligibilityService loanEligibilityService,
+            NotificationService notificationService) {
         this.loanContractRepository = loanContractRepository;
         this.complianceAuditService = complianceAuditService;
         this.defaultAnnualInterestRate = defaultAnnualInterestRate;
         this.loanEligibilityService = loanEligibilityService;
+        this.notificationService = notificationService;
     }
 
     @Transactional
@@ -145,6 +149,11 @@ public class LoanContractService {
                         monthlyPayment.toPlainString(),
                         firstPaymentDate,
                         finalPaymentDate));
+        notificationService.notifyCustomerContractCreated(
+                loan.id(),
+                loan.customerId(),
+                actorUserId,
+                loan.loanType());
 
         return created;
     }

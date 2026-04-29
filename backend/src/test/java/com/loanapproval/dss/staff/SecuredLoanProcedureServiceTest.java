@@ -2,7 +2,6 @@ package com.loanapproval.dss.staff;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -30,6 +29,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Optional;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -83,6 +83,9 @@ class SecuredLoanProcedureServiceTest {
         StaffSecuredProcedureResponse completedDetail =
                 detailResponse(loanRequestId, customerId, LoanStatus.CONTRACTED, SecuredProcedureStatus.COMPLETED, scheduledAt);
         CustomerVerification verification = fullyVerified(customerId);
+        BigDecimal requestedAnnualRate = request.monthlyInterestRate()
+                .multiply(BigDecimal.valueOf(12))
+                .setScale(6);
         LoanApprovalReassessmentService.ReassessmentResult reassessment =
                 new LoanApprovalReassessmentService.ReassessmentResult(
                         BigDecimal.valueOf(280_000_000),
@@ -105,7 +108,7 @@ class SecuredLoanProcedureServiceTest {
                         verification,
                         appointmentScheduledLoan.approvedAmount(),
                         appointmentScheduledLoan.approvedTermMonths(),
-                        appointmentScheduledLoan.approvedAnnualRate(),
+                        requestedAnnualRate,
                         request.appraisalValue(),
                         true))
                 .thenReturn(reassessment);
@@ -122,7 +125,7 @@ class SecuredLoanProcedureServiceTest {
                         verification,
                         appointmentScheduledLoan.approvedAmount(),
                         appointmentScheduledLoan.approvedTermMonths(),
-                        appointmentScheduledLoan.approvedAnnualRate(),
+                        requestedAnnualRate,
                         request.appraisalValue(),
                         true);
         verify(loanRepository)
@@ -137,10 +140,15 @@ class SecuredLoanProcedureServiceTest {
                         eq(reassessment.approvedMonthlyPayment()),
                         eq(reassessment.decisionPolicyVersion()));
         verify(securedLoanProcedureRepository).markLatestAppointmentCompleted(loanRequestId);
+        ArgumentCaptor<LoanContractScheduleTerms> scheduleTermsCaptor =
+                ArgumentCaptor.forClass(LoanContractScheduleTerms.class);
         verify(loanContractService).createIfMissingFromApprovedLoan(
                 eq(approvedLoan),
                 eq(staffUserId),
-                any(LoanContractScheduleTerms.class));
+                scheduleTermsCaptor.capture());
+        LoanContractScheduleTerms scheduleTerms = scheduleTermsCaptor.getValue();
+        assertThat(scheduleTerms.annualInterestRate()).isEqualByComparingTo(reassessment.approvedAnnualRate());
+        assertThat(scheduleTerms.monthlyPayment()).isEqualByComparingTo(reassessment.approvedMonthlyPayment());
         verify(loanRepository).updateStatus(loanRequestId, LoanStatus.CONTRACTED);
     }
 

@@ -27,10 +27,46 @@ import {
 } from "@/features/staff/api/staffApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
+import { clearFieldError, fieldErrorProps, mapFieldErrors } from "@/shared/utils/formErrors";
 import { labelLoanStatus, labelSecuredProcedureStatus } from "@/shared/utils/labels";
 
 const DEMO_TIME_STORAGE_KEY_PREFIX = "loan_dss_demo_now_";
 const MONEY_FIELDS = new Set(["salePrice", "downPayment", "appraisalValue", "monthlyPaymentAmount"]);
+
+const securedProcedureFieldKeywords = {
+  demoNow: ["ngày giờ giả lập", "thời gian giả lập", "demo now"],
+  mortgageeName: ["bên nhận thế chấp", "tên bên nhận"],
+  mortgageeAddress: ["địa chỉ bên nhận", "địa chỉ"],
+  mortgageeBusinessCode: ["mã số doanh nghiệp"],
+  mortgageePhone: ["số điện thoại"],
+  contractNumber: ["số hợp đồng"],
+  contractSignedDate: ["ngày ký hợp đồng", "ngày ký"],
+  nationality: ["quốc tịch"],
+  identityDocumentNumber: ["cmnd", "cccd", "hộ chiếu"],
+  permanentAddress: ["địa chỉ hộ khẩu"],
+  currentAddress: ["địa chỉ nơi ở hiện tại"],
+  occupation: ["nghề nghiệp"],
+  jobTitle: ["chức danh"],
+  assetType: ["tài sản thế chấp", "loại tài sản"],
+  assetManufacturer: ["nhà sản xuất"],
+  engineNumber: ["số máy"],
+  frameNumber: ["số khung"],
+  collateralOwnerName: ["tên trên giấy đăng ký", "chủ sở hữu"],
+  collateralIdentifier: ["biển số", "mã tài sản"],
+  registrationNumber: ["số giấy đăng ký"],
+  salePrice: ["giá bán"],
+  downPayment: ["tiền mặt trả trước", "trả trước"],
+  appraisalValue: ["giá trị thẩm định"],
+  appraisalReportCode: ["mã biên bản thẩm định"],
+  insurancePolicyNumber: ["hợp đồng bảo hiểm"],
+  monthlyInterestRate: ["lãi suất thực tế hằng tháng", "lãi suất tháng", "lãi suất"],
+  monthlyPaymentAmount: ["khoản thanh toán hằng tháng", "thanh toán hằng tháng", "monthly payment"],
+  firstPaymentDate: ["ngày thanh toán đầu tiên"],
+  monthlyPaymentDay: ["ngày thanh toán hằng tháng"],
+  finalPaymentDate: ["ngày thanh toán cuối cùng"],
+  status: ["trạng thái thủ tục"],
+  note: ["ghi chú nghiệp vụ"]
+};
 
 const defaultForm = {
   mortgageeName: "",
@@ -388,6 +424,7 @@ export default function StaffSecuredProceduresPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [demoNow, setDemoNow] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
 
   useEffect(() => {
     let active = true;
@@ -399,6 +436,7 @@ export default function StaffSecuredProceduresPage() {
       setLoading(true);
       setError("");
       setSuccess("");
+      setFieldErrors({});
       try {
         if (loanRequestId) {
           const response = await getStaffSecuredProcedureDetailApi(accessToken, loanRequestId);
@@ -453,6 +491,7 @@ export default function StaffSecuredProceduresPage() {
   const handleChange = (field) => (event) => {
     const value = event.target.type === "checkbox" ? event.target.checked : event.target.value;
     const normalizedValue = MONEY_FIELDS.has(field) ? formatVndInput(value) : value;
+    setFieldErrors((prev) => clearFieldError(prev, field));
     setForm((prev) => {
       const next = {
         ...prev,
@@ -467,12 +506,10 @@ export default function StaffSecuredProceduresPage() {
         Object.assign(next, buildPaymentSchedule(value, detail?.termMonths));
       }
 
-      if ((field === "monthlyInterestRate" || field === "monthlyPaymentAmount") && value === "") {
-        next.monthlyPaymentAmount = estimateMonthlyPayment(detail?.amount, detail?.termMonths, field === "monthlyInterestRate" ? value : prev.monthlyInterestRate);
-      }
-
       if (field === "monthlyInterestRate") {
-        next.monthlyPaymentAmount = estimateMonthlyPayment(detail?.amount, detail?.termMonths, value);
+        next.monthlyPaymentAmount = value === ""
+          ? ""
+          : estimateMonthlyPayment(detail?.amount, detail?.termMonths, value);
       }
 
       return next;
@@ -480,6 +517,7 @@ export default function StaffSecuredProceduresPage() {
   };
 
   const handleUseRealNow = () => {
+    setFieldErrors((prev) => clearFieldError(prev, "demoNow"));
     setDemoNow(currentDateTimeLocalValue());
   };
 
@@ -487,6 +525,7 @@ export default function StaffSecuredProceduresPage() {
     if (!detail?.appointment?.scheduledAt) {
       return;
     }
+    setFieldErrors((prev) => clearFieldError(prev, "demoNow"));
     setDemoNow(plusHoursDateTime(detail.appointment.scheduledAt, 2));
   };
 
@@ -495,6 +534,7 @@ export default function StaffSecuredProceduresPage() {
     setSaving(true);
     setError("");
     setSuccess("");
+    setFieldErrors({});
     try {
       const response = await saveStaffSecuredProcedureApi(
         accessToken,
@@ -506,7 +546,9 @@ export default function StaffSecuredProceduresPage() {
       setForm(buildInitialForm(response));
       setSuccess("Đã lưu mẫu thủ tục thế chấp.");
     } catch (err) {
-      setError(err.message || "Không lưu được thủ tục vay thế chấp");
+      const message = err.message || "Không lưu được thủ tục vay thế chấp";
+      setError(message);
+      setFieldErrors(mapFieldErrors(message, securedProcedureFieldKeywords));
     } finally {
       setSaving(false);
     }
@@ -618,9 +660,13 @@ export default function StaffSecuredProceduresPage() {
                     label="Ngày giờ giả lập"
                     type="datetime-local"
                     value={demoNow}
-                    onChange={(event) => setDemoNow(event.target.value)}
+                    onChange={(event) => {
+                      setFieldErrors((prev) => clearFieldError(prev, "demoNow"));
+                      setDemoNow(event.target.value);
+                    }}
                     InputLabelProps={{ shrink: true }}
                     sx={{ minWidth: { xs: "100%", md: 280 } }}
+                    {...fieldErrorProps(fieldErrors, "demoNow")}
                   />
                   <Button variant="outlined" onClick={handleUseRealNow}>
                     Dùng thời gian hiện tại
@@ -653,7 +699,13 @@ export default function StaffSecuredProceduresPage() {
                     <ReadOnlyField label="1.2 Ngày sinh" value={detail.customerDateOfBirth || ""} />
                   </Grid>
                   <Grid item xs={12} md={3}>
-                    <TextField label="1.3 Quốc tịch" value={form.nationality} onChange={handleChange("nationality")} fullWidth />
+                    <TextField
+                      label="1.3 Quốc tịch"
+                      value={form.nationality}
+                      onChange={handleChange("nationality")}
+                      fullWidth
+                      {...fieldErrorProps(fieldErrors, "nationality")}
+                    />
                   </Grid>
                   <Grid item xs={12} md={6}>
                     <TextField
@@ -661,6 +713,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.identityDocumentNumber}
                       onChange={handleChange("identityDocumentNumber")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "identityDocumentNumber")}
                     />
                   </Grid>
                   <Grid item xs={12} md={6}>
@@ -669,6 +722,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.permanentAddress}
                       onChange={handleChange("permanentAddress")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "permanentAddress")}
                     />
                   </Grid>
                   <Grid item xs={12} md={6}>
@@ -677,6 +731,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.currentAddress}
                       onChange={handleChange("currentAddress")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "currentAddress")}
                     />
                   </Grid>
                   <Grid item xs={12} md={3}>
@@ -691,6 +746,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.occupation}
                       onChange={handleChange("occupation")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "occupation")}
                     />
                   </Grid>
                   <Grid item xs={12} md={6}>
@@ -699,6 +755,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.jobTitle}
                       onChange={handleChange("jobTitle")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "jobTitle")}
                     />
                   </Grid>
                 </Grid>
@@ -716,6 +773,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.mortgageeName}
                       onChange={handleChange("mortgageeName")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "mortgageeName")}
                     />
                   </Grid>
                   <Grid item xs={12} md={6}>
@@ -724,6 +782,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.mortgageeAddress}
                       onChange={handleChange("mortgageeAddress")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "mortgageeAddress")}
                     />
                   </Grid>
                   <Grid item xs={12} md={6}>
@@ -732,6 +791,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.mortgageeBusinessCode}
                       onChange={handleChange("mortgageeBusinessCode")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "mortgageeBusinessCode")}
                     />
                   </Grid>
                   <Grid item xs={12} md={6}>
@@ -740,6 +800,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.mortgageePhone}
                       onChange={handleChange("mortgageePhone")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "mortgageePhone")}
                     />
                   </Grid>
                 </Grid>
@@ -752,7 +813,13 @@ export default function StaffSecuredProceduresPage() {
                 />
                 <Grid container spacing={2}>
                   <Grid item xs={12} md={4}>
-                    <TextField label="3.1 Tài sản thế chấp" value={form.assetType} onChange={handleChange("assetType")} fullWidth />
+                    <TextField
+                      label="3.1 Tài sản thế chấp"
+                      value={form.assetType}
+                      onChange={handleChange("assetType")}
+                      fullWidth
+                      {...fieldErrorProps(fieldErrors, "assetType")}
+                    />
                   </Grid>
                   <Grid item xs={12} md={4}>
                     <TextField
@@ -760,6 +827,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.assetManufacturer}
                       onChange={handleChange("assetManufacturer")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "assetManufacturer")}
                     />
                   </Grid>
                   <Grid item xs={12} md={4}>
@@ -768,13 +836,26 @@ export default function StaffSecuredProceduresPage() {
                       value={form.collateralOwnerName}
                       onChange={handleChange("collateralOwnerName")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "collateralOwnerName")}
                     />
                   </Grid>
                   <Grid item xs={12} md={4}>
-                    <TextField label="3.3 Số máy" value={form.engineNumber} onChange={handleChange("engineNumber")} fullWidth />
+                    <TextField
+                      label="3.3 Số máy"
+                      value={form.engineNumber}
+                      onChange={handleChange("engineNumber")}
+                      fullWidth
+                      {...fieldErrorProps(fieldErrors, "engineNumber")}
+                    />
                   </Grid>
                   <Grid item xs={12} md={4}>
-                    <TextField label="3.4 Số khung" value={form.frameNumber} onChange={handleChange("frameNumber")} fullWidth />
+                    <TextField
+                      label="3.4 Số khung"
+                      value={form.frameNumber}
+                      onChange={handleChange("frameNumber")}
+                      fullWidth
+                      {...fieldErrorProps(fieldErrors, "frameNumber")}
+                    />
                   </Grid>
                   <Grid item xs={12} md={4}>
                     <TextField
@@ -782,6 +863,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.collateralIdentifier}
                       onChange={handleChange("collateralIdentifier")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "collateralIdentifier")}
                     />
                   </Grid>
                   <Grid item xs={12} md={6}>
@@ -790,6 +872,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.registrationNumber}
                       onChange={handleChange("registrationNumber")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "registrationNumber")}
                     />
                   </Grid>
                   <Grid item xs={12} md={3}>
@@ -800,6 +883,7 @@ export default function StaffSecuredProceduresPage() {
                       onChange={handleChange("salePrice")}
                       inputProps={{ inputMode: "numeric" }}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "salePrice")}
                     />
                   </Grid>
                   <Grid item xs={12} md={3}>
@@ -810,6 +894,7 @@ export default function StaffSecuredProceduresPage() {
                       onChange={handleChange("downPayment")}
                       inputProps={{ inputMode: "numeric" }}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "downPayment")}
                     />
                   </Grid>
                   <Grid item xs={12} md={4}>
@@ -820,6 +905,7 @@ export default function StaffSecuredProceduresPage() {
                       onChange={handleChange("appraisalValue")}
                       inputProps={{ inputMode: "numeric" }}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "appraisalValue")}
                     />
                   </Grid>
                   <Grid item xs={12} md={4}>
@@ -828,6 +914,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.appraisalReportCode}
                       onChange={handleChange("appraisalReportCode")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "appraisalReportCode")}
                     />
                   </Grid>
                   <Grid item xs={12} md={4}>
@@ -836,6 +923,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.insurancePolicyNumber}
                       onChange={handleChange("insurancePolicyNumber")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "insurancePolicyNumber")}
                     />
                   </Grid>
                 </Grid>
@@ -853,6 +941,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.contractNumber}
                       onChange={handleChange("contractNumber")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "contractNumber")}
                     />
                   </Grid>
                   <Grid item xs={12} md={6}>
@@ -863,6 +952,7 @@ export default function StaffSecuredProceduresPage() {
                       onChange={handleChange("contractSignedDate")}
                       InputLabelProps={{ shrink: true }}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "contractSignedDate")}
                     />
                   </Grid>
                   <Grid item xs={12} md={4}>
@@ -879,6 +969,7 @@ export default function StaffSecuredProceduresPage() {
                       onChange={handleChange("monthlyInterestRate")}
                       inputProps={{ min: 0, step: 0.0001 }}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "monthlyInterestRate")}
                     />
                   </Grid>
                   <Grid item xs={12} md={4}>
@@ -889,6 +980,7 @@ export default function StaffSecuredProceduresPage() {
                       onChange={handleChange("monthlyPaymentAmount")}
                       inputProps={{ inputMode: "numeric" }}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "monthlyPaymentAmount")}
                     />
                   </Grid>
                   <Grid item xs={12} md={4}>
@@ -899,6 +991,7 @@ export default function StaffSecuredProceduresPage() {
                       onChange={handleChange("firstPaymentDate")}
                       InputLabelProps={{ shrink: true }}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "firstPaymentDate")}
                     />
                   </Grid>
                   <Grid item xs={12} md={2}>
@@ -907,6 +1000,7 @@ export default function StaffSecuredProceduresPage() {
                       value={form.monthlyPaymentDay}
                       onChange={handleChange("monthlyPaymentDay")}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "monthlyPaymentDay")}
                     />
                   </Grid>
                   <Grid item xs={12} md={2}>
@@ -917,6 +1011,7 @@ export default function StaffSecuredProceduresPage() {
                       onChange={handleChange("finalPaymentDate")}
                       InputLabelProps={{ shrink: true }}
                       fullWidth
+                      {...fieldErrorProps(fieldErrors, "finalPaymentDate")}
                     />
                   </Grid>
                 </Grid>
@@ -959,6 +1054,7 @@ export default function StaffSecuredProceduresPage() {
                   label="Trạng thái thủ tục"
                   value={form.status}
                   onChange={handleChange("status")}
+                  {...fieldErrorProps(fieldErrors, "status")}
                 >
                   <MenuItem value="DRAFT">Chưa xử lý</MenuItem>
                   <MenuItem value="IN_PROGRESS">Đang xử lý</MenuItem>
@@ -972,6 +1068,7 @@ export default function StaffSecuredProceduresPage() {
                   multiline
                   rows={4}
                   placeholder="Ghi lại các lưu ý phát sinh trong buổi gặp mặt, đối chiếu tài sản và hoàn thiện hồ sơ pháp lý."
+                  {...fieldErrorProps(fieldErrors, "note")}
                 />
 
                 <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>

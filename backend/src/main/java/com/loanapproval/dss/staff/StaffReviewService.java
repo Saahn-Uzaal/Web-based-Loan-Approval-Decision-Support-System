@@ -15,6 +15,7 @@ import com.loanapproval.dss.loan.LoanRepository;
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.loan.LoanType;
 import com.loanapproval.dss.loan.dto.LoanDocumentResponse;
+import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.shared.PageResponse;
 import com.loanapproval.dss.staff.dto.StaffDecisionRequest;
 import com.loanapproval.dss.staff.dto.StaffDecisionResponse;
@@ -39,8 +40,9 @@ public class StaffReviewService {
 
     private static final Logger log = LoggerFactory.getLogger(StaffReviewService.class);
 
-    private static final Set<LoanStatus> REVIEW_QUEUE_STATUSES = EnumSet.of(
-            LoanStatus.PENDING,
+    private static final Set<LoanStatus> REVIEW_QUEUE_STATUSES = EnumSet.of(LoanStatus.PENDING);
+
+    private static final Set<LoanStatus> OPERATION_QUEUE_STATUSES = EnumSet.of(
             LoanStatus.APPOINTMENT_SCHEDULED,
             LoanStatus.APPROVED,
             LoanStatus.CONTRACTED,
@@ -58,6 +60,7 @@ public class StaffReviewService {
     private final CustomerVerificationService customerVerificationService;
     private final ComplianceAuditService complianceAuditService;
     private final LoanApprovalReassessmentService loanApprovalReassessmentService;
+    private final NotificationService notificationService;
 
     public StaffReviewService(
             StaffReviewRepository staffReviewRepository,
@@ -68,7 +71,8 @@ public class StaffReviewService {
             CustomerInformationVerificationService customerInformationVerificationService,
             CustomerVerificationService customerVerificationService,
             ComplianceAuditService complianceAuditService,
-            LoanApprovalReassessmentService loanApprovalReassessmentService) {
+            LoanApprovalReassessmentService loanApprovalReassessmentService,
+            NotificationService notificationService) {
         this.staffReviewRepository = staffReviewRepository;
         this.loanRepository = loanRepository;
         this.loanDocumentRepository = loanDocumentRepository;
@@ -78,28 +82,36 @@ public class StaffReviewService {
         this.customerVerificationService = customerVerificationService;
         this.complianceAuditService = complianceAuditService;
         this.loanApprovalReassessmentService = loanApprovalReassessmentService;
+        this.notificationService = notificationService;
     }
 
     public List<StaffRequestSummaryResponse> listReviewQueue(LoanStatus status) {
-        if (status != null && !REVIEW_QUEUE_STATUSES.contains(status)) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Bộ lọc trạng thái không hợp lệ");
-        }
+        validateStatusFilter(status, REVIEW_QUEUE_STATUSES);
         return staffReviewRepository.findReviewQueue(status);
     }
 
     public PageResponse<StaffRequestSummaryResponse> listReviewQueuePaged(LoanStatus status, int page, int size) {
-        if (status != null && !REVIEW_QUEUE_STATUSES.contains(status)) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Bộ lọc trạng thái không hợp lệ");
-        }
+        validateStatusFilter(status, REVIEW_QUEUE_STATUSES);
         int safeSize = Math.min(Math.max(size, 1), 100);
         int safeOffset = Math.max(page, 0) * safeSize;
         long total = staffReviewRepository.countReviewQueue(status);
         List<StaffRequestSummaryResponse> content =
                 staffReviewRepository.findReviewQueuePaged(status, safeOffset, safeSize);
+        return PageResponse.of(content, Math.max(page, 0), safeSize, total);
+    }
+
+    public List<StaffRequestSummaryResponse> listOperationQueue(LoanStatus status) {
+        validateStatusFilter(status, OPERATION_QUEUE_STATUSES);
+        return staffReviewRepository.findOperationQueue(status);
+    }
+
+    public PageResponse<StaffRequestSummaryResponse> listOperationQueuePaged(LoanStatus status, int page, int size) {
+        validateStatusFilter(status, OPERATION_QUEUE_STATUSES);
+        int safeSize = Math.min(Math.max(size, 1), 100);
+        int safeOffset = Math.max(page, 0) * safeSize;
+        long total = staffReviewRepository.countOperationQueue(status);
+        List<StaffRequestSummaryResponse> content =
+                staffReviewRepository.findOperationQueuePaged(status, safeOffset, safeSize);
         return PageResponse.of(content, Math.max(page, 0), safeSize, total);
     }
 
@@ -215,6 +227,22 @@ public class StaffReviewService {
                 actionType(nextStatus),
                 actionOutcome(nextStatus),
                 "action=" + request.action() + ", appointment=" + (scheduledAt != null ? scheduledAt : "none"));
+        notificationService.notifyCustomerLoanDecisionUpdated(
+                loanRequestId,
+                updatedLoan.customerId(),
+                staffUserId,
+                updatedLoan.loanType(),
+                nextStatus,
+                reason,
+                false);
+        if (requiresAppointment && scheduledAt != null) {
+            notificationService.notifyCustomerAppointmentScheduled(
+                    loanRequestId,
+                    updatedLoan.customerId(),
+                    staffUserId,
+                    scheduledAt,
+                    appointmentLocation);
+        }
 
         StaffRequestDetailResponse updated = getRequestDetail(loanRequestId);
         return new StaffDecisionResponse(
@@ -296,6 +324,14 @@ public class StaffReviewService {
             case PENDING -> "STAFF_DECISION_PENDING";
             case CONTRACTED, DISBURSED, ACTIVE, CLOSED -> "STAFF_DECISION_POST_APPROVAL";
         };
+    }
+
+    private void validateStatusFilter(LoanStatus status, Set<LoanStatus> allowedStatuses) {
+        if (status != null && !allowedStatuses.contains(status)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Bộ lọc trạng thái không hợp lệ");
+        }
     }
 
     private ComplianceOutcome actionOutcome(LoanStatus status) {

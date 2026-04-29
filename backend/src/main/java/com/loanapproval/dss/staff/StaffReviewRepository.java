@@ -9,6 +9,8 @@ import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.loan.LoanType;
 import com.loanapproval.dss.staff.dto.StaffRequestDetailResponse;
 import com.loanapproval.dss.staff.dto.StaffRequestSummaryResponse;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
@@ -19,6 +21,10 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class StaffReviewRepository {
 
+    private static final String REVIEW_QUEUE_STATUSES_SQL = "'PENDING'";
+    private static final String OPERATION_QUEUE_STATUSES_SQL =
+            "'APPOINTMENT_SCHEDULED', 'APPROVED', 'CONTRACTED', 'DISBURSED', 'ACTIVE'";
+
     private final JdbcTemplate jdbcTemplate;
 
     public StaffReviewRepository(JdbcTemplate jdbcTemplate) {
@@ -26,190 +32,115 @@ public class StaffReviewRepository {
     }
 
     public List<StaffRequestSummaryResponse> findReviewQueue(LoanStatus status) {
-        if (status == null) {
-            return jdbcTemplate.query(
-                    """
-                            SELECT
-                                lr.id,
-                                lr.customer_id,
-                                lr.loan_type,
-                                u.email AS customer_email,
-                                cp.full_name AS customer_name,
-                                lr.amount,
-                                lr.term_months,
-                                lr.purpose,
-                                lr.status,
-                                lr.approved_amount,
-                                lr.approved_monthly_payment,
-                                dr.risk_rank,
-                                dr.recommendation,
-                                lr.created_at
-                            FROM loan_requests lr
-                            INNER JOIN users u ON u.id = lr.customer_id
-                            LEFT JOIN customer_profiles cp ON cp.user_id = lr.customer_id
-                            LEFT JOIN dss_results dr ON dr.loan_request_id = lr.id
-                            WHERE lr.status IN ('PENDING', 'APPOINTMENT_SCHEDULED', 'APPROVED', 'CONTRACTED', 'DISBURSED', 'ACTIVE')
-                            ORDER BY lr.created_at DESC, lr.id DESC
-                            """,
-                    (rs, rowNum) -> new StaffRequestSummaryResponse(
-                            rs.getLong("id"),
-                            rs.getLong("customer_id"),
-                            LoanType.valueOf(rs.getString("loan_type")),
-                            rs.getString("customer_email"),
-                            rs.getString("customer_name"),
-                            rs.getBigDecimal("amount"),
-                            rs.getInt("term_months"),
-                            LoanPurpose.valueOf(rs.getString("purpose")),
-                            LoanStatus.valueOf(rs.getString("status")),
-                            rs.getBigDecimal("approved_amount"),
-                            rs.getBigDecimal("approved_monthly_payment"),
-                            parseEnum(RiskRank.class, rs.getString("risk_rank")),
-                            parseEnum(DssRecommendation.class, rs.getString("recommendation")),
-                            toInstant(rs.getTimestamp("created_at"))));
-        }
-
-        return jdbcTemplate.query(
-                """
-                        SELECT
-                            lr.id,
-                            lr.customer_id,
-                            lr.loan_type,
-                            u.email AS customer_email,
-                            cp.full_name AS customer_name,
-                            lr.amount,
-                            lr.term_months,
-                            lr.purpose,
-                            lr.status,
-                            lr.approved_amount,
-                            lr.approved_monthly_payment,
-                            dr.risk_rank,
-                            dr.recommendation,
-                            lr.created_at
-                        FROM loan_requests lr
-                        INNER JOIN users u ON u.id = lr.customer_id
-                        LEFT JOIN customer_profiles cp ON cp.user_id = lr.customer_id
-                        LEFT JOIN dss_results dr ON dr.loan_request_id = lr.id
-                        WHERE lr.status = ?
-                        ORDER BY lr.created_at DESC, lr.id DESC
-                        """,
-                (rs, rowNum) -> new StaffRequestSummaryResponse(
-                        rs.getLong("id"),
-                        rs.getLong("customer_id"),
-                        LoanType.valueOf(rs.getString("loan_type")),
-                        rs.getString("customer_email"),
-                        rs.getString("customer_name"),
-                        rs.getBigDecimal("amount"),
-                        rs.getInt("term_months"),
-                        LoanPurpose.valueOf(rs.getString("purpose")),
-                        LoanStatus.valueOf(rs.getString("status")),
-                        rs.getBigDecimal("approved_amount"),
-                        rs.getBigDecimal("approved_monthly_payment"),
-                        parseEnum(RiskRank.class, rs.getString("risk_rank")),
-                        parseEnum(DssRecommendation.class, rs.getString("recommendation")),
-                        toInstant(rs.getTimestamp("created_at"))),
-                status.name());
+        return findQueue(status, REVIEW_QUEUE_STATUSES_SQL);
     }
 
     public long countReviewQueue(LoanStatus status) {
-        if (status == null) {
-            Long count = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM loan_requests WHERE status IN ('PENDING', 'APPOINTMENT_SCHEDULED', 'APPROVED', 'CONTRACTED', 'DISBURSED', 'ACTIVE')",
-                    Long.class);
-            return count != null ? count : 0L;
-        }
-        Long count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM loan_requests WHERE status = ?",
-                Long.class,
-                status.name());
-        return count != null ? count : 0L;
+        return countQueue(status, REVIEW_QUEUE_STATUSES_SQL);
     }
 
     public List<StaffRequestSummaryResponse> findReviewQueuePaged(LoanStatus status, int offset, int limit) {
+        return findQueuePaged(status, REVIEW_QUEUE_STATUSES_SQL, offset, limit);
+    }
+
+    public List<StaffRequestSummaryResponse> findOperationQueue(LoanStatus status) {
+        return findQueue(status, OPERATION_QUEUE_STATUSES_SQL);
+    }
+
+    public long countOperationQueue(LoanStatus status) {
+        return countQueue(status, OPERATION_QUEUE_STATUSES_SQL);
+    }
+
+    public List<StaffRequestSummaryResponse> findOperationQueuePaged(LoanStatus status, int offset, int limit) {
+        return findQueuePaged(status, OPERATION_QUEUE_STATUSES_SQL, offset, limit);
+    }
+
+    private List<StaffRequestSummaryResponse> findQueue(LoanStatus status, String defaultStatusesSql) {
+        if (status == null) {
+            return jdbcTemplate.query(summarySql("lr.status IN (" + defaultStatusesSql + ")", false), this::mapSummary);
+        }
+        return jdbcTemplate.query(summarySql("lr.status = ?", false), this::mapSummary, status.name());
+    }
+
+    private long countQueue(LoanStatus status, String defaultStatusesSql) {
+        Long count;
+        if (status == null) {
+            count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM loan_requests WHERE status IN (" + defaultStatusesSql + ")",
+                    Long.class);
+        } else {
+            count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM loan_requests WHERE status = ?",
+                    Long.class,
+                    status.name());
+        }
+        return count != null ? count : 0L;
+    }
+
+    private List<StaffRequestSummaryResponse> findQueuePaged(
+            LoanStatus status,
+            String defaultStatusesSql,
+            int offset,
+            int limit) {
         if (status == null) {
             return jdbcTemplate.query(
-                    """
-                            SELECT
-                                lr.id,
-                                lr.customer_id,
-                                lr.loan_type,
-                                u.email AS customer_email,
-                                cp.full_name AS customer_name,
-                                lr.amount,
-                                lr.term_months,
-                                lr.purpose,
-                                lr.status,
-                                lr.approved_amount,
-                                lr.approved_monthly_payment,
-                                dr.risk_rank,
-                                dr.recommendation,
-                                lr.created_at
-                            FROM loan_requests lr
-                            INNER JOIN users u ON u.id = lr.customer_id
-                            LEFT JOIN customer_profiles cp ON cp.user_id = lr.customer_id
-                            LEFT JOIN dss_results dr ON dr.loan_request_id = lr.id
-                            WHERE lr.status IN ('PENDING', 'APPOINTMENT_SCHEDULED', 'APPROVED', 'CONTRACTED', 'DISBURSED', 'ACTIVE')
-                            ORDER BY lr.created_at DESC, lr.id DESC
-                            LIMIT ? OFFSET ?
-                            """,
-                    (rs, rowNum) -> new StaffRequestSummaryResponse(
-                            rs.getLong("id"),
-                            rs.getLong("customer_id"),
-                            LoanType.valueOf(rs.getString("loan_type")),
-                            rs.getString("customer_email"),
-                            rs.getString("customer_name"),
-                            rs.getBigDecimal("amount"),
-                            rs.getInt("term_months"),
-                            LoanPurpose.valueOf(rs.getString("purpose")),
-                            LoanStatus.valueOf(rs.getString("status")),
-                            rs.getBigDecimal("approved_amount"),
-                            rs.getBigDecimal("approved_monthly_payment"),
-                            parseEnum(RiskRank.class, rs.getString("risk_rank")),
-                            parseEnum(DssRecommendation.class, rs.getString("recommendation")),
-                            toInstant(rs.getTimestamp("created_at"))),
-                    limit, offset);
+                    summarySql("lr.status IN (" + defaultStatusesSql + ")", true),
+                    this::mapSummary,
+                    limit,
+                    offset);
         }
-
         return jdbcTemplate.query(
-                """
-                        SELECT
-                            lr.id,
-                            lr.customer_id,
-                            lr.loan_type,
-                            u.email AS customer_email,
-                            cp.full_name AS customer_name,
-                            lr.amount,
-                            lr.term_months,
-                            lr.purpose,
-                            lr.status,
-                            lr.approved_amount,
-                            lr.approved_monthly_payment,
-                            dr.risk_rank,
-                            dr.recommendation,
-                            lr.created_at
-                        FROM loan_requests lr
-                        INNER JOIN users u ON u.id = lr.customer_id
-                        LEFT JOIN customer_profiles cp ON cp.user_id = lr.customer_id
-                        LEFT JOIN dss_results dr ON dr.loan_request_id = lr.id
-                        WHERE lr.status = ?
-                        ORDER BY lr.created_at DESC, lr.id DESC
-                        LIMIT ? OFFSET ?
-                        """,
-                (rs, rowNum) -> new StaffRequestSummaryResponse(
-                        rs.getLong("id"),
-                        rs.getLong("customer_id"),
-                        LoanType.valueOf(rs.getString("loan_type")),
-                        rs.getString("customer_email"),
-                        rs.getString("customer_name"),
-                        rs.getBigDecimal("amount"),
-                        rs.getInt("term_months"),
-                        LoanPurpose.valueOf(rs.getString("purpose")),
-                        LoanStatus.valueOf(rs.getString("status")),
-                        rs.getBigDecimal("approved_amount"),
-                        rs.getBigDecimal("approved_monthly_payment"),
-                        parseEnum(RiskRank.class, rs.getString("risk_rank")),
-                        parseEnum(DssRecommendation.class, rs.getString("recommendation")),
-                        toInstant(rs.getTimestamp("created_at"))),
-                status.name(), limit, offset);
+                summarySql("lr.status = ?", true),
+                this::mapSummary,
+                status.name(),
+                limit,
+                offset);
+    }
+
+    private String summarySql(String whereClause, boolean paged) {
+        String pagingClause = paged ? "LIMIT ? OFFSET ?" : "";
+        return """
+                SELECT
+                    lr.id,
+                    lr.customer_id,
+                    lr.loan_type,
+                    u.email AS customer_email,
+                    cp.full_name AS customer_name,
+                    lr.amount,
+                    lr.term_months,
+                    lr.purpose,
+                    lr.status,
+                    lr.approved_amount,
+                    lr.approved_monthly_payment,
+                    dr.risk_rank,
+                    dr.recommendation,
+                    lr.created_at
+                FROM loan_requests lr
+                INNER JOIN users u ON u.id = lr.customer_id
+                LEFT JOIN customer_profiles cp ON cp.user_id = lr.customer_id
+                LEFT JOIN dss_results dr ON dr.loan_request_id = lr.id
+                WHERE %s
+                ORDER BY lr.created_at DESC, lr.id DESC
+                %s
+                """.formatted(whereClause, pagingClause);
+    }
+
+    private StaffRequestSummaryResponse mapSummary(ResultSet rs, int rowNum) throws SQLException {
+        return new StaffRequestSummaryResponse(
+                rs.getLong("id"),
+                rs.getLong("customer_id"),
+                LoanType.valueOf(rs.getString("loan_type")),
+                rs.getString("customer_email"),
+                rs.getString("customer_name"),
+                rs.getBigDecimal("amount"),
+                rs.getInt("term_months"),
+                LoanPurpose.valueOf(rs.getString("purpose")),
+                LoanStatus.valueOf(rs.getString("status")),
+                rs.getBigDecimal("approved_amount"),
+                rs.getBigDecimal("approved_monthly_payment"),
+                parseEnum(RiskRank.class, rs.getString("risk_rank")),
+                parseEnum(DssRecommendation.class, rs.getString("recommendation")),
+                toInstant(rs.getTimestamp("created_at")));
     }
 
     public Optional<LoanStatus> findStatusByLoanRequestId(Long loanRequestId) {

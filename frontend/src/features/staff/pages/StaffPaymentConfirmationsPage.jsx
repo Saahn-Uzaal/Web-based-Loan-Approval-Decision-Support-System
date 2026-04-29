@@ -35,6 +35,15 @@ import {
   labelPaymentConfirmationStatus,
   labelRepaymentStatus
 } from "@/shared/utils/labels";
+import { clearFieldError, fieldErrorProps, mapFieldErrors } from "@/shared/utils/formErrors";
+
+const paymentReviewFieldKeywords = {
+  confirmedAmount: ["số tiền xác nhận", "số tiền", "confirmedAmount"],
+  confirmedPaidAt: ["thời điểm giao dịch", "ngày thanh toán", "confirmedPaidAt"],
+  bankTransactionCode: ["mã giao dịch", "tham chiếu", "bankTransactionCode"],
+  staffNote: ["ghi chú", "staffNote"],
+  rejectionReason: ["lý do từ chối", "từ chối", "rejectionReason"]
+};
 
 function confirmationColor(status) {
   if (status === "CONFIRMED") {
@@ -110,7 +119,7 @@ function QueueList({ rows, loading, error, status, setStatus }) {
       <Stack spacing={0.5}>
         <Typography variant="h4">Xác nhận thanh toán</Typography>
         <Typography color="text.secondary">
-          Nhân viên đối chiếu bill chuyển khoản và chỉ khi xác nhận hợp lệ thì hệ thống mới ghi nhận thanh toán vào khoản vay.
+          Nhân viên đối chiếu biên lai chuyển khoản và chỉ khi xác nhận hợp lệ thì hệ thống mới ghi nhận thanh toán vào khoản vay.
         </Typography>
       </Stack>
 
@@ -221,6 +230,7 @@ export default function StaffPaymentConfirmationsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
 
   useEffect(() => {
     let active = true;
@@ -232,6 +242,7 @@ export default function StaffPaymentConfirmationsPage() {
       setLoading(true);
       setError("");
       setSuccess("");
+      setFieldErrors({});
       try {
         if (confirmationId) {
           const response = await getStaffPaymentConfirmationDetailApi(accessToken, confirmationId);
@@ -286,7 +297,7 @@ export default function StaffPaymentConfirmationsPage() {
         setPreview(result);
       } catch (err) {
         if (active) {
-          setError(err.message || "Không tải được ảnh bill chuyển khoản");
+          setError(err.message || "Không tải được ảnh biên lai chuyển khoản");
         }
       }
     }
@@ -301,6 +312,7 @@ export default function StaffPaymentConfirmationsPage() {
   }, [accessToken, confirmationId, detail?.proofContentType]);
 
   const handleChange = (field) => (event) => {
+    setFieldErrors((prev) => clearFieldError(prev, field));
     setForm((prev) => ({
       ...prev,
       [field]: event.target.value
@@ -311,36 +323,59 @@ export default function StaffPaymentConfirmationsPage() {
     try {
       await downloadStaffPaymentProofApi(accessToken, confirmationId, detail?.proofFileName);
     } catch (err) {
-      setError(err.message || "Không tải được bill chuyển khoản");
+      setError(err.message || "Không tải được biên lai chuyển khoản");
     }
   };
 
   const handleApprove = async () => {
+    const confirmedAmount = parseVndInput(form.confirmedAmount);
+    if (confirmedAmount == null || confirmedAmount <= 0) {
+      const message = "Vui lòng nhập số tiền xác nhận hợp lệ.";
+      setError(message);
+      setFieldErrors({ confirmedAmount: message });
+      return;
+    }
+    if (!form.confirmedPaidAt) {
+      const message = "Vui lòng nhập thời điểm giao dịch trên biên lai.";
+      setError(message);
+      setFieldErrors({ confirmedPaidAt: message });
+      return;
+    }
     setSubmitting(true);
     setError("");
     setSuccess("");
+    setFieldErrors({});
     try {
       const response = await reviewStaffPaymentConfirmationApi(accessToken, confirmationId, {
         action: "APPROVE",
-        confirmedAmount: parseVndInput(form.confirmedAmount),
+        confirmedAmount,
         confirmedPaidAt: toIsoInstant(form.confirmedPaidAt),
         bankTransactionCode: form.bankTransactionCode.trim(),
         staffNote: form.staffNote.trim() || null,
         rejectionReason: null
       });
       setDetail(response);
-      setSuccess("Đã xác nhận bill hợp lệ và hệ thống đã ghi nhận thanh toán cho khoản vay.");
+      setSuccess("Đã xác nhận biên lai hợp lệ và hệ thống đã ghi nhận thanh toán cho khoản vay.");
     } catch (err) {
-      setError(err.message || "Không xác nhận được bill chuyển khoản");
+      const message = err.message || "Không xác nhận được biên lai chuyển khoản";
+      setError(message);
+      setFieldErrors(mapFieldErrors(message, paymentReviewFieldKeywords));
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleReject = async () => {
+    if (!form.rejectionReason.trim()) {
+      const message = "Vui lòng nhập lý do từ chối biên lai.";
+      setError(message);
+      setFieldErrors({ rejectionReason: message });
+      return;
+    }
     setSubmitting(true);
     setError("");
     setSuccess("");
+    setFieldErrors({});
     try {
       const response = await reviewStaffPaymentConfirmationApi(accessToken, confirmationId, {
         action: "REJECT",
@@ -351,9 +386,11 @@ export default function StaffPaymentConfirmationsPage() {
         rejectionReason: form.rejectionReason.trim()
       });
       setDetail(response);
-      setSuccess("Đã từ chối bill chuyển khoản và trả kết quả lại cho khách hàng.");
+      setSuccess("Đã từ chối biên lai chuyển khoản và trả kết quả lại cho khách hàng.");
     } catch (err) {
-      setError(err.message || "Không từ chối được bill chuyển khoản");
+      const message = err.message || "Không từ chối được biên lai chuyển khoản";
+      setError(message);
+      setFieldErrors(mapFieldErrors(message, paymentReviewFieldKeywords));
     } finally {
       setSubmitting(false);
     }
@@ -363,6 +400,7 @@ export default function StaffPaymentConfirmationsPage() {
     if (!detail?.expectedDueDate) {
       return;
     }
+    setFieldErrors((prev) => clearFieldError(prev, "confirmedPaidAt"));
     setForm((prev) => ({
       ...prev,
       confirmedPaidAt: buildDueDateTimeLocalValue(detail.expectedDueDate)
@@ -373,6 +411,7 @@ export default function StaffPaymentConfirmationsPage() {
     if (!detail?.expectedDueDate) {
       return;
     }
+    setFieldErrors((prev) => clearFieldError(prev, "confirmedPaidAt"));
     setForm((prev) => ({
       ...prev,
       confirmedPaidAt: buildDueDateTimeLocalValue(detail.expectedDueDate, 1)
@@ -389,9 +428,9 @@ export default function StaffPaymentConfirmationsPage() {
     <Stack spacing={2}>
       <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "flex-start", sm: "center" }}>
         <Stack spacing={0.5}>
-          <Typography variant="h4">Đối chiếu bill thanh toán #{confirmationId}</Typography>
+          <Typography variant="h4">Đối chiếu biên lai thanh toán #{confirmationId}</Typography>
           <Typography color="text.secondary">
-            Nhân viên xác nhận bill hợp lệ, nhập số tiền và thời điểm giao dịch; backend sẽ tự quyết định thanh toán đúng hạn hay trễ hạn.
+            Nhân viên xác nhận biên lai hợp lệ, nhập số tiền và thời điểm giao dịch; hệ thống sẽ tự quyết định thanh toán đúng hạn hay trễ hạn.
           </Typography>
         </Stack>
         <Button component={RouterLink} to="/staff/payment-confirmations" variant="outlined">
@@ -433,7 +472,7 @@ export default function StaffPaymentConfirmationsPage() {
               <Paper sx={{ p: 2 }}>
                 <Stack spacing={1}>
                   <Typography variant="h6">Thông tin kỳ thanh toán</Typography>
-                  <Typography variant="body2">Kỳ đã gửi bill: #{detail.expectedInstallmentNumber}</Typography>
+                  <Typography variant="body2">Kỳ đã gửi biên lai: #{detail.expectedInstallmentNumber}</Typography>
                   <Typography variant="body2">Ngày đến hạn: {detail.expectedDueDate}</Typography>
                   <Typography variant="body2">Số tiền đến hạn tại lúc gửi: {formatVnd(detail.expectedAmountDue)}</Typography>
                   <Typography variant="body2">Dư nợ lúc gửi: {formatVnd(detail.expectedOutstandingAmount)}</Typography>
@@ -444,10 +483,10 @@ export default function StaffPaymentConfirmationsPage() {
 
               <Paper sx={{ p: 2 }}>
                 <Stack spacing={1}>
-                  <Typography variant="h6">Bill chuyển khoản</Typography>
+                  <Typography variant="h6">Biên lai chuyển khoản</Typography>
                   <Typography variant="body2">{detail.proofFileName}</Typography>
                   <Button variant="outlined" size="small" onClick={handleDownloadProof}>
-                    Tải bill
+                    Tải biên lai
                   </Button>
                   {preview?.objectUrl ? (
                     <Box
@@ -464,7 +503,7 @@ export default function StaffPaymentConfirmationsPage() {
                       }}
                     />
                   ) : (
-                    <Alert severity="info">Nếu bill không phải ảnh xem trực tiếp được, hãy dùng nút tải bill để đối chiếu.</Alert>
+                    <Alert severity="info">Nếu biên lai không phải ảnh xem trực tiếp được, hãy dùng nút tải biên lai để đối chiếu.</Alert>
                   )}
                 </Stack>
               </Paper>
@@ -476,13 +515,13 @@ export default function StaffPaymentConfirmationsPage() {
               <Stack spacing={2}>
                 {detail.status === "CONFIRMED" && (
                   <Alert severity={detail.repaymentStatus === "ON_TIME" ? "success" : "warning"}>
-                    Đã xác nhận bill. Kết quả ghi nhận là {labelRepaymentStatus(detail.repaymentStatus)} với biến động điểm{" "}
+                    Đã xác nhận biên lai. Kết quả ghi nhận là {labelRepaymentStatus(detail.repaymentStatus)} với biến động điểm{" "}
                     {detail.ratingDelta > 0 ? `+${detail.ratingDelta}` : detail.ratingDelta}.
                   </Alert>
                 )}
                 {detail.status === "REJECTED" && (
                   <Alert severity="error">
-                    Bill đã bị từ chối{detail.rejectionReason ? `: ${detail.rejectionReason}` : "."}
+                    Biên lai đã bị từ chối{detail.rejectionReason ? `: ${detail.rejectionReason}` : "."}
                   </Alert>
                 )}
                 {detail.customerNote && <Alert severity="info">Ghi chú từ khách hàng: {detail.customerNote}</Alert>}
@@ -495,18 +534,23 @@ export default function StaffPaymentConfirmationsPage() {
                       onChange={handleChange("confirmedAmount")}
                       fullWidth
                       disabled={reviewLocked || submitting}
-                      helperText="Phải bằng số tiền đến hạn kỳ này hoặc bằng toàn bộ dư nợ để tất toán."
+                      {...fieldErrorProps(
+                        fieldErrors,
+                        "confirmedAmount",
+                        "Phải bằng số tiền đến hạn kỳ này hoặc bằng toàn bộ dư nợ để tất toán."
+                      )}
                     />
                   </Grid>
                   <Grid item xs={12} md={4}>
                     <TextField
-                      label="Thời điểm giao dịch trên bill"
+                      label="Thời điểm giao dịch trên biên lai"
                       type="datetime-local"
                       value={reviewLocked ? toDateTimeLocalValue(detail.confirmedPaidAt) : form.confirmedPaidAt}
                       onChange={handleChange("confirmedPaidAt")}
                       fullWidth
                       InputLabelProps={{ shrink: true }}
                       disabled={reviewLocked || submitting}
+                      {...fieldErrorProps(fieldErrors, "confirmedPaidAt")}
                     />
                   </Grid>
                   <Grid item xs={12} md={4}>
@@ -516,6 +560,7 @@ export default function StaffPaymentConfirmationsPage() {
                       onChange={handleChange("bankTransactionCode")}
                       fullWidth
                       disabled={reviewLocked || submitting}
+                      {...fieldErrorProps(fieldErrors, "bankTransactionCode")}
                     />
                   </Grid>
                   {!reviewLocked && (
@@ -539,6 +584,7 @@ export default function StaffPaymentConfirmationsPage() {
                       multiline
                       minRows={3}
                       disabled={reviewLocked || submitting}
+                      {...fieldErrorProps(fieldErrors, "staffNote")}
                     />
                   </Grid>
                   <Grid item xs={12}>
@@ -550,6 +596,7 @@ export default function StaffPaymentConfirmationsPage() {
                       multiline
                       minRows={3}
                       disabled={reviewLocked || submitting || detail.status === "CONFIRMED"}
+                      {...fieldErrorProps(fieldErrors, "rejectionReason")}
                     />
                   </Grid>
                   {detail.reviewedAt && (
@@ -567,7 +614,7 @@ export default function StaffPaymentConfirmationsPage() {
                           {submitting ? "Đang xác nhận..." : "Xác nhận hợp lệ"}
                         </Button>
                         <Button variant="outlined" color="error" onClick={handleReject} disabled={submitting}>
-                          {submitting ? "Đang từ chối..." : "Từ chối bill"}
+                          {submitting ? "Đang từ chối..." : "Từ chối biên lai"}
                         </Button>
                       </Stack>
                     </Grid>

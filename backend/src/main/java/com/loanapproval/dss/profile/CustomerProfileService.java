@@ -74,6 +74,7 @@ public class CustomerProfileService {
         );
 
         customerProfileRepository.upsert(profile);
+        customerProfileRepository.clearVerifiedMonthlyIncome(userId);
         customerInformationVerificationService.markPending(userId);
 
         BigDecimal calculatedDti = customerDebtService.recalculateAndSyncDti(userId);

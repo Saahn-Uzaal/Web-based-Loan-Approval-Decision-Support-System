@@ -19,6 +19,7 @@ import { getMyInformationVerificationApi } from "@/features/customer/api/informa
 import { downloadMyPayslipApi, getMyProfileApi, upsertMyProfileApi } from "@/features/customer/api/profileApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
+import { clearFieldError, fieldErrorProps, mapFieldErrors } from "@/shared/utils/formErrors";
 import { PAYSLIP_ACCEPT, formatFileSize, isAcceptedPayslipFile } from "@/shared/utils/files";
 import { labelVerificationStatus } from "@/shared/utils/labels";
 import ConfirmDialog from "@/shared/components/ConfirmDialog";
@@ -36,6 +37,21 @@ const emptyDebtForm = {
   monthlyPayment: "",
   remainingBalance: "",
   lenderName: ""
+};
+
+const profileFieldKeywords = {
+  fullName: ["họ và tên", "họ tên", "full name", "fullName"],
+  phone: ["số điện thoại", "điện thoại", "phone"],
+  dateOfBirth: ["ngày sinh", "date of birth"],
+  monthlyIncome: ["thu nhập", "lương", "monthlyIncome"],
+  payslip: ["phiếu lương", "payslip", "file"]
+};
+
+const debtFieldKeywords = {
+  debtType: ["tên khoản nợ", "khoản nợ", "debtType"],
+  monthlyPayment: ["trả hàng tháng", "trả hằng tháng", "monthlyPayment"],
+  remainingBalance: ["dư nợ", "remainingBalance"],
+  lenderName: ["đơn vị cho vay", "lenderName"]
 };
 
 function verificationSeverity(status) {
@@ -85,9 +101,11 @@ export default function CustomerProfilePage() {
   const [paymentRating, setPaymentRating] = useState(0);
   const [informationVerification, setInformationVerification] = useState(null);
   const [form, setForm] = useState(emptyProfileForm);
+  const [profileFieldErrors, setProfileFieldErrors] = useState({});
   const [selectedPayslip, setSelectedPayslip] = useState(null);
   const [currentPayslip, setCurrentPayslip] = useState(null);
   const [debtForm, setDebtForm] = useState(emptyDebtForm);
+  const [debtFieldErrors, setDebtFieldErrors] = useState({});
   const [debts, setDebts] = useState([]);
   const [debtMetrics, setDebtMetrics] = useState(null);
   const [confirmDeleteDebt, setConfirmDeleteDebt] = useState(null);
@@ -187,6 +205,7 @@ export default function CustomerProfilePage() {
   }, [debtMetrics]);
 
   const handleChange = (name) => (event) => {
+    setProfileFieldErrors((prev) => clearFieldError(prev, name));
     setForm((prev) => ({
       ...prev,
       [name]: event.target.value
@@ -194,6 +213,7 @@ export default function CustomerProfilePage() {
   };
 
   const handleProfileMoneyChange = (name) => (event) => {
+    setProfileFieldErrors((prev) => clearFieldError(prev, name));
     setForm((prev) => ({
       ...prev,
       [name]: formatVndInput(event.target.value)
@@ -201,6 +221,7 @@ export default function CustomerProfilePage() {
   };
 
   const handleDebtChange = (field) => (event) => {
+    setDebtFieldErrors((prev) => clearFieldError(prev, field));
     setDebtForm((prev) => ({
       ...prev,
       [field]: event.target.value
@@ -208,6 +229,7 @@ export default function CustomerProfilePage() {
   };
 
   const handleDebtMoneyChange = (field) => (event) => {
+    setDebtFieldErrors((prev) => clearFieldError(prev, field));
     setDebtForm((prev) => ({
       ...prev,
       [field]: formatVndInput(event.target.value)
@@ -223,13 +245,16 @@ export default function CustomerProfilePage() {
 
   const handlePayslipChange = (event) => {
     const nextFile = event.target.files?.[0] ?? null;
+    setProfileFieldErrors((prev) => clearFieldError(prev, "payslip"));
     if (!nextFile) {
       setSelectedPayslip(null);
       return;
     }
 
     if (!isAcceptedPayslipFile(nextFile)) {
-      setError("Chỉ chấp nhận file phiếu lương dạng PDF, Word hoặc Excel.");
+      const message = "Chỉ chấp nhận file phiếu lương dạng PDF, Word hoặc Excel.";
+      setError(message);
+      setProfileFieldErrors({ payslip: message });
       event.target.value = "";
       return;
     }
@@ -241,16 +266,21 @@ export default function CustomerProfilePage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
+    setProfileFieldErrors({});
     setSuccessMessage("");
 
     if (!selectedPayslip && !currentPayslip) {
-      setError("Vui lòng chọn phiếu lương trong tháng gần nhất.");
+      const message = "Vui lòng chọn phiếu lương trong tháng gần nhất.";
+      setError(message);
+      setProfileFieldErrors({ payslip: message });
       return;
     }
 
     const monthlyIncome = parseVndInput(form.monthlyIncome);
     if (monthlyIncome == null || monthlyIncome <= 0) {
-      setError("Vui lòng nhập thu nhập hàng tháng hợp lệ để tính hạn mức vay.");
+      const message = "Vui lòng nhập thu nhập hàng tháng hợp lệ để tính hạn mức vay.";
+      setError(message);
+      setProfileFieldErrors({ monthlyIncome: message });
       return;
     }
 
@@ -277,7 +307,9 @@ export default function CustomerProfilePage() {
       await refreshAuxiliaryData();
       setSuccessMessage("Lưu hồ sơ thành công. Trạng thái xác minh sẽ quay về chờ đối chiếu lại.");
     } catch (err) {
-      setError(err.message || "Không lưu được hồ sơ");
+      const message = err.message || "Không lưu được hồ sơ";
+      setError(message);
+      setProfileFieldErrors(mapFieldErrors(message, profileFieldKeywords));
     } finally {
       setSaving(false);
     }
@@ -301,17 +333,22 @@ export default function CustomerProfilePage() {
   const handleCreateDebt = async (event) => {
     event.preventDefault();
     setDebtError("");
+    setDebtFieldErrors({});
     setDebtSuccess("");
 
     const monthlyPayment = parseVndInput(debtForm.monthlyPayment);
     const remainingBalance = parseVndInput(debtForm.remainingBalance);
 
     if (!debtForm.debtType.trim()) {
-      setDebtError("Vui lòng nhập tên khoản nợ.");
+      const message = "Vui lòng nhập tên khoản nợ.";
+      setDebtError(message);
+      setDebtFieldErrors({ debtType: message });
       return;
     }
     if (monthlyPayment == null || monthlyPayment <= 0) {
-      setDebtError("Vui lòng nhập số tiền trả hàng tháng hợp lệ.");
+      const message = "Vui lòng nhập số tiền trả hàng tháng hợp lệ.";
+      setDebtError(message);
+      setDebtFieldErrors({ monthlyPayment: message });
       return;
     }
 
@@ -327,7 +364,9 @@ export default function CustomerProfilePage() {
       await refreshAuxiliaryData();
       setDebtSuccess("Đã thêm khoản nợ. Trạng thái xác minh thông tin đã được đưa về chờ xác minh.");
     } catch (err) {
-      setDebtError(err.message || "Không thêm được khoản nợ");
+      const message = err.message || "Không thêm được khoản nợ";
+      setDebtError(message);
+      setDebtFieldErrors(mapFieldErrors(message, debtFieldKeywords));
     } finally {
       setDebtSubmitting(false);
     }
@@ -397,6 +436,7 @@ export default function CustomerProfilePage() {
             required
             fullWidth
             disabled={loading || saving}
+            {...fieldErrorProps(profileFieldErrors, "fullName")}
           />
           <TextField
             label="Số điện thoại"
@@ -404,6 +444,7 @@ export default function CustomerProfilePage() {
             onChange={handleChange("phone")}
             fullWidth
             disabled={loading || saving}
+            {...fieldErrorProps(profileFieldErrors, "phone")}
           />
           <TextField
             label="Ngày sinh"
@@ -413,6 +454,7 @@ export default function CustomerProfilePage() {
             fullWidth
             disabled={loading || saving}
             InputLabelProps={{ shrink: true }}
+            {...fieldErrorProps(profileFieldErrors, "dateOfBirth")}
           />
           <TextField
             label="Thu nhập hàng tháng theo phiếu lương"
@@ -423,6 +465,7 @@ export default function CustomerProfilePage() {
             fullWidth
             disabled={loading || saving}
             inputProps={{ inputMode: "numeric" }}
+            {...fieldErrorProps(profileFieldErrors, "monthlyIncome")}
           />
           {form.verifiedMonthlyIncome != null && (
             <Alert severity="info">
@@ -435,7 +478,9 @@ export default function CustomerProfilePage() {
             variant="outlined"
             sx={{
               p: 2,
-              borderStyle: "dashed"
+              borderStyle: "dashed",
+              borderColor: profileFieldErrors.payslip ? "error.main" : "divider",
+              borderWidth: profileFieldErrors.payslip ? 2 : 1
             }}
           >
             <Stack spacing={1.5}>
@@ -484,6 +529,7 @@ export default function CustomerProfilePage() {
                   {currentPayslip.uploadedAt ? ` - tải lên lúc ${new Date(currentPayslip.uploadedAt).toLocaleString()}` : ""}
                 </Alert>
               )}
+              {profileFieldErrors.payslip && <Alert severity="error">{profileFieldErrors.payslip}</Alert>}
             </Stack>
           </Paper>
 
@@ -513,6 +559,7 @@ export default function CustomerProfilePage() {
                   fullWidth
                   required
                   disabled={debtSubmitting}
+                  {...fieldErrorProps(debtFieldErrors, "debtType")}
                 />
               </Grid>
               <Grid item xs={12} md={3}>
@@ -525,6 +572,7 @@ export default function CustomerProfilePage() {
                   required
                   disabled={debtSubmitting}
                   inputProps={{ inputMode: "numeric" }}
+                  {...fieldErrorProps(debtFieldErrors, "monthlyPayment")}
                 />
               </Grid>
               <Grid item xs={12} md={3}>
@@ -536,6 +584,7 @@ export default function CustomerProfilePage() {
                   fullWidth
                   disabled={debtSubmitting}
                   inputProps={{ inputMode: "numeric" }}
+                  {...fieldErrorProps(debtFieldErrors, "remainingBalance")}
                 />
               </Grid>
               <Grid item xs={12} md={2}>
@@ -545,6 +594,7 @@ export default function CustomerProfilePage() {
                   onChange={handleDebtChange("lenderName")}
                   fullWidth
                   disabled={debtSubmitting}
+                  {...fieldErrorProps(debtFieldErrors, "lenderName")}
                 />
               </Grid>
               <Grid item xs={12}>

@@ -24,6 +24,7 @@ import com.loanapproval.dss.dss.DssResultRepository;
 import com.loanapproval.dss.dss.RiskRank;
 import com.loanapproval.dss.loan.dto.CreateLoanRequest;
 import com.loanapproval.dss.loan.dto.LoanDetailResponse;
+import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.profile.CustomerProfile;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
 import com.loanapproval.dss.repayment.RepaymentScheduleService;
@@ -91,6 +92,9 @@ class CustomerLoanServiceTest {
     @Mock
     private RepaymentScheduleService repaymentScheduleService;
 
+    @Mock
+    private NotificationService notificationService;
+
     @InjectMocks
     private CustomerLoanService customerLoanService;
 
@@ -153,6 +157,7 @@ class CustomerLoanServiceTest {
         assertThat(capturedInput.monthlyIncome()).isEqualByComparingTo("20000000");
         assertThat(capturedInput.debtToIncomeRatio()).isEqualByComparingTo("50.00");
         assertThat(response.status()).isEqualTo(LoanStatus.PENDING);
+        verify(notificationService).notifyStaffLoanApplicationSubmitted(createdLoan.id(), customerId, LoanType.UNSECURED);
     }
 
     @Test
@@ -281,6 +286,15 @@ class CustomerLoanServiceTest {
                         eq(null),
                         eq(null),
                         eq(null));
+        verify(notificationService)
+                .notifyCustomerLoanDecisionUpdated(
+                        eq(createdLoan.id()),
+                        eq(customerId),
+                        eq(null),
+                        eq(LoanType.SECURED),
+                        eq(LoanStatus.REJECTED),
+                        eq("Hồ sơ vay thế chấp đã bị tự động từ chối vì điểm tín dụng quá thấp nên hồ sơ đã bị hủy."),
+                        eq(true));
     }
 
     private CustomerProfile profile(BigDecimal monthlyIncome, BigDecimal verifiedMonthlyIncome) {

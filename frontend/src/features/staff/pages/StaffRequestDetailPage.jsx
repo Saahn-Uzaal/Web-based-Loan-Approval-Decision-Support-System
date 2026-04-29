@@ -29,6 +29,7 @@ import {
 } from "@/features/staff/api/staffApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
+import { clearFieldError, fieldErrorProps, mapFieldErrors } from "@/shared/utils/formErrors";
 import { formatFileSize } from "@/shared/utils/files";
 import {
   labelContractStatus,
@@ -85,6 +86,26 @@ function toIsoInstant(localDateTime) {
 const VERIFICATION_STATUSES = ["PENDING", "PASSED", "FAILED"];
 const DECISION_EDITABLE_STATUSES = ["PENDING"];
 
+const decisionFieldKeywords = {
+  action: ["hành động", "quyết định", "action"],
+  approvedAmount: ["số tiền phê duyệt", "số tiền", "approvedAmount"],
+  approvedTermMonths: ["kỳ hạn phê duyệt", "kỳ hạn", "approvedTermMonths"],
+  approvedAnnualRate: ["lãi suất", "approvedAnnualRate"],
+  scheduledAt: ["lịch hẹn", "thời điểm", "scheduledAt"],
+  appointmentNote: ["ghi chú lịch hẹn", "appointmentNote"],
+  rejectionReason: ["lý do từ chối", "từ chối", "rejectionReason"]
+};
+
+const verificationStepFieldKeywords = {
+  documentStatus: ["giấy tờ", "documentStatus"],
+  identityStatus: ["định danh", "identityStatus"],
+  faceMatchStatus: ["khuôn mặt", "faceMatchStatus"],
+  incomeStatus: ["thu nhập", "incomeStatus"],
+  kycStatus: ["kyc"],
+  amlStatus: ["aml"],
+  note: ["ghi chú xác minh", "note"]
+};
+
 export default function StaffRequestDetailPage() {
   const { id } = useParams();
   const { accessToken } = useAuth();
@@ -99,6 +120,8 @@ export default function StaffRequestDetailPage() {
   const [submittingVerification, setSubmittingVerification] = useState(false);
   const [downloadingPayslip, setDownloadingPayslip] = useState(false);
   const [downloadingDocument, setDownloadingDocument] = useState("");
+  const [decisionFieldErrors, setDecisionFieldErrors] = useState({});
+  const [verificationFieldErrors, setVerificationFieldErrors] = useState({});
   const [decision, setDecision] = useState({
     action: "",
     scheduledAt: defaultAppointmentInputValue(),
@@ -128,6 +151,8 @@ export default function StaffRequestDetailPage() {
       }
       setLoading(true);
       setError("");
+      setDecisionFieldErrors({});
+      setVerificationFieldErrors({});
       try {
         const response = await getStaffRequestDetailApi(accessToken, id);
         if (!active) {
@@ -186,6 +211,7 @@ export default function StaffRequestDetailPage() {
   const hasSelectedAction = decision.action === "APPROVE" || decision.action === "REJECT";
 
   const handleDecisionChange = (field) => (event) => {
+    setDecisionFieldErrors((prev) => clearFieldError(prev, field));
     setDecision((prev) => ({
       ...prev,
       [field]: event.target.value
@@ -193,6 +219,7 @@ export default function StaffRequestDetailPage() {
   };
 
   const handleApprovedAmountChange = (event) => {
+    setDecisionFieldErrors((prev) => clearFieldError(prev, "approvedAmount"));
     setDecision((prev) => ({
       ...prev,
       approvedAmount: formatVndInput(event.target.value)
@@ -201,6 +228,7 @@ export default function StaffRequestDetailPage() {
 
   const handleVerificationChange = (field) => (event) => {
     const value = field === "fraudFlag" ? event.target.value === "true" : event.target.value;
+    setVerificationFieldErrors((prev) => clearFieldError(prev, field));
     setVerificationForm((prev) => ({
       ...prev,
       [field]: value
@@ -215,13 +243,16 @@ export default function StaffRequestDetailPage() {
     setSubmittingVerification(true);
     setSubmitError("");
     setSubmitSuccess("");
+    setVerificationFieldErrors({});
     try {
       await updateStaffCustomerVerificationApi(accessToken, detail.customer.id, verificationForm);
       const refreshed = await getStaffRequestDetailApi(accessToken, detail.id);
       setDetail(refreshed);
       setSubmitSuccess("Đã cập nhật các bước xác minh hồ sơ.");
     } catch (err) {
-      setSubmitError(err.message || "Không cập nhật được xác minh hồ sơ");
+      const message = err.message || "Không cập nhật được xác minh hồ sơ";
+      setSubmitError(message);
+      setVerificationFieldErrors(mapFieldErrors(message, verificationStepFieldKeywords));
     } finally {
       setSubmittingVerification(false);
     }
@@ -233,16 +264,27 @@ export default function StaffRequestDetailPage() {
       return;
     }
     if (!hasSelectedAction) {
-      setSubmitError("Vui lòng chọn hành động.");
+      const message = "Vui lòng chọn hành động.";
+      setSubmitError(message);
+      setDecisionFieldErrors({ action: message });
       return;
     }
     if (showRejectReasonField && !decision.rejectionReason.trim()) {
-      setSubmitError("Vui lòng nhập lý do từ chối.");
+      const message = "Vui lòng nhập lý do từ chối.";
+      setSubmitError(message);
+      setDecisionFieldErrors({ rejectionReason: message });
+      return;
+    }
+    if (showAppointmentFields && !decision.scheduledAt) {
+      const message = "Vui lòng chọn lịch hẹn gặp mặt.";
+      setSubmitError(message);
+      setDecisionFieldErrors({ scheduledAt: message });
       return;
     }
     setSubmitting(true);
     setSubmitError("");
     setSubmitSuccess("");
+    setDecisionFieldErrors({});
     try {
       const shouldSchedule = showAppointmentFields;
       await submitStaffDecisionApi(accessToken, detail.id, {
@@ -263,7 +305,9 @@ export default function StaffRequestDetailPage() {
         rejectionReason: ""
       }));
     } catch (err) {
-      setSubmitError(err.message || "Không gửi được quyết định");
+      const message = err.message || "Không gửi được quyết định";
+      setSubmitError(message);
+      setDecisionFieldErrors(mapFieldErrors(message, decisionFieldKeywords));
     } finally {
       setSubmitting(false);
     }
@@ -612,6 +656,7 @@ export default function StaffRequestDetailPage() {
                             onChange={handleVerificationChange(field)}
                             fullWidth
                             disabled={submittingVerification}
+                            {...fieldErrorProps(verificationFieldErrors, field)}
                           >
                             {VERIFICATION_STATUSES.map((status) => (
                               <MenuItem key={status} value={status}>{labelVerificationStatus(status)}</MenuItem>
@@ -643,6 +688,7 @@ export default function StaffRequestDetailPage() {
                           multiline
                           minRows={2}
                           disabled={submittingVerification}
+                          {...fieldErrorProps(verificationFieldErrors, "note")}
                         />
                       </Grid>
                       <Grid item xs={12}>
@@ -689,6 +735,7 @@ export default function StaffRequestDetailPage() {
                   value={decision.action}
                   onChange={handleDecisionChange("action")}
                   disabled={submitting || finalized}
+                  {...fieldErrorProps(decisionFieldErrors, "action")}
                 >
                   <MenuItem value="">
                     <em>Chọn hành động</em>
@@ -708,6 +755,7 @@ export default function StaffRequestDetailPage() {
                           disabled={submitting || finalized}
                           fullWidth
                           inputProps={{ inputMode: "numeric" }}
+                          {...fieldErrorProps(decisionFieldErrors, "approvedAmount")}
                         />
                       </Grid>
                       <Grid item xs={12} sm={4}>
@@ -719,6 +767,7 @@ export default function StaffRequestDetailPage() {
                           disabled={submitting || finalized}
                           fullWidth
                           inputProps={{ min: 1, step: 1 }}
+                          {...fieldErrorProps(decisionFieldErrors, "approvedTermMonths")}
                         />
                       </Grid>
                       <Grid item xs={12} sm={4}>
@@ -729,8 +778,8 @@ export default function StaffRequestDetailPage() {
                           onChange={handleDecisionChange("approvedAnnualRate")}
                           disabled={submitting || finalized}
                           fullWidth
-                          helperText="Nhập dạng thập phân, ví dụ 0.12"
                           inputProps={{ min: 0, max: 1, step: 0.001 }}
+                          {...fieldErrorProps(decisionFieldErrors, "approvedAnnualRate", "Nhập dạng thập phân, ví dụ 0.12")}
                         />
                       </Grid>
                     </Grid>
@@ -746,7 +795,7 @@ export default function StaffRequestDetailPage() {
                       onChange={handleDecisionChange("scheduledAt")}
                       disabled={submitting || finalized}
                       InputLabelProps={{ shrink: true }}
-                      helperText="Chọn thời điểm khách hàng đến gặp trực tiếp."
+                      {...fieldErrorProps(decisionFieldErrors, "scheduledAt", "Chọn thời điểm khách hàng đến gặp trực tiếp.")}
                     />
                     <TextField
                       label="Ghi chú lịch hẹn"
@@ -756,6 +805,7 @@ export default function StaffRequestDetailPage() {
                       onChange={handleDecisionChange("appointmentNote")}
                       disabled={submitting || finalized}
                       placeholder="Nhắc khách hàng mang bản gốc CCCD, giấy tờ xe và hồ sơ tài sản bảo đảm."
+                      {...fieldErrorProps(decisionFieldErrors, "appointmentNote")}
                     />
                   </>
                 )}
@@ -769,6 +819,7 @@ export default function StaffRequestDetailPage() {
                     onChange={handleDecisionChange("rejectionReason")}
                     disabled={submitting || finalized}
                     placeholder="Nhập lý do từ chối hồ sơ."
+                    {...fieldErrorProps(decisionFieldErrors, "rejectionReason")}
                   />
                 )}
                 <Button type="submit" variant="contained" disabled={submitting || finalized || !hasSelectedAction}>

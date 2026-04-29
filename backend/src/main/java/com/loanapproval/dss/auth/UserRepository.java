@@ -1,6 +1,7 @@
 package com.loanapproval.dss.auth;
 
 import com.loanapproval.dss.shared.Role;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
@@ -53,6 +54,14 @@ public class UserRepository {
             ),
             id
         ).stream().findFirst();
+    }
+
+    public List<Long> findIdsByRole(Role role) {
+        return jdbcTemplate.query(
+            "SELECT id FROM users WHERE role = ? ORDER BY id ASC",
+            (rs, rowNum) -> rs.getLong("id"),
+            role.name()
+        );
     }
 
     public UserAccount create(String email, String passwordHash, Role role) {

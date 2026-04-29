@@ -24,6 +24,7 @@ import {
 } from "@/features/customer/api/paymentApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd } from "@/shared/utils/currency";
+import { clearFieldError, fieldErrorProps, mapFieldErrors } from "@/shared/utils/formErrors";
 import { formatFileSize, isAcceptedPaymentProofFile, PAYMENT_PROOF_ACCEPT } from "@/shared/utils/files";
 import {
   labelPaymentConfirmationStatus,
@@ -73,6 +74,12 @@ function formatDateTime(value) {
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString("vi-VN");
 }
 
+const paymentFieldKeywords = {
+  loanRequestId: ["khoản vay", "loan request", "loanRequestId"],
+  proof: ["biên lai", "chứng từ", "proof", "file"],
+  note: ["ghi chú", "note"]
+};
+
 export default function CustomerPaymentsPage() {
   const { accessToken } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -84,6 +91,7 @@ export default function CustomerPaymentsPage() {
   const [payments, setPayments] = useState([]);
   const [confirmationRequests, setConfirmationRequests] = useState([]);
   const [currentRating, setCurrentRating] = useState(0);
+  const [fieldErrors, setFieldErrors] = useState({});
   const [form, setForm] = useState({
     loanRequestId: "",
     note: "",
@@ -96,6 +104,7 @@ export default function CustomerPaymentsPage() {
     }
     setLoading(true);
     setError("");
+    setFieldErrors({});
     try {
       const [loansResponse, paymentResponse] = await Promise.all([
         getMyLoansApi(accessToken),
@@ -171,6 +180,7 @@ export default function CustomerPaymentsPage() {
   );
 
   const handleChange = (field) => (event) => {
+    setFieldErrors((prev) => clearFieldError(prev, field));
     setForm((prev) => ({
       ...prev,
       [field]: event.target.value
@@ -178,13 +188,16 @@ export default function CustomerPaymentsPage() {
   };
 
   const handleProofChange = (event) => {
+    setFieldErrors((prev) => clearFieldError(prev, "proof"));
     const file = event.target.files?.[0] || null;
     if (!file) {
       setForm((prev) => ({ ...prev, proof: null }));
       return;
     }
     if (!isAcceptedPaymentProofFile(file)) {
-      setSubmitError("Bill chuyển khoản phải là ảnh JPG, JPEG, PNG hoặc WEBP.");
+      const message = "Biên lai chuyển khoản phải là ảnh JPG, JPEG, PNG hoặc WEBP.";
+      setSubmitError(message);
+      setFieldErrors({ proof: message });
       event.target.value = "";
       return;
     }
@@ -199,25 +212,32 @@ export default function CustomerPaymentsPage() {
     try {
       await downloadPaymentProofApi(accessToken, confirmation.id, confirmation.proofFileName);
     } catch (err) {
-      setError(err.message || "Không tải được bill chuyển khoản");
+      setError(err.message || "Không tải được biên lai chuyển khoản");
     }
   };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
     setSubmitError("");
+    setFieldErrors({});
     setSubmitSuccess("");
 
     if (!selectedLoan) {
-      setSubmitError("Không còn khoản vay nào đang chờ xác nhận thanh toán.");
+      const message = "Không còn khoản vay nào đang chờ xác nhận thanh toán.";
+      setSubmitError(message);
+      setFieldErrors({ loanRequestId: message });
       return;
     }
     if (!form.proof) {
-      setSubmitError("Vui lòng tải lên bill chuyển khoản trước khi gửi xác nhận.");
+      const message = "Vui lòng tải lên biên lai chuyển khoản trước khi gửi xác nhận.";
+      setSubmitError(message);
+      setFieldErrors({ proof: message });
       return;
     }
     if (selectedLoanHasPendingConfirmation) {
-      setSubmitError("Khoản vay này đang có một bill chờ nhân viên đối chiếu. Vui lòng chờ xử lý trước khi gửi lại.");
+      const message = "Khoản vay này đang có một biên lai chờ nhân viên đối chiếu. Vui lòng chờ xử lý trước khi gửi lại.";
+      setSubmitError(message);
+      setFieldErrors({ loanRequestId: message });
       return;
     }
 
@@ -230,7 +250,7 @@ export default function CustomerPaymentsPage() {
       });
       await loadData();
       setSubmitSuccess(
-        `Đã gửi bill chuyển khoản cho khoản vay #${selectedLoan.id}. Nhân viên sẽ đối chiếu và xác nhận kết quả thanh toán.`
+        `Đã gửi biên lai chuyển khoản cho khoản vay #${selectedLoan.id}. Nhân viên sẽ đối chiếu và xác nhận kết quả thanh toán.`
       );
       setForm((prev) => ({
         ...prev,
@@ -238,7 +258,9 @@ export default function CustomerPaymentsPage() {
         proof: null
       }));
     } catch (err) {
-      setSubmitError(err.message || "Không gửi được yêu cầu xác nhận thanh toán");
+      const message = err.message || "Không gửi được yêu cầu xác nhận thanh toán";
+      setSubmitError(message);
+      setFieldErrors(mapFieldErrors(message, paymentFieldKeywords));
     } finally {
       setSubmitting(false);
     }
@@ -248,7 +270,7 @@ export default function CustomerPaymentsPage() {
     <Stack spacing={2}>
       <Typography variant="h4">Thanh toán và điểm tín nhiệm</Typography>
       <Typography color="text.secondary">
-        Khách hàng không tự ghi nhận đã thanh toán. Bạn chỉ gửi bill chuyển khoản; nhân viên sẽ đối chiếu số tiền,
+        Khách hàng không tự ghi nhận đã thanh toán. Bạn chỉ gửi biên lai chuyển khoản; nhân viên sẽ đối chiếu số tiền,
         thời điểm giao dịch và xác nhận kết quả đúng hạn hoặc trễ hạn.
       </Typography>
 
@@ -271,7 +293,7 @@ export default function CustomerPaymentsPage() {
                 <Chip label={currentRating} color={ratingColor(currentRating)} sx={{ minWidth: 72, justifyContent: "center" }} />
               </Stack>
               <Typography variant="body2" color="text.secondary">
-                Điểm chỉ thay đổi sau khi nhân viên xác nhận bill hợp lệ và hệ thống xác định giao dịch đó đúng hạn hoặc trễ hạn.
+                Điểm chỉ thay đổi sau khi nhân viên xác nhận biên lai hợp lệ và hệ thống xác định giao dịch đó đúng hạn hoặc trễ hạn.
               </Typography>
             </Stack>
           </Paper>
@@ -283,7 +305,7 @@ export default function CustomerPaymentsPage() {
           <Paper component="form" onSubmit={handleSubmit} sx={{ p: 3 }}>
             <Stack spacing={2}>
               <Alert severity="info">
-                Chỉ nên gửi bill cho đúng số tiền đến hạn kỳ hiện tại hoặc bill tất toán toàn bộ khoản vay. Nhân viên sẽ dựa trên bill để xác nhận.
+                Chỉ nên gửi biên lai cho đúng số tiền đến hạn kỳ hiện tại hoặc biên lai tất toán toàn bộ khoản vay. Nhân viên sẽ dựa trên biên lai để xác nhận.
               </Alert>
               {selectedLoanHasPendingConfirmation && (
                 <Alert severity="warning">
@@ -293,7 +315,7 @@ export default function CustomerPaymentsPage() {
 
               {selectedLoan?.nextPaymentOverdue && (
                 <Alert severity="warning">
-                  Kỳ thanh toán hiện tại đã quá hạn {Number(selectedLoan.nextPaymentOverdueDays || 0)} ngày. Bill sau khi được xác nhận sẽ bị ghi nhận là trễ hạn.
+                  Kỳ thanh toán hiện tại đã quá hạn {Number(selectedLoan.nextPaymentOverdueDays || 0)} ngày. Biên lai sau khi được xác nhận sẽ bị ghi nhận là trễ hạn.
                 </Alert>
               )}
 
@@ -304,12 +326,13 @@ export default function CustomerPaymentsPage() {
                 <Grid item xs={12} md={6}>
                   <TextField
                     select
-                    label="Khoản vay cần gửi bill"
+                    label="Khoản vay cần gửi biên lai"
                     value={form.loanRequestId}
                     onChange={handleChange("loanRequestId")}
                     fullWidth
                     required
                     disabled={submitting || payableLoans.length === 0}
+                    {...fieldErrorProps(fieldErrors, "loanRequestId")}
                   >
                     {payableLoans.map((loan) => (
                       <MenuItem key={loan.id} value={String(loan.id)}>
@@ -353,10 +376,22 @@ export default function CustomerPaymentsPage() {
                   />
                 </Grid>
                 <Grid item xs={12} md={4}>
-                  <Button variant="outlined" component="label" fullWidth disabled={submitting || payableLoans.length === 0} sx={{ height: 56 }}>
-                    {form.proof ? "Đổi ảnh bill" : "Tải lên ảnh bill"}
+                  <Button
+                    variant="outlined"
+                    component="label"
+                    fullWidth
+                    color={fieldErrors.proof ? "error" : "primary"}
+                    disabled={submitting || payableLoans.length === 0}
+                    sx={{ height: 56, borderWidth: fieldErrors.proof ? 2 : 1 }}
+                  >
+                    {form.proof ? "Đổi ảnh biên lai" : "Tải lên ảnh biên lai"}
                     <input hidden type="file" accept={PAYMENT_PROOF_ACCEPT} onChange={handleProofChange} />
                   </Button>
+                  {fieldErrors.proof && (
+                    <Typography variant="caption" color="error" sx={{ display: "block", mt: 0.75 }}>
+                      {fieldErrors.proof}
+                    </Typography>
+                  )}
                 </Grid>
                 <Grid item xs={12}>
                   <TextField
@@ -364,8 +399,9 @@ export default function CustomerPaymentsPage() {
                     value={form.note}
                     onChange={handleChange("note")}
                     fullWidth
-                    placeholder="Ví dụ: chuyển khoản qua app ngân hàng lúc sáng nay"
+                    placeholder="Ví dụ: chuyển khoản qua ứng dụng ngân hàng lúc sáng nay"
                     disabled={submitting || payableLoans.length === 0}
+                    {...fieldErrorProps(fieldErrors, "note")}
                   />
                   {form.proof && (
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
@@ -390,7 +426,7 @@ export default function CustomerPaymentsPage() {
             <Stack sx={{ p: 2, pb: 0 }}>
               <Typography variant="h6">Yêu cầu xác nhận thanh toán</Typography>
               <Typography variant="body2" color="text.secondary">
-                Đây là các bill bạn đã gửi để nhân viên đối chiếu.
+                Đây là các biên lai bạn đã gửi để nhân viên đối chiếu.
               </Typography>
             </Stack>
             <Table>
@@ -402,7 +438,7 @@ export default function CustomerPaymentsPage() {
                   <TableCell>Số tiền kỳ này</TableCell>
                   <TableCell>Trạng thái</TableCell>
                   <TableCell>Kết quả</TableCell>
-                  <TableCell>Bill</TableCell>
+                  <TableCell>Biên lai</TableCell>
                   <TableCell>Ghi chú</TableCell>
                 </TableRow>
               </TableHead>
@@ -462,7 +498,7 @@ export default function CustomerPaymentsPage() {
                         size="small"
                         onClick={() => handleDownloadProof(confirmation)}
                       >
-                        Xem bill
+                        Xem biên lai
                       </Button>
                     </TableCell>
                     <TableCell>{confirmation.customerNote || confirmation.staffNote || "-"}</TableCell>
@@ -476,7 +512,7 @@ export default function CustomerPaymentsPage() {
             <Stack sx={{ p: 2, pb: 0 }}>
               <Typography variant="h6">Lịch sử thanh toán đã xác nhận</Typography>
               <Typography variant="body2" color="text.secondary">
-                Chỉ các bill đã được nhân viên xác nhận mới xuất hiện ở đây.
+                Chỉ các biên lai đã được nhân viên xác nhận mới xuất hiện ở đây.
               </Typography>
             </Stack>
             <Table>

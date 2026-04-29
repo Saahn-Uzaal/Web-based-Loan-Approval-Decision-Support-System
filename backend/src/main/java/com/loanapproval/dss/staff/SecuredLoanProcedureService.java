@@ -29,6 +29,8 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class SecuredLoanProcedureService {
 
+    private static final BigDecimal MONTHLY_PAYMENT_TOLERANCE = BigDecimal.ONE;
+
     private final SecuredLoanProcedureRepository securedLoanProcedureRepository;
     private final LoanRepository loanRepository;
     private final LoanContractService loanContractService;
@@ -83,14 +85,16 @@ public class SecuredLoanProcedureService {
         LoanApprovalReassessmentService.ReassessmentResult reassessment = null;
         if (status == SecuredProcedureStatus.COMPLETED) {
             validateCompletion(loan, currentDetail, request, effectiveNow);
+            BigDecimal requestedAnnualRate = toAnnualRate(request.monthlyInterestRate());
             reassessment = loanApprovalReassessmentService.reassessAndPersist(
                     loan,
                     resolveVerifiedCustomer(loan.customerId()),
                     loan.approvedAmount(),
                     loan.approvedTermMonths(),
-                    loan.approvedAnnualRate(),
+                    requestedAnnualRate,
                     request.appraisalValue(),
                     true);
+            validateMonthlyPaymentMatchesDss(request, reassessment);
         }
 
         securedLoanProcedureRepository.upsert(loanRequestId, staffUserId, request);
@@ -113,7 +117,7 @@ public class SecuredLoanProcedureService {
             loanContractService.createIfMissingFromApprovedLoan(
                     approvedLoan,
                     staffUserId,
-                    buildContractScheduleTerms(request));
+                    buildContractScheduleTerms(request, reassessment));
             loanRepository.updateStatus(loanRequestId, LoanStatus.CONTRACTED);
         }
 
@@ -300,16 +304,37 @@ public class SecuredLoanProcedureService {
         }
     }
 
-    private LoanContractScheduleTerms buildContractScheduleTerms(StaffSecuredProcedureRequest request) {
-        BigDecimal annualInterestRate = request.monthlyInterestRate() != null
-                ? request.monthlyInterestRate().multiply(BigDecimal.valueOf(12)).setScale(6, RoundingMode.HALF_UP)
+    private BigDecimal toAnnualRate(BigDecimal monthlyInterestRate) {
+        return monthlyInterestRate != null
+                ? monthlyInterestRate.multiply(BigDecimal.valueOf(12)).setScale(6, RoundingMode.HALF_UP)
                 : null;
+    }
+
+    private void validateMonthlyPaymentMatchesDss(
+            StaffSecuredProcedureRequest request,
+            LoanApprovalReassessmentService.ReassessmentResult reassessment) {
+        if (request.monthlyPaymentAmount() == null || reassessment.approvedMonthlyPayment() == null) {
+            return;
+        }
+        BigDecimal enteredPayment = request.monthlyPaymentAmount().setScale(2, RoundingMode.HALF_UP);
+        BigDecimal dssPayment = reassessment.approvedMonthlyPayment().setScale(2, RoundingMode.HALF_UP);
+        if (enteredPayment.subtract(dssPayment).abs().compareTo(MONTHLY_PAYMENT_TOLERANCE) > 0) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Khoản thanh toán hằng tháng phải khớp kết quả DSS sau khi thẩm định lại: "
+                            + dssPayment.toPlainString());
+        }
+    }
+
+    private LoanContractScheduleTerms buildContractScheduleTerms(
+            StaffSecuredProcedureRequest request,
+            LoanApprovalReassessmentService.ReassessmentResult reassessment) {
         return new LoanContractScheduleTerms(
                 request.contractSignedDate(),
                 request.firstPaymentDate(),
                 request.monthlyPaymentDay(),
                 request.finalPaymentDate(),
-                annualInterestRate,
-                request.monthlyPaymentAmount());
+                reassessment != null ? reassessment.approvedAnnualRate() : toAnnualRate(request.monthlyInterestRate()),
+                reassessment != null ? reassessment.approvedMonthlyPayment() : request.monthlyPaymentAmount());
     }
 }

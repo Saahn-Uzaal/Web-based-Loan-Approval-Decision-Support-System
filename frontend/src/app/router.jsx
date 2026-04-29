@@ -17,6 +17,7 @@ const CustomerProfilePage = lazy(() => import("@/features/customer/pages/Custome
 const StaffDashboardPage = lazy(() => import("@/features/staff/pages/StaffDashboardPage"));
 const StaffInformationVerificationDetailPage = lazy(() => import("@/features/staff/pages/StaffInformationVerificationDetailPage"));
 const StaffInformationVerificationsPage = lazy(() => import("@/features/staff/pages/StaffInformationVerificationsPage"));
+const StaffLoanOperationsPage = lazy(() => import("@/features/staff/pages/StaffLoanOperationsPage"));
 const StaffPaymentConfirmationsPage = lazy(() => import("@/features/staff/pages/StaffPaymentConfirmationsPage"));
 const StaffRequestDetailPage = lazy(() => import("@/features/staff/pages/StaffRequestDetailPage"));
 const StaffRequestsPage = lazy(() => import("@/features/staff/pages/StaffRequestsPage"));
@@ -119,6 +120,14 @@ export const router = createBrowserRouter([
         element: (
           <RoleRoute allow={["STAFF"]}>
             <SuspenseWrapper><StaffInformationVerificationsPage /></SuspenseWrapper>
+          </RoleRoute>
+        )
+      },
+      {
+        path: "staff/loan-operations",
+        element: (
+          <RoleRoute allow={["STAFF"]}>
+            <SuspenseWrapper><StaffLoanOperationsPage /></SuspenseWrapper>
           </RoleRoute>
         )
       },

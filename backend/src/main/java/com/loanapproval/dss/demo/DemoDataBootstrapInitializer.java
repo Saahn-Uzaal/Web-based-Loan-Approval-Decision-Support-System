@@ -215,6 +215,10 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
         deleteByIds("DELETE FROM customer_information_verifications WHERE customer_id IN (%s)", userIds);
         deleteByIds("DELETE FROM customer_debts WHERE customer_id IN (%s)", userIds);
         deleteByIds("DELETE FROM customer_profiles WHERE user_id IN (%s)", userIds);
+        deleteByIds("DELETE FROM compliance_audit_logs WHERE customer_id IN (%s)", userIds);
+        deleteByIds("DELETE FROM compliance_audit_logs WHERE actor_user_id IN (%s)", userIds);
+        deleteByIds("DELETE FROM notifications WHERE recipient_user_id IN (%s)", userIds);
+        deleteByIds("DELETE FROM notifications WHERE actor_user_id IN (%s)", userIds);
         deleteByIds("DELETE FROM users WHERE id IN (%s)", userIds);
     }
 
@@ -236,7 +240,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
         );
 
         customerDebtRepository.create(customer.id(), "Vay mua xe", money("2600000"), money("68000000"), "Techcombank");
-        customerDebtRepository.create(customer.id(), "The tin dung", money("1450000"), money("18500000"), "VPBank");
+        customerDebtRepository.create(customer.id(), "Thẻ tín dụng", money("1450000"), money("18500000"), "VPBank");
 
         customerInformationVerificationRepository.upsertDecision(
             customer.id(),
@@ -254,7 +258,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
             VerificationStatus.PASSED,
             VerificationStatus.PASSED,
             false,
-            "Dong bo tu bo du lieu demo",
+            "Đồng bộ từ bộ dữ liệu demo",
             staff.id(),
             Instant.now().minus(12, ChronoUnit.DAYS),
             null,
@@ -278,13 +282,13 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
             money("22000000"),
             null,
             money("9.55"),
-            "Chuyen vien van hanh",
+            "Chuyên viên vận hành",
             LocalDate.of(2022, 6, 10),
             690,
             55,
             null
         );
-        customerDebtRepository.create(customer.id(), "Vay tieu dung", money("2100000"), money("32000000"), "MBBank");
+        customerDebtRepository.create(customer.id(), "Vay tiêu dùng", money("2100000"), money("32000000"), "MBBank");
         customerInformationVerificationRepository.markPending(customer.id());
         customerVerificationRepository.upsert(new CustomerVerification(
             customer.id(),
