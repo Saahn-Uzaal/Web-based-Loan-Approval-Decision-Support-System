@@ -4,6 +4,7 @@ import com.loanapproval.dss.admin.dto.AdminUserResponse;
 import com.loanapproval.dss.admin.dto.AdminCreateUserRequest;
 import com.loanapproval.dss.auth.UserAccount;
 import com.loanapproval.dss.auth.UserRepository;
+import com.loanapproval.dss.shared.PageResponse;
 import com.loanapproval.dss.shared.Role;
 import java.util.List;
 import org.springframework.http.HttpStatus;
@@ -30,12 +31,28 @@ public class AdminUserService {
     }
 
     public List<AdminUserResponse> listManagedUsers(Role role) {
-        if (role == Role.ADMIN) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Vai trò ADMIN không được quản lý ở màn hình này");
-        }
+        validateRoleFilter(role);
         return adminUserRepository.findManagedUsers(role).stream()
             .map(this::toResponse)
             .toList();
+    }
+
+    public PageResponse<AdminUserResponse> listManagedUsersPaged(Role role, int page, int size) {
+        validateRoleFilter(role);
+        int safePage = Math.max(page, 0);
+        int safeSize = Math.min(Math.max(size, 1), 100);
+        int offset = safePage * safeSize;
+        long total = adminUserRepository.countManagedUsers(role);
+        List<AdminUserResponse> content = adminUserRepository.findManagedUsersPaged(role, offset, safeSize).stream()
+            .map(this::toResponse)
+            .toList();
+        return PageResponse.of(content, safePage, safeSize, total);
+    }
+
+    private void validateRoleFilter(Role role) {
+        if (role == Role.ADMIN) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Vai trò ADMIN không được quản lý ở màn hình này");
+        }
     }
 
     @Transactional
@@ -72,11 +89,11 @@ public class AdminUserService {
         }
 
         int affectedRows = target.role() == Role.CUSTOMER
-            ? adminUserRepository.deleteCustomerAndRelations(targetUserId)
-            : adminUserRepository.deleteStaffAndRelations(targetUserId);
+            ? adminUserRepository.softDeleteCustomer(targetUserId)
+            : adminUserRepository.softDeleteStaff(targetUserId);
 
         if (affectedRows == 0) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy người dùng");
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy người dùng hoặc tài khoản đã bị vô hiệu hóa");
         }
     }
 

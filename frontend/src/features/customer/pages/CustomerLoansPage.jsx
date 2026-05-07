@@ -5,6 +5,7 @@ import {
   CircularProgress,
   Paper,
   Stack,
+  TablePagination,
   Table,
   TableBody,
   TableCell,
@@ -14,18 +15,21 @@ import {
 } from "@mui/material";
 import { useEffect, useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
-import { getMyLoansApi } from "@/features/customer/api/loanApi";
+import { getMyLoansPagedApi } from "@/features/customer/api/loanApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd } from "@/shared/utils/currency";
 import { labelLoanPurpose, labelLoanStatus, labelLoanType } from "@/shared/utils/labels";
 
 function StatusChip({ status }) {
   const colorMap = {
+    DRAFT: "default",
+    NEEDS_MORE_INFO: "warning",
+    WITHDRAWN: "default",
     APPOINTMENT_SCHEDULED: "info",
     APPROVED: "success",
     CONTRACTED: "info",
-    DISBURSED: "primary",
     ACTIVE: "primary",
+    OVERDUE: "error",
     CLOSED: "default",
     REJECTED: "error",
     PENDING: "warning"
@@ -56,6 +60,9 @@ export default function CustomerLoansPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [totalRows, setTotalRows] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -67,11 +74,15 @@ export default function CustomerLoansPage() {
       setLoading(true);
       setError("");
       try {
-        const response = await getMyLoansApi(accessToken);
+        const response = await getMyLoansPagedApi(accessToken, {
+          page,
+          size: rowsPerPage
+        });
         if (!active) {
           return;
         }
-        setRows(Array.isArray(response) ? response : []);
+        setRows(Array.isArray(response?.content) ? response.content : []);
+        setTotalRows(Number(response?.totalElements || 0));
       } catch (err) {
         if (!active) {
           return;
@@ -88,7 +99,7 @@ export default function CustomerLoansPage() {
     return () => {
       active = false;
     };
-  }, [accessToken]);
+  }, [accessToken, page, rowsPerPage]);
 
   return (
     <Stack spacing={2}>
@@ -105,7 +116,7 @@ export default function CustomerLoansPage() {
           </Stack>
         </Paper>
       )}
-      {!loading && rows.length === 0 && (
+      {!loading && totalRows === 0 && (
         <Paper sx={{ p: 3 }}>
           <Typography variant="body2" color="text.secondary">
             Chưa có hồ sơ vay. Hãy tạo hồ sơ đầu tiên ở mục "Tạo hồ sơ vay".
@@ -156,6 +167,19 @@ export default function CustomerLoansPage() {
             ))}
           </TableBody>
         </Table>
+        <TablePagination
+          component="div"
+          count={totalRows}
+          page={page}
+          onPageChange={(_, nextPage) => setPage(nextPage)}
+          rowsPerPage={rowsPerPage}
+          onRowsPerPageChange={(event) => {
+            setRowsPerPage(Number(event.target.value));
+            setPage(0);
+          }}
+          rowsPerPageOptions={[5, 10, 25]}
+          labelRowsPerPage="Số dòng"
+        />
       </Paper>
     </Stack>
   );

@@ -5,6 +5,7 @@ import {
   CircularProgress,
   Paper,
   Stack,
+  TablePagination,
   Table,
   TableBody,
   TableCell,
@@ -14,7 +15,7 @@ import {
 } from "@mui/material";
 import { useEffect, useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
-import { getStaffRequestsApi } from "@/features/staff/api/staffApi";
+import { getStaffRequestsPagedApi } from "@/features/staff/api/staffApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd } from "@/shared/utils/currency";
 import { labelDssRecommendation, labelLoanStatus, labelLoanType } from "@/shared/utils/labels";
@@ -22,11 +23,12 @@ import { labelDssRecommendation, labelLoanStatus, labelLoanType } from "@/shared
 function StatusChip({ status }) {
   const colorMap = {
     PENDING: "warning",
+    NEEDS_MORE_INFO: "warning",
     APPOINTMENT_SCHEDULED: "info",
     APPROVED: "success",
     CONTRACTED: "info",
-    DISBURSED: "primary",
     ACTIVE: "primary",
+    OVERDUE: "error",
     CLOSED: "default",
     REJECTED: "error"
   };
@@ -39,6 +41,9 @@ export default function StaffRequestsPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [totalRows, setTotalRows] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -50,11 +55,15 @@ export default function StaffRequestsPage() {
       setLoading(true);
       setError("");
       try {
-        const response = await getStaffRequestsApi(accessToken);
+        const response = await getStaffRequestsPagedApi(accessToken, {
+          page,
+          size: rowsPerPage
+        });
         if (!active) {
           return;
         }
-        setRows(Array.isArray(response) ? response : []);
+        setRows(Array.isArray(response?.content) ? response.content : []);
+        setTotalRows(Number(response?.totalElements || 0));
       } catch (err) {
         if (!active) {
           return;
@@ -71,13 +80,13 @@ export default function StaffRequestsPage() {
     return () => {
       active = false;
     };
-  }, [accessToken]);
+  }, [accessToken, page, rowsPerPage]);
 
   return (
     <Stack spacing={2}>
       <Typography variant="h4">Hàng đợi thẩm định</Typography>
       <Typography color="text.secondary">
-        Chỉ hiển thị các hồ sơ đang chờ quyết định thẩm định ban đầu.
+        Hiển thị hồ sơ đang chờ quyết định thẩm định ban đầu và hồ sơ đã yêu cầu khách bổ sung thông tin.
       </Typography>
 
       {error && <Alert severity="error">{error}</Alert>}
@@ -91,10 +100,10 @@ export default function StaffRequestsPage() {
         </Paper>
       )}
 
-      {!loading && rows.length === 0 && (
+      {!loading && totalRows === 0 && (
         <Paper sx={{ p: 3 }}>
           <Typography variant="body2" color="text.secondary">
-            Không có hồ sơ nào đang chờ thẩm định.
+            Không có hồ sơ nào đang chờ thẩm định hoặc chờ bổ sung thông tin.
           </Typography>
         </Paper>
       )}
@@ -106,6 +115,7 @@ export default function StaffRequestsPage() {
               <TableCell>Mã hồ sơ</TableCell>
               <TableCell>Loại vay</TableCell>
               <TableCell>Khách hàng</TableCell>
+              <TableCell>Phụ trách</TableCell>
               <TableCell>Số tiền</TableCell>
               <TableCell>Khuyến nghị DSS</TableCell>
               <TableCell>Trạng thái</TableCell>
@@ -118,6 +128,7 @@ export default function StaffRequestsPage() {
                 <TableCell>#{row.id}</TableCell>
                 <TableCell>{labelLoanType(row.loanType)}</TableCell>
                 <TableCell>{row.customerName || row.customerEmail}</TableCell>
+                <TableCell>{row.assignedStaffEmail || "Chưa có người phụ trách"}</TableCell>
                 <TableCell>{formatVnd(row.amount)}</TableCell>
                 <TableCell>{labelDssRecommendation(row.dssRecommendation)}</TableCell>
                 <TableCell>
@@ -137,6 +148,19 @@ export default function StaffRequestsPage() {
             ))}
           </TableBody>
         </Table>
+        <TablePagination
+          component="div"
+          count={totalRows}
+          page={page}
+          onPageChange={(_, nextPage) => setPage(nextPage)}
+          rowsPerPage={rowsPerPage}
+          onRowsPerPageChange={(event) => {
+            setRowsPerPage(Number(event.target.value));
+            setPage(0);
+          }}
+          rowsPerPageOptions={[5, 10, 25]}
+          labelRowsPerPage="Số dòng"
+        />
       </Paper>
     </Stack>
   );

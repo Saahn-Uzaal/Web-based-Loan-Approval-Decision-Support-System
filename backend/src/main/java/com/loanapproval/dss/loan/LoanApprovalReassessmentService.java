@@ -30,6 +30,7 @@ public class LoanApprovalReassessmentService {
     private final DssResultRepository dssResultRepository;
     private final RiskAssessmentService riskAssessmentService;
     private final LoanEligibilityService loanEligibilityService;
+    private final LoanApplicationSnapshotRepository loanApplicationSnapshotRepository;
 
     public LoanApprovalReassessmentService(
             CustomerProfileRepository customerProfileRepository,
@@ -37,13 +38,15 @@ public class LoanApprovalReassessmentService {
             DecisionEngineService decisionEngineService,
             DssResultRepository dssResultRepository,
             RiskAssessmentService riskAssessmentService,
-            LoanEligibilityService loanEligibilityService) {
+            LoanEligibilityService loanEligibilityService,
+            LoanApplicationSnapshotRepository loanApplicationSnapshotRepository) {
         this.customerProfileRepository = customerProfileRepository;
         this.customerDebtService = customerDebtService;
         this.decisionEngineService = decisionEngineService;
         this.dssResultRepository = dssResultRepository;
         this.riskAssessmentService = riskAssessmentService;
         this.loanEligibilityService = loanEligibilityService;
+        this.loanApplicationSnapshotRepository = loanApplicationSnapshotRepository;
     }
 
     public ReassessmentResult reassessAndPersist(
@@ -54,7 +57,10 @@ public class LoanApprovalReassessmentService {
             BigDecimal requestedAnnualRate,
             BigDecimal collateralValue,
             boolean allowAutoAdjust) {
-        CustomerProfile profile = customerProfileRepository.findByUserId(loan.customerId()).orElse(null);
+        LoanApplicationSnapshot snapshot = loanApplicationSnapshotRepository.findByLoanRequestId(loan.id()).orElse(null);
+        CustomerProfile profile = snapshot != null
+                ? profileFromSnapshot(snapshot)
+                : customerProfileRepository.findByUserId(loan.customerId()).orElse(null);
         BigDecimal existingMonthlyDebt = customerDebtService.sumActiveMonthlyDebt(loan.customerId());
         CandidateTerms candidate = resolveCandidateTerms(
                 loan,
@@ -115,7 +121,7 @@ public class LoanApprovalReassessmentService {
                 stablePass.approvedTermMonths(),
                 stablePass.approvedAnnualRate(),
                 stablePass.approvedMonthlyPayment(),
-                LoanEligibilityService.POLICY_VERSION,
+                loanEligibilityService.currentPolicyVersion(),
                 buildExplanation(stablePass, amountAdjusted, collateralValue),
                 stablePass.projectedDti(),
                 amountAdjusted);
@@ -226,7 +232,7 @@ public class LoanApprovalReassessmentService {
                 profile != null ? profile.employmentStatus() : null,
                 profile != null ? profile.dateOfBirth() : null,
                 profile != null ? profile.employmentStartDate() : null,
-                profile != null ? profile.creditHistoryScore() : null,
+                null,
                 collateralValue,
                 existingMonthlyDebt,
                 approvedAmount,
@@ -310,6 +316,26 @@ public class LoanApprovalReassessmentService {
 
     private boolean isFailed(VerificationStatus status) {
         return status == VerificationStatus.FAILED;
+    }
+
+    private CustomerProfile profileFromSnapshot(LoanApplicationSnapshot snapshot) {
+        return new CustomerProfile(
+                snapshot.customerId(),
+                snapshot.fullName(),
+                snapshot.phone(),
+                snapshot.dateOfBirth(),
+                snapshot.declaredMonthlyIncome(),
+                snapshot.verifiedMonthlyIncome(),
+                snapshot.debtToIncomeRatio(),
+                snapshot.employmentStatus(),
+                snapshot.employmentStartDate(),
+                snapshot.creditHistoryScore(),
+                snapshot.paymentRating(),
+                null,
+                null,
+                null,
+                null,
+                null);
     }
 
     private Boolean asIncomeVerified(VerificationStatus status) {

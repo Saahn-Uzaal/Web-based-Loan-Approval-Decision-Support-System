@@ -5,6 +5,9 @@ import static org.mockito.Mockito.when;
 
 import com.loanapproval.dss.contract.LoanContract;
 import com.loanapproval.dss.contract.LoanContractStatus;
+import com.loanapproval.dss.contract.LoanInstallment;
+import com.loanapproval.dss.contract.LoanInstallmentService;
+import com.loanapproval.dss.contract.LoanInstallmentStatus;
 import com.loanapproval.dss.loan.LoanPurpose;
 import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanStatus;
@@ -12,6 +15,7 @@ import com.loanapproval.dss.loan.LoanType;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -21,12 +25,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class RepaymentScheduleServiceTest {
 
     @Mock
-    private RepaymentRepository repaymentRepository;
+    private LoanInstallmentService loanInstallmentService;
 
     @Test
     void shouldUseFirstAndFinalPaymentDatesFromContract() {
-        RepaymentScheduleService service = new RepaymentScheduleService(repaymentRepository);
-        when(repaymentRepository.sumAmountPaidByLoanRequestAndCustomer(100L, 1L)).thenReturn(BigDecimal.valueOf(9_000_000));
+        RepaymentScheduleService service = new RepaymentScheduleService(loanInstallmentService);
+        when(loanInstallmentService.listByLoanRequestId(100L)).thenReturn(installments(false));
 
         LoanRepaymentSnapshot snapshot = service.snapshot(loan(), contract(), 1L);
 
@@ -38,13 +42,59 @@ class RepaymentScheduleServiceTest {
 
     @Test
     void shouldMarkCurrentInstallmentOverdueWhenDueDatePassedAndUnpaid() {
-        RepaymentScheduleService service = new RepaymentScheduleService(repaymentRepository);
-        when(repaymentRepository.sumAmountPaidByLoanRequestAndCustomer(100L, 1L)).thenReturn(BigDecimal.ZERO);
+        RepaymentScheduleService service = new RepaymentScheduleService(loanInstallmentService);
+        when(loanInstallmentService.listByLoanRequestId(100L)).thenReturn(installments(true));
 
         LoanRepaymentSnapshot snapshot = service.snapshot(loan(), overdueContract(), 1L);
 
         assertThat(snapshot.overdue()).isTrue();
         assertThat(snapshot.overdueDays()).isGreaterThan(0);
+    }
+
+    private List<LoanInstallment> installments(boolean overdue) {
+        Instant now = Instant.now();
+        LocalDate dueDate = overdue ? LocalDate.now().minusDays(10) : LocalDate.of(2026, 7, 15);
+        return List.of(
+                installment(1L, 1, LocalDate.of(2026, 5, 15), BigDecimal.valueOf(4_500_000), BigDecimal.valueOf(4_500_000), now),
+                installment(2L, 2, LocalDate.of(2026, 6, 15), BigDecimal.valueOf(4_500_000), BigDecimal.valueOf(4_500_000), now),
+                installment(3L, 3, dueDate, BigDecimal.valueOf(4_500_000), BigDecimal.ZERO, null));
+    }
+
+    private LoanInstallment installment(
+            Long id,
+            int installmentNumber,
+            LocalDate dueDate,
+            BigDecimal scheduledAmount,
+            BigDecimal paidAmount,
+            Instant paidAt) {
+        BigDecimal scheduledPrincipal = BigDecimal.valueOf(4_000_000);
+        BigDecimal scheduledInterest = scheduledAmount.subtract(scheduledPrincipal);
+        return new LoanInstallment(
+                id,
+                99L,
+                100L,
+                1L,
+                installmentNumber,
+                dueDate,
+                BigDecimal.valueOf(50_000_000),
+                scheduledPrincipal,
+                scheduledInterest,
+                BigDecimal.ZERO.setScale(2),
+                scheduledAmount,
+                paidAmount.min(scheduledPrincipal),
+                paidAmount.compareTo(scheduledPrincipal) > 0
+                        ? paidAmount.subtract(scheduledPrincipal)
+                        : BigDecimal.ZERO.setScale(2),
+                BigDecimal.ZERO.setScale(2),
+                paidAmount,
+                paidAt,
+                paidAmount.compareTo(scheduledAmount) >= 0 ? LoanInstallmentStatus.PAID : LoanInstallmentStatus.PENDING,
+                now(),
+                now());
+    }
+
+    private Instant now() {
+        return Instant.now();
     }
 
     private LoanRecord loan() {

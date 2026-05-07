@@ -1,7 +1,6 @@
 package com.loanapproval.dss.staff;
 
 import com.loanapproval.dss.loan.LoanDocumentDownload;
-import com.loanapproval.dss.loan.LoanDocumentType;
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.security.AuthenticatedUser;
 import com.loanapproval.dss.shared.PageResponse;
@@ -9,6 +8,8 @@ import com.loanapproval.dss.staff.dto.StaffDecisionRequest;
 import com.loanapproval.dss.staff.dto.StaffDecisionResponse;
 import com.loanapproval.dss.staff.dto.StaffRequestDetailResponse;
 import com.loanapproval.dss.staff.dto.StaffRequestSummaryResponse;
+import com.loanapproval.dss.verification.dto.CustomerVerificationResponse;
+import com.loanapproval.dss.verification.dto.UpdateCustomerVerificationRequest;
 import jakarta.validation.Valid;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -23,6 +24,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -82,6 +84,31 @@ public class StaffReviewController {
         return staffReviewService.submitDecision(staff.id(), id, request);
     }
 
+    @PostMapping("/{id}/assign")
+    public StaffRequestDetailResponse assignCase(
+            Authentication authentication,
+            @PathVariable("id") Long id) {
+        AuthenticatedUser staff = extractUser(authentication);
+        return staffReviewService.assignCase(staff.id(), id);
+    }
+
+    @PostMapping("/{id}/release")
+    public StaffRequestDetailResponse releaseCase(
+            Authentication authentication,
+            @PathVariable("id") Long id) {
+        AuthenticatedUser staff = extractUser(authentication);
+        return staffReviewService.releaseCase(staff.id(), id);
+    }
+
+    @PutMapping("/{id}/verification")
+    public CustomerVerificationResponse updateVerification(
+            Authentication authentication,
+            @PathVariable("id") Long id,
+            @Valid @RequestBody UpdateCustomerVerificationRequest request) {
+        AuthenticatedUser staff = extractUser(authentication);
+        return staffReviewService.updateVerification(staff.id(), id, request);
+    }
+
     @PostMapping("/{id}/complete-contract")
     public StaffRequestDetailResponse completeContract(
             Authentication authentication,
@@ -98,11 +125,11 @@ public class StaffReviewController {
         return staffReviewService.disburseLoan(staff.id(), id);
     }
 
-    @GetMapping("/{id}/documents/{documentType}")
+    @GetMapping("/{id}/documents/{documentId}")
     public ResponseEntity<Resource> downloadLoanDocument(
             @PathVariable("id") Long id,
-            @PathVariable("documentType") LoanDocumentType documentType) {
-        return toDownloadResponse(staffReviewService.downloadDocument(id, documentType));
+            @PathVariable("documentId") Long documentId) {
+        return toDownloadResponse(staffReviewService.downloadDocument(id, documentId));
     }
 
     private AuthenticatedUser extractUser(Authentication authentication) {

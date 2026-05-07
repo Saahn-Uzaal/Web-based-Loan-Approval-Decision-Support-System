@@ -172,6 +172,41 @@ public class RepaymentRepository {
                 customerId).stream().findFirst();
     }
 
+    public List<RepaymentRecord> findByLoanRequestAndCustomerOrderByPaidAtAsc(Long loanRequestId, Long customerId) {
+        return jdbcTemplate.query(
+                """
+                        SELECT
+                            id,
+                            loan_request_id,
+                            customer_id,
+                            amount_due,
+                            amount_paid,
+                            due_date,
+                            paid_at,
+                            payment_status,
+                            rating_delta,
+                            note,
+                            created_at
+                        FROM loan_repayments
+                        WHERE loan_request_id = ? AND customer_id = ?
+                        ORDER BY paid_at ASC, id ASC
+                        """,
+                (rs, rowNum) -> new RepaymentRecord(
+                        rs.getLong("id"),
+                        rs.getLong("loan_request_id"),
+                        rs.getLong("customer_id"),
+                        rs.getBigDecimal("amount_due"),
+                        rs.getBigDecimal("amount_paid"),
+                        rs.getDate("due_date").toLocalDate(),
+                        toInstant(rs.getTimestamp("paid_at")),
+                        RepaymentStatus.valueOf(rs.getString("payment_status")),
+                        rs.getInt("rating_delta"),
+                        rs.getString("note"),
+                        toInstant(rs.getTimestamp("created_at"))),
+                loanRequestId,
+                customerId);
+    }
+
     public BigDecimal sumAmountPaidByLoanRequestAndCustomer(Long loanRequestId, Long customerId) {
         BigDecimal total = jdbcTemplate.queryForObject(
                 """

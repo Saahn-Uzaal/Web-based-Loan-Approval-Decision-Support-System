@@ -86,6 +86,22 @@ public class PaymentProofStorageService {
                 record.proofFileSize() != null ? record.proofFileSize() : 0L);
     }
 
+    public void delete(Long customerId, String storageName) {
+        if (storageName == null || storageName.isBlank()) {
+            return;
+        }
+
+        Path customerDirectory = storageRoot.resolve(String.valueOf(customerId)).normalize();
+        Path filePath = customerDirectory.resolve(storageName).normalize();
+        ensureWithinRoot(filePath);
+
+        try {
+            Files.deleteIfExists(filePath);
+        } catch (IOException ex) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Không thể dọn ảnh bill chuyển khoản", ex);
+        }
+    }
+
     private void ensureWithinRoot(Path path) {
         if (!path.startsWith(storageRoot)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Đường dẫn lưu bill chuyển khoản không hợp lệ");

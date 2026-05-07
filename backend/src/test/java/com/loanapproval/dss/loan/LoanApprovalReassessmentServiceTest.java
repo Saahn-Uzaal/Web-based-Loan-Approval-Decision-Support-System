@@ -54,6 +54,9 @@ class LoanApprovalReassessmentServiceTest {
     @Mock
     private LoanEligibilityService loanEligibilityService;
 
+    @Mock
+    private LoanApplicationSnapshotRepository loanApplicationSnapshotRepository;
+
     @InjectMocks
     private LoanApprovalReassessmentService loanApprovalReassessmentService;
 
@@ -83,7 +86,7 @@ class LoanApprovalReassessmentServiceTest {
                 Instant.now());
         CustomerProfile profile = new CustomerProfile(
                 loan.customerId(),
-                "Tran Thi B",
+                "Trần Thị B",
                 "0900000001",
                 LocalDate.of(1992, 5, 10),
                 BigDecimal.valueOf(60_000_000),
@@ -99,6 +102,7 @@ class LoanApprovalReassessmentServiceTest {
                 null,
                 null);
         CustomerVerification verification = fullyVerified(loan.customerId());
+        when(loanApplicationSnapshotRepository.findByLoanRequestId(loan.id())).thenReturn(Optional.empty());
         BigDecimal annualRate = BigDecimal.valueOf(0.120000).setScale(6);
         BigDecimal appraisedValue = BigDecimal.valueOf(400_000_000);
         DssResult dssResult = new DssResult(

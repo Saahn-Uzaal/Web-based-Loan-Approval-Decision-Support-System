@@ -18,6 +18,7 @@ import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
 import EventAvailableRoundedIcon from "@mui/icons-material/EventAvailableRounded";
 import FactCheckRoundedIcon from "@mui/icons-material/FactCheckRounded";
 import NotificationsRoundedIcon from "@mui/icons-material/NotificationsRounded";
+import PaymentRoundedIcon from "@mui/icons-material/PaymentRounded";
 import TaskAltRoundedIcon from "@mui/icons-material/TaskAltRounded";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -115,6 +116,11 @@ function typeConfig(type) {
       return {
         icon: <AssignmentTurnedInRoundedIcon sx={{ fontSize: 14 }} />,
         color: "#00897b"
+      };
+    case "PAYMENT_DUE_SOON":
+      return {
+        icon: <PaymentRoundedIcon sx={{ fontSize: 14 }} />,
+        color: "#d32f2f"
       };
     default:
       return {

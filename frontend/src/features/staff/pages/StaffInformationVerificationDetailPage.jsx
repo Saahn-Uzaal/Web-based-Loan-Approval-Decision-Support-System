@@ -165,6 +165,8 @@ export default function StaffInformationVerificationDetailPage() {
     }
   };
 
+  const hasSubmittedProfile = Boolean(detail?.profile?.payslipFileName);
+
   return (
     <Stack spacing={2}>
       <Typography variant="h4">Xác minh thông tin khách hàng #{customerId}</Typography>
@@ -211,6 +213,11 @@ export default function StaffInformationVerificationDetailPage() {
               {!detail.profile && (
                 <Alert severity="warning">
                   Khách hàng chưa hoàn thành hồ sơ. Không thể chấp thuận nếu chưa có dữ liệu để đối chiếu.
+                </Alert>
+              )}
+              {detail.profile && !detail.profile.payslipFileName && (
+                <Alert severity="warning">
+                  Khách hàng chưa nộp phiếu lương. Chưa thể chấp thuận hoặc từ chối cho tới khi có đủ hồ sơ đối chiếu.
                 </Alert>
               )}
               {detail.profile && (
@@ -325,7 +332,7 @@ export default function StaffInformationVerificationDetailPage() {
                 <Button
                   variant="contained"
                   color="success"
-                  disabled={submitting || !detail.profile || !detail.profile.payslipFileName}
+                  disabled={submitting || !hasSubmittedProfile}
                   onClick={() => handleDecision("APPROVE")}
                 >
                   {submitting ? "Đang xử lý..." : "Chấp thuận thông tin"}
@@ -333,7 +340,7 @@ export default function StaffInformationVerificationDetailPage() {
                 <Button
                   variant="contained"
                   color="error"
-                  disabled={submitting}
+                  disabled={submitting || !hasSubmittedProfile}
                   onClick={() => handleDecision("REJECT")}
                 >
                   {submitting ? "Đang xử lý..." : "Từ chối thông tin"}

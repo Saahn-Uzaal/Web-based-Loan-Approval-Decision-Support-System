@@ -64,7 +64,7 @@ class LoanEligibilityServiceTest {
     private CustomerProfile profile(BigDecimal monthlyIncome) {
         return new CustomerProfile(
                 1L,
-                "Nguyen Van A",
+                "Nguyễn Văn A",
                 "0900000000",
                 LocalDate.of(1990, 1, 1),
                 monthlyIncome,

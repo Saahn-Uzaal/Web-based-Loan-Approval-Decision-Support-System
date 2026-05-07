@@ -29,6 +29,13 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link as RouterLink, Navigate } from "react-router-dom";
 import { useAuth } from "@/features/auth/context/AuthContext";
+import { getInformationVerificationsApi } from "@/features/staff/api/informationVerificationApi";
+import {
+  getStaffLoanOperationsApi,
+  getStaffPaymentConfirmationsApi,
+  getStaffRequestsApi,
+  getStaffSecuredProceduresApi
+} from "@/features/staff/api/staffApi";
 import { formatVnd } from "@/shared/utils/currency";
 import { labelDssRecommendation, labelLoanStatus } from "@/shared/utils/labels";
 
@@ -92,11 +99,12 @@ function StatCard({ icon, label, value, color = "#1f4b99", sublabel }) {
 
 function statusColor(status) {
   const map = {
+    NEEDS_MORE_INFO: "warning",
     APPOINTMENT_SCHEDULED: "info",
     APPROVED: "success",
     CONTRACTED: "info",
-    DISBURSED: "primary",
     ACTIVE: "primary",
+    OVERDUE: "error",
     CLOSED: "default",
     REJECTED: "error",
     PENDING: "warning"
@@ -143,7 +151,7 @@ function CustomerHome({ accessToken }) {
   const stats = useMemo(() => {
     const total = loans.length;
     const pending = loans.filter((loan) => loan.status === "PENDING" || loan.status === "APPOINTMENT_SCHEDULED").length;
-    const approvedStatuses = ["APPROVED", "CONTRACTED", "DISBURSED", "ACTIVE"];
+    const approvedStatuses = ["APPROVED", "CONTRACTED", "ACTIVE", "OVERDUE"];
     const approved = loans.filter((loan) => approvedStatuses.includes(loan.status)).length;
     const approvedAmount = loans
       .filter((loan) => approvedStatuses.includes(loan.status))
@@ -264,7 +272,7 @@ function CustomerHome({ accessToken }) {
           <QuickActionCard
             icon={<LoanIcon />}
             title="Tạo hồ sơ vay"
-            description="Nộp hồ sơ vay mới với đánh giá tự động từ DSS"
+            description="Nộp hồ sơ vay mới để hệ thống tiếp nhận và nhân viên thẩm định"
             to="/customer/loan/new"
             color="primary.main"
           />
@@ -353,7 +361,13 @@ function CustomerHome({ accessToken }) {
 }
 
 function StaffHome({ accessToken }) {
-  const [requests, setRequests] = useState([]);
+  const [workloads, setWorkloads] = useState({
+    review: [],
+    operations: [],
+    secured: [],
+    infoPending: [],
+    paymentPending: []
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -364,9 +378,28 @@ function StaffHome({ accessToken }) {
     setLoading(true);
     setError("");
     try {
-      const { apiRequest } = await import("@/shared/api/http");
-      const response = await apiRequest("/api/staff/requests", { token: accessToken });
-      setRequests(Array.isArray(response) ? response : []);
+      const [
+        reviewResult,
+        operationResult,
+        securedResult,
+        infoPendingResult,
+        paymentPendingResult
+      ] = await Promise.allSettled([
+        getStaffRequestsApi(accessToken),
+        getStaffLoanOperationsApi(accessToken),
+        getStaffSecuredProceduresApi(accessToken),
+        getInformationVerificationsApi(accessToken, "PENDING"),
+        getStaffPaymentConfirmationsApi(accessToken, "PENDING_REVIEW")
+      ]);
+
+      const toList = (result) => (result.status === "fulfilled" && Array.isArray(result.value) ? result.value : []);
+      setWorkloads({
+        review: toList(reviewResult),
+        operations: toList(operationResult),
+        secured: toList(securedResult),
+        infoPending: toList(infoPendingResult),
+        paymentPending: toList(paymentPendingResult)
+      });
     } catch (err) {
       setError(err.message || "Không tải được dữ liệu");
     } finally {
@@ -379,16 +412,32 @@ function StaffHome({ accessToken }) {
   }, [loadData]);
 
   const stats = useMemo(() => {
-    const total = requests.length;
-    const pending = requests.filter((request) => request.status === "PENDING").length;
-    return { total, pending };
-  }, [requests]);
+    const total = workloads.review.length
+      + workloads.operations.length
+      + workloads.infoPending.length
+      + workloads.paymentPending.length;
+    const pendingReview = workloads.review.length;
+    const operationQueue = workloads.operations.length;
+    const securedQueue = workloads.secured.length;
+    const overdueOperations = workloads.operations.filter((request) => request.status === "OVERDUE").length;
+    const infoPending = workloads.infoPending.length;
+    const paymentPending = workloads.paymentPending.length;
+    return {
+      total,
+      pendingReview,
+      operationQueue,
+      securedQueue,
+      overdueOperations,
+      infoPending,
+      paymentPending
+    };
+  }, [workloads]);
 
   const urgentRequests = useMemo(
-    () => requests
-      .filter((request) => request.status === "PENDING")
+    () => workloads.review
+      .filter((request) => request.status === "PENDING" || request.status === "NEEDS_MORE_INFO")
       .slice(0, 5),
-    [requests]
+    [workloads.review]
   );
 
   if (loading) {
@@ -418,7 +467,7 @@ function StaffHome({ accessToken }) {
               Bảng điều khiển nhân viên
             </Typography>
             <Typography variant="body1" sx={{ opacity: 0.9 }}>
-              Xem nhanh hồ sơ cần thẩm định, xác minh và ra quyết định phê duyệt.
+              Xem nhanh toàn bộ công việc của staff: thẩm định, vận hành khoản vay, xác minh thông tin và xác nhận thanh toán.
             </Typography>
           </Stack>
           <Button
@@ -445,15 +494,33 @@ function StaffHome({ accessToken }) {
 
       <Grid container spacing={2}>
         <Grid item xs={12} sm={6} md={3}>
-          <StatCard icon={<RequestIcon />} label="Tổng hồ sơ" value={stats.total} color="#1f4b99" />
+          <StatCard icon={<RequestIcon />} label="Tổng mục công việc" value={stats.total} color="#1f4b99" />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
             icon={<PendingIcon />}
-            label="Chờ xử lý"
-            value={stats.pending}
+            label="Hàng đợi thẩm định"
+            value={stats.pendingReview}
             color="#ed6c02"
-            sublabel={stats.pending > 0 ? "Cần thẩm định" : "Không có hồ sơ chờ"}
+            sublabel={stats.pendingReview > 0 ? "Cần ra quyết định thẩm định/bổ sung" : "Không có hồ sơ chờ"}
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard
+            icon={<LoanIcon />}
+            label="Vận hành khoản vay"
+            value={stats.operationQueue}
+            color="#2e7d32"
+            sublabel={`Quá hạn: ${stats.overdueOperations} • Thế chấp: ${stats.securedQueue}`}
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard
+            icon={<PaymentIcon />}
+            label="Xác minh & thanh toán"
+            value={stats.infoPending + stats.paymentPending}
+            color="#6a1b9a"
+            sublabel={`Xác minh: ${stats.infoPending} • Chờ đối chiếu: ${stats.paymentPending}`}
           />
         </Grid>
       </Grid>
@@ -490,20 +557,20 @@ function StaffHome({ accessToken }) {
       </Grid>
 
       <Typography variant="h5">
-        Hồ sơ cần xử lý{" "}
+        Hồ sơ thẩm định ưu tiên{" "}
         {urgentRequests.length > 0 && (
           <Chip size="small" color="warning" label={`${urgentRequests.length}`} sx={{ ml: 1 }} />
         )}
       </Typography>
       {urgentRequests.length === 0 ? (
         <Paper sx={{ p: 3 }}>
-          <Stack spacing={1} alignItems="center">
-            <ApprovedIcon sx={{ fontSize: 48, color: "success.main" }} />
-            <Typography color="text.secondary">
-              Không có hồ sơ nào cần xử lý.
-            </Typography>
-          </Stack>
-        </Paper>
+            <Stack spacing={1} alignItems="center">
+              <ApprovedIcon sx={{ fontSize: 48, color: "success.main" }} />
+              <Typography color="text.secondary">
+                Không có hồ sơ thẩm định ưu tiên.
+              </Typography>
+            </Stack>
+          </Paper>
       ) : (
         <Paper sx={{ overflowX: "auto" }}>
           <Box sx={{ minWidth: 600 }}>

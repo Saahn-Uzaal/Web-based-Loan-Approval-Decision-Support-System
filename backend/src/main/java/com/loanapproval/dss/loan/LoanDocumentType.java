@@ -5,5 +5,6 @@ public enum LoanDocumentType {
     LICENSE_PLATE_IMAGE,
     ID_CARD_FRONT,
     ID_CARD_BACK,
-    FACE_CAPTURE
+    FACE_CAPTURE,
+    SUPPLEMENTAL_DOCUMENT
 }

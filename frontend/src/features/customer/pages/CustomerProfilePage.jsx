@@ -3,6 +3,7 @@ import {
   Button,
   Chip,
   Grid,
+  MenuItem,
   Paper,
   Stack,
   Table,
@@ -21,7 +22,7 @@ import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
 import { clearFieldError, fieldErrorProps, mapFieldErrors } from "@/shared/utils/formErrors";
 import { PAYSLIP_ACCEPT, formatFileSize, isAcceptedPayslipFile } from "@/shared/utils/files";
-import { labelVerificationStatus } from "@/shared/utils/labels";
+import { labelEmploymentStatus, labelVerificationStatus } from "@/shared/utils/labels";
 import ConfirmDialog from "@/shared/components/ConfirmDialog";
 
 const emptyProfileForm = {
@@ -29,7 +30,9 @@ const emptyProfileForm = {
   phone: "",
   dateOfBirth: "",
   monthlyIncome: "",
-  verifiedMonthlyIncome: null
+  verifiedMonthlyIncome: null,
+  employmentStatus: "",
+  employmentStartDate: ""
 };
 
 const emptyDebtForm = {
@@ -53,6 +56,22 @@ const debtFieldKeywords = {
   remainingBalance: ["dư nợ", "remainingBalance"],
   lenderName: ["đơn vị cho vay", "lenderName"]
 };
+
+const employmentStatusOptions = [
+  "EMPLOYED",
+  "SELF_EMPLOYED",
+  "BUSINESS_OWNER",
+  "PART_TIME",
+  "CONTRACTOR",
+  "UNEMPLOYED",
+  "STUDENT",
+  "RETIRED",
+  "OTHER"
+];
+
+function normalizeEmploymentStatusValue(value) {
+  return employmentStatusOptions.includes(value) ? value : "";
+}
 
 function verificationSeverity(status) {
   if (status === "PASSED") {
@@ -149,7 +168,9 @@ export default function CustomerProfilePage() {
             phone: profile.phone ?? "",
             dateOfBirth: profile.dateOfBirth ?? "",
             monthlyIncome: profile.monthlyIncome != null ? formatVndInput(profile.monthlyIncome) : "",
-            verifiedMonthlyIncome: profile.verifiedMonthlyIncome ?? null
+            verifiedMonthlyIncome: profile.verifiedMonthlyIncome ?? null,
+            employmentStatus: normalizeEmploymentStatusValue(profile.employmentStatus),
+            employmentStartDate: profile.employmentStartDate ?? ""
           });
           setPaymentRating(Number(profile.paymentRating || 0));
           setCurrentPayslip(toPayslipSummary(profile));
@@ -290,7 +311,9 @@ export default function CustomerProfilePage() {
         fullName: form.fullName.trim(),
         phone: form.phone.trim() || null,
         dateOfBirth: form.dateOfBirth || null,
-        monthlyIncome
+        monthlyIncome,
+        employmentStatus: form.employmentStatus.trim() || null,
+        employmentStartDate: form.employmentStartDate || null
       };
 
       const profile = await upsertMyProfileApi(accessToken, payload, selectedPayslip);
@@ -299,7 +322,9 @@ export default function CustomerProfilePage() {
         phone: profile.phone ?? "",
         dateOfBirth: profile.dateOfBirth ?? "",
         monthlyIncome: profile.monthlyIncome != null ? formatVndInput(profile.monthlyIncome) : "",
-        verifiedMonthlyIncome: profile.verifiedMonthlyIncome ?? null
+        verifiedMonthlyIncome: profile.verifiedMonthlyIncome ?? null,
+        employmentStatus: normalizeEmploymentStatusValue(profile.employmentStatus),
+        employmentStartDate: profile.employmentStartDate ?? ""
       });
       setPaymentRating(Number(profile.paymentRating || 0));
       setCurrentPayslip(toPayslipSummary(profile));
@@ -466,6 +491,34 @@ export default function CustomerProfilePage() {
             disabled={loading || saving}
             inputProps={{ inputMode: "numeric" }}
             {...fieldErrorProps(profileFieldErrors, "monthlyIncome")}
+          />
+          <TextField
+            label="Tình trạng việc làm"
+            select
+            value={form.employmentStatus}
+            onChange={handleChange("employmentStatus")}
+            fullWidth
+            disabled={loading || saving}
+            {...fieldErrorProps(profileFieldErrors, "employmentStatus")}
+          >
+            <MenuItem value="">
+              <em>Để trống</em>
+            </MenuItem>
+            {employmentStatusOptions.map((status) => (
+              <MenuItem key={status} value={status}>
+                {labelEmploymentStatus(status)}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            label="Ngày bắt đầu công việc"
+            type="date"
+            value={form.employmentStartDate}
+            onChange={handleChange("employmentStartDate")}
+            fullWidth
+            disabled={loading || saving}
+            InputLabelProps={{ shrink: true }}
+            {...fieldErrorProps(profileFieldErrors, "employmentStartDate")}
           />
           {form.verifiedMonthlyIncome != null && (
             <Alert severity="info">

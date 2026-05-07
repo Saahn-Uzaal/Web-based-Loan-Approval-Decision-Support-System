@@ -2,5 +2,6 @@ package com.loanapproval.dss.staff;
 
 public enum StaffDecisionAction {
     APPROVE,
-    REJECT
+    REJECT,
+    REQUEST_MORE_INFO
 }

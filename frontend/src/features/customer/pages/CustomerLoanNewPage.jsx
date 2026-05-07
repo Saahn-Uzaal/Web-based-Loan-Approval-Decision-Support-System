@@ -2,7 +2,6 @@ import {
   Alert,
   Box,
   Button,
-  Chip,
   Divider,
   Grid,
   LinearProgress,
@@ -17,7 +16,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
 import { getMyInformationVerificationApi } from "@/features/customer/api/informationVerificationApi";
-import { createLoanApi } from "@/features/customer/api/loanApi";
+import { createLoanApi, getMyLoansApi } from "@/features/customer/api/loanApi";
 import { getMyProfileApi } from "@/features/customer/api/profileApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
@@ -26,6 +25,7 @@ import { LOAN_IMAGE_ACCEPT, formatFileSize, isAcceptedLoanImageFile } from "@/sh
 import {
   labelCollateralType,
   labelLoanDocumentType,
+  labelLoanStatus,
   labelLoanType,
   labelVerificationStatus
 } from "@/shared/utils/labels";
@@ -106,6 +106,7 @@ export default function CustomerLoanNewPage() {
   const [successMessage, setSuccessMessage] = useState("");
   const [informationVerification, setInformationVerification] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [existingOpenLoan, setExistingOpenLoan] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [fieldErrors, setFieldErrors] = useState({});
   const [files, setFiles] = useState(emptyFiles);
@@ -127,15 +128,21 @@ export default function CustomerLoanNewPage() {
           }
           throw err;
         });
-        const [profileResponse, verificationResponse] = await Promise.all([
+        const [profileResponse, verificationResponse, loansResponse] = await Promise.all([
           profilePromise,
-          getMyInformationVerificationApi(accessToken)
+          getMyInformationVerificationApi(accessToken),
+          getMyLoansApi(accessToken)
         ]);
         if (!active) {
           return;
         }
         setProfile(profileResponse);
         setInformationVerification(verificationResponse);
+        setExistingOpenLoan(
+          (Array.isArray(loansResponse) ? loansResponse : []).find(
+            (loan) => !["CLOSED", "REJECTED", "WITHDRAWN"].includes(loan.status)
+          ) || null
+        );
       } catch (err) {
         if (!active) {
           return;
@@ -162,16 +169,11 @@ export default function CustomerLoanNewPage() {
     }
   }, [cameraActive]);
 
-  const monthlyIncome = Number(profile?.monthlyIncome || 0);
-  const unsecuredLimit = monthlyIncome > 0 ? monthlyIncome * 10 : null;
   const collateralValue = parseVndInput(form.collateralValue);
-  const securedLimit = collateralValue != null && collateralValue > 0 ? collateralValue * 0.7 : null;
-  const activeLimit = form.loanType === "SECURED" ? securedLimit : unsecuredLimit;
-  const requestedAmount = parseVndInput(form.amount);
-  const exceedsLimit = activeLimit != null && requestedAmount != null && requestedAmount > activeLimit;
-
   const verificationStatus = informationVerification?.status || "PENDING";
-  const blockedByVerification = informationVerification != null && verificationStatus !== "PASSED";
+  const blockedByExistingLoan = Boolean(existingOpenLoan);
+  const displayedIncome = profile?.verifiedMonthlyIncome ?? profile?.monthlyIncome ?? null;
+  const usesVerifiedIncome = profile?.verifiedMonthlyIncome != null;
 
   const loanTypeHelp = useMemo(() => {
     if (form.loanType === "SECURED") {
@@ -280,8 +282,8 @@ export default function CustomerLoanNewPage() {
   };
 
   const validateSubmit = () => {
-    if (blockedByVerification) {
-      return "Thông tin của bạn chưa được nhân viên chấp thuận. Vui lòng vào Hồ sơ của tôi để xem trạng thái xác minh.";
+    if (blockedByExistingLoan) {
+      return `Bạn đang có hồ sơ vay #${existingOpenLoan.id} chưa kết thúc. Mỗi khách hàng chỉ được có 1 hồ sơ vay tại một thời điểm.`;
     }
     const amountValue = parseVndInput(form.amount);
     const termMonthsValue = Number(form.termMonths);
@@ -391,7 +393,10 @@ export default function CustomerLoanNewPage() {
                 <Typography variant="body2">Số điện thoại: {profile.phone || "-"}</Typography>
               </Grid>
               <Grid item xs={12} md={4}>
-                <Typography variant="body2">Thu nhập: {formatVnd(profile.monthlyIncome)}</Typography>
+                <Typography variant="body2">
+                  Thu nhập dùng để đối chiếu: {displayedIncome != null ? formatVnd(displayedIncome) : "-"}
+                  {usesVerifiedIncome ? " (đã xác minh)" : ""}
+                </Typography>
               </Grid>
             </Grid>
           ) : (
@@ -401,13 +406,31 @@ export default function CustomerLoanNewPage() {
           )}
           {informationVerification && (
             <Alert severity={verificationStatus === "PASSED" ? "success" : verificationStatus === "FAILED" ? "warning" : "info"}>
-              Trạng thái xác minh thông tin: {labelVerificationStatus(verificationStatus)}.
-              {informationVerification.rejectionReason ? ` Lý do: ${informationVerification.rejectionReason}` : ""}
+              Trạng thái xác minh thông tin hồ sơ cá nhân: {labelVerificationStatus(verificationStatus)}.
+              {informationVerification.rejectionReason ? ` Lý do: ${informationVerification.rejectionReason}.` : ""}
+              {verificationStatus === "PASSED"
+                ? " Hệ thống sẽ ưu tiên dữ liệu đã xác minh khi thẩm định hồ sơ vay."
+                : " Bạn vẫn có thể nộp hồ sơ vay; nhân viên sẽ tiếp tục rà soát trong từng hồ sơ cụ thể."}
             </Alert>
           )}
-          {(blockedByVerification || !profile) && (
+          {existingOpenLoan && (
+            <Alert severity="warning">
+              Bạn đang có hồ sơ vay #{existingOpenLoan.id} ở trạng thái {labelLoanStatus(existingOpenLoan.status)}. Mỗi khách hàng chỉ được phép có 1 hồ sơ vay tại một thời điểm.
+            </Alert>
+          )}
+          {(!profile || verificationStatus === "FAILED") && (
             <Button component={RouterLink} to="/customer/profile" variant="outlined" sx={{ alignSelf: "flex-start" }}>
               Đến hồ sơ của tôi
+            </Button>
+          )}
+          {existingOpenLoan && (
+            <Button
+              component={RouterLink}
+              to={`/customer/loans/${existingOpenLoan.id}`}
+              variant="outlined"
+              sx={{ alignSelf: "flex-start" }}
+            >
+              Xem hồ sơ hiện tại
             </Button>
           )}
         </Stack>
@@ -424,7 +447,7 @@ export default function CustomerLoanNewPage() {
               exclusive
               value={form.loanType}
               onChange={handleLoanTypeChange}
-              disabled={submitting || blockedByVerification || loading}
+              disabled={submitting || loading}
               sx={{ alignSelf: "flex-start" }}
             >
               <ToggleButton value="UNSECURED">{labelLoanType("UNSECURED")}</ToggleButton>
@@ -442,7 +465,7 @@ export default function CustomerLoanNewPage() {
                 onChange={handleMoneyChange("amount")}
                 required
                 fullWidth
-                disabled={submitting || blockedByVerification || loading}
+                disabled={submitting || loading}
                 inputProps={{ inputMode: "numeric" }}
                 {...fieldErrorProps(fieldErrors, "amount")}
               />
@@ -455,7 +478,7 @@ export default function CustomerLoanNewPage() {
                 onChange={handleChange("termMonths")}
                 required
                 fullWidth
-                disabled={submitting || blockedByVerification || loading}
+                disabled={submitting || loading}
                 {...fieldErrorProps(fieldErrors, "termMonths")}
               />
             </Grid>
@@ -466,7 +489,7 @@ export default function CustomerLoanNewPage() {
                 fullWidth
                 value={form.purpose}
                 onChange={handleChange("purpose")}
-                disabled={submitting || blockedByVerification || loading}
+                disabled={submitting || loading}
               >
                 <MenuItem value="PERSONAL">Tiêu dùng cá nhân</MenuItem>
                 <MenuItem value="HOME">Mua nhà</MenuItem>
@@ -476,25 +499,12 @@ export default function CustomerLoanNewPage() {
             </Grid>
           </Grid>
 
-          <Paper variant="outlined" sx={{ p: 2 }}>
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "center" }}>
-              <Chip
-                label={
-                  activeLimit != null
-                    ? `Hạn mức tạm tính: ${formatVnd(activeLimit)}`
-                    : form.loanType === "SECURED"
-                      ? "Nhập giá trị tài sản để tính hạn mức"
-                      : "Chưa có thu nhập để tính hạn mức"
-                }
-                color={activeLimit != null ? "info" : "default"}
-              />
-              {exceedsLimit && (
-                <Alert severity="warning" sx={{ py: 0 }}>
-                  Số tiền yêu cầu đang vượt hạn mức tạm tính. Nhân viên có thể yêu cầu điều chỉnh khi thẩm định.
-                </Alert>
-              )}
-            </Stack>
-          </Paper>
+          <Alert severity="info">
+            Hạn mức chính thức không được hiển thị trước trên màn này để tránh gây hiểu nhầm. Hệ thống và nhân viên sẽ xác định hồ sơ đủ điều kiện dựa trên thu nhập đã xác minh, nghĩa vụ nợ hiện tại, kỳ hạn vay, tài sản bảo đảm và kết quả kiểm tra rủi ro.
+            {form.loanType === "SECURED" && collateralValue != null && collateralValue > 0
+              ? ` Giá trị tài sản bạn đang kê khai là ${formatVnd(collateralValue)}, nhưng đây chỉ là một trong các căn cứ thẩm định.`
+              : ""}
+          </Alert>
 
           {form.loanType === "SECURED" && (
             <Stack spacing={2}>
@@ -508,7 +518,7 @@ export default function CustomerLoanNewPage() {
                     fullWidth
                     value={form.collateralType}
                     onChange={handleChange("collateralType")}
-                    disabled={submitting || blockedByVerification || loading}
+                    disabled={submitting || loading}
                   >
                     <MenuItem value="VEHICLE_REGISTRATION">{labelCollateralType("VEHICLE_REGISTRATION")}</MenuItem>
                   </TextField>
@@ -521,7 +531,7 @@ export default function CustomerLoanNewPage() {
                     onChange={handleMoneyChange("collateralValue")}
                     fullWidth
                     required
-                    disabled={submitting || blockedByVerification}
+                    disabled={submitting}
                     inputProps={{ inputMode: "numeric" }}
                     placeholder="Ví dụ: 150.000.000"
                     {...fieldErrorProps(
@@ -535,7 +545,7 @@ export default function CustomerLoanNewPage() {
                   <FilePicker
                     label={labelLoanDocumentType("VEHICLE_REGISTRATION")}
                     file={files.vehicleRegistration}
-                    disabled={submitting || blockedByVerification || loading}
+                    disabled={submitting || loading}
                     onChange={handleFileChange("vehicleRegistration")}
                     error={Boolean(fieldErrors.vehicleRegistration)}
                     helperText={fieldErrors.vehicleRegistration}
@@ -545,7 +555,7 @@ export default function CustomerLoanNewPage() {
                   <FilePicker
                     label={labelLoanDocumentType("LICENSE_PLATE_IMAGE")}
                     file={files.licensePlateImage}
-                    disabled={submitting || blockedByVerification || loading}
+                    disabled={submitting || loading}
                     onChange={handleFileChange("licensePlateImage")}
                     error={Boolean(fieldErrors.licensePlateImage)}
                     helperText={fieldErrors.licensePlateImage}
@@ -564,7 +574,7 @@ export default function CustomerLoanNewPage() {
                   <FilePicker
                     label={labelLoanDocumentType("ID_CARD_FRONT")}
                     file={files.idCardFront}
-                    disabled={submitting || blockedByVerification || loading}
+                    disabled={submitting || loading}
                     onChange={handleFileChange("idCardFront")}
                     error={Boolean(fieldErrors.idCardFront)}
                     helperText={fieldErrors.idCardFront}
@@ -574,7 +584,7 @@ export default function CustomerLoanNewPage() {
                   <FilePicker
                     label={labelLoanDocumentType("ID_CARD_BACK")}
                     file={files.idCardBack}
-                    disabled={submitting || blockedByVerification || loading}
+                    disabled={submitting || loading}
                     onChange={handleFileChange("idCardBack")}
                     error={Boolean(fieldErrors.idCardBack)}
                     helperText={fieldErrors.idCardBack}
@@ -624,7 +634,7 @@ export default function CustomerLoanNewPage() {
                           <Button
                             variant="outlined"
                             onClick={startCamera}
-                            disabled={submitting || blockedByVerification || loading}
+                            disabled={submitting || loading}
                           >
                             Mở máy ảnh
                           </Button>
@@ -650,7 +660,7 @@ export default function CustomerLoanNewPage() {
           <Button
             type="submit"
             variant="contained"
-            disabled={submitting || blockedByVerification || loading || !profile}
+            disabled={submitting || blockedByExistingLoan || loading || !profile}
             sx={{ alignSelf: "flex-start" }}
           >
             {submitting ? "Đang gửi..." : "Gửi hồ sơ vay"}

@@ -2,6 +2,8 @@ package com.loanapproval.dss.staff;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -9,16 +11,19 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.loanapproval.dss.compliance.ComplianceAuditService;
+import com.loanapproval.dss.contract.LoanContractStatus;
 import com.loanapproval.dss.contract.LoanContractScheduleTerms;
 import com.loanapproval.dss.contract.LoanContractService;
 import com.loanapproval.dss.customerinfo.CustomerInformationVerificationService;
 import com.loanapproval.dss.loan.CollateralType;
 import com.loanapproval.dss.loan.LoanApprovalReassessmentService;
+import com.loanapproval.dss.loan.LoanStatusHistoryService;
 import com.loanapproval.dss.loan.LoanPurpose;
 import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.loan.LoanType;
+import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.staff.dto.StaffRequestDetailResponse;
 import com.loanapproval.dss.staff.dto.StaffSecuredProcedureRequest;
 import com.loanapproval.dss.staff.dto.StaffSecuredProcedureResponse;
@@ -62,6 +67,12 @@ class SecuredLoanProcedureServiceTest {
     @Mock
     private LoanApprovalReassessmentService loanApprovalReassessmentService;
 
+    @Mock
+    private LoanStatusHistoryService loanStatusHistoryService;
+
+    @Mock
+    private NotificationService notificationService;
+
     @InjectMocks
     private SecuredLoanProcedureService securedLoanProcedureService;
 
@@ -76,12 +87,11 @@ class SecuredLoanProcedureServiceTest {
         LoanRecord appointmentScheduledLoan =
                 loanRecord(loanRequestId, customerId, LoanStatus.APPOINTMENT_SCHEDULED);
         LoanRecord approvedLoan = loanRecord(loanRequestId, customerId, LoanStatus.APPROVED);
-        LoanRecord contractedLoan = loanRecord(loanRequestId, customerId, LoanStatus.CONTRACTED);
         StaffSecuredProcedureRequest request = completedRequest();
         StaffSecuredProcedureResponse currentDetail =
                 detailResponse(loanRequestId, customerId, LoanStatus.APPOINTMENT_SCHEDULED, SecuredProcedureStatus.IN_PROGRESS, scheduledAt);
         StaffSecuredProcedureResponse completedDetail =
-                detailResponse(loanRequestId, customerId, LoanStatus.CONTRACTED, SecuredProcedureStatus.COMPLETED, scheduledAt);
+                detailResponse(loanRequestId, customerId, LoanStatus.APPROVED, SecuredProcedureStatus.COMPLETED, scheduledAt);
         CustomerVerification verification = fullyVerified(customerId);
         BigDecimal requestedAnnualRate = request.monthlyInterestRate()
                 .multiply(BigDecimal.valueOf(12))
@@ -99,7 +109,8 @@ class SecuredLoanProcedureServiceTest {
                         false);
 
         when(loanRepository.findById(loanRequestId))
-                .thenReturn(Optional.of(appointmentScheduledLoan), Optional.of(approvedLoan), Optional.of(contractedLoan));
+                .thenReturn(Optional.of(appointmentScheduledLoan), Optional.of(approvedLoan));
+        when(loanRepository.assignCaseIfUnassignedOrOwned(loanRequestId, staffUserId)).thenReturn(1);
         when(securedLoanProcedureRepository.findByLoanRequestId(loanRequestId))
                 .thenReturn(Optional.of(currentDetail), Optional.of(completedDetail));
         when(customerVerificationService.getOrDefault(customerId)).thenReturn(verification);
@@ -117,7 +128,7 @@ class SecuredLoanProcedureServiceTest {
                 securedLoanProcedureService.saveSecuredProcedure(staffUserId, loanRequestId, request, effectiveNow);
 
         assertThat(response.status()).isEqualTo(SecuredProcedureStatus.COMPLETED);
-        assertThat(response.loanStatus()).isEqualTo(LoanStatus.CONTRACTED);
+        assertThat(response.loanStatus()).isEqualTo(LoanStatus.APPROVED);
         verify(securedLoanProcedureRepository).upsert(loanRequestId, staffUserId, request);
         verify(loanApprovalReassessmentService)
                 .reassessAndPersist(
@@ -145,11 +156,53 @@ class SecuredLoanProcedureServiceTest {
         verify(loanContractService).createIfMissingFromApprovedLoan(
                 eq(approvedLoan),
                 eq(staffUserId),
-                scheduleTermsCaptor.capture());
+                scheduleTermsCaptor.capture(),
+                eq(LoanContractStatus.PENDING_ACCEPTANCE));
         LoanContractScheduleTerms scheduleTerms = scheduleTermsCaptor.getValue();
         assertThat(scheduleTerms.annualInterestRate()).isEqualByComparingTo(reassessment.approvedAnnualRate());
         assertThat(scheduleTerms.monthlyPayment()).isEqualByComparingTo(reassessment.approvedMonthlyPayment());
-        verify(loanRepository).updateStatus(loanRequestId, LoanStatus.CONTRACTED);
+        verify(loanRepository, never()).updateStatus(loanRequestId, LoanStatus.CONTRACTED);
+    }
+
+    @Test
+    void shouldAllowPostContractAuditSaveWhenProcedureAlreadyCompleted() {
+        Long loanRequestId = 25L;
+        Long customerId = 21L;
+        Long staffUserId = 8L;
+        Instant scheduledAt = Instant.parse("2026-04-29T02:00:00Z");
+        Instant effectiveNow = scheduledAt.plusSeconds(2 * 60 * 60);
+        LoanRecord contractedLoan = loanRecord(loanRequestId, customerId, LoanStatus.CONTRACTED);
+        StaffSecuredProcedureRequest request = completedRequest();
+        StaffSecuredProcedureResponse currentDetail =
+                detailResponse(loanRequestId, customerId, LoanStatus.CONTRACTED, SecuredProcedureStatus.COMPLETED, scheduledAt);
+        StaffSecuredProcedureResponse refreshedDetail =
+                detailResponse(loanRequestId, customerId, LoanStatus.CONTRACTED, SecuredProcedureStatus.COMPLETED, scheduledAt);
+
+        when(loanRepository.findById(loanRequestId)).thenReturn(Optional.of(contractedLoan));
+        when(loanRepository.assignCaseIfUnassignedOrOwned(loanRequestId, staffUserId)).thenReturn(1);
+        when(securedLoanProcedureRepository.findByLoanRequestId(loanRequestId))
+                .thenReturn(Optional.of(currentDetail), Optional.of(refreshedDetail));
+
+        StaffSecuredProcedureResponse response =
+                securedLoanProcedureService.saveSecuredProcedure(staffUserId, loanRequestId, request, effectiveNow);
+
+        assertThat(response.status()).isEqualTo(SecuredProcedureStatus.COMPLETED);
+        assertThat(response.loanStatus()).isEqualTo(LoanStatus.CONTRACTED);
+        verify(securedLoanProcedureRepository).upsert(loanRequestId, staffUserId, request);
+        verify(loanApprovalReassessmentService, never()).reassessAndPersist(any(), any(), any(), any(), any(), any(), eq(true));
+        verify(loanRepository, never()).updateDecision(
+                eq(loanRequestId),
+                eq(LoanStatus.APPROVED),
+                anyString(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any());
+        verify(securedLoanProcedureRepository, never()).markLatestAppointmentCompleted(loanRequestId);
+        verify(loanContractService, never()).createIfMissingFromApprovedLoan(any(), anyLong(), any());
+        verify(loanRepository, never()).updateStatus(loanRequestId, LoanStatus.CONTRACTED);
     }
 
     @Test
@@ -166,6 +219,7 @@ class SecuredLoanProcedureServiceTest {
                 detailResponse(loanRequestId, customerId, LoanStatus.APPOINTMENT_SCHEDULED, SecuredProcedureStatus.IN_PROGRESS, scheduledAt);
 
         when(loanRepository.findById(loanRequestId)).thenReturn(Optional.of(appointmentScheduledLoan));
+        when(loanRepository.assignCaseIfUnassignedOrOwned(loanRequestId, staffUserId)).thenReturn(1);
         when(securedLoanProcedureRepository.findByLoanRequestId(loanRequestId)).thenReturn(Optional.of(currentDetail));
 
         assertThatThrownBy(
@@ -249,6 +303,7 @@ class SecuredLoanProcedureServiceTest {
                 detailResponse(loanRequestId, customerId, LoanStatus.APPOINTMENT_SCHEDULED, SecuredProcedureStatus.IN_PROGRESS, scheduledAt);
 
         when(loanRepository.findById(loanRequestId)).thenReturn(Optional.of(appointmentScheduledLoan));
+        when(loanRepository.assignCaseIfUnassignedOrOwned(loanRequestId, staffUserId)).thenReturn(1);
         when(securedLoanProcedureRepository.findByLoanRequestId(loanRequestId)).thenReturn(Optional.of(currentDetail));
 
         assertThatThrownBy(
@@ -352,7 +407,13 @@ class SecuredLoanProcedureServiceTest {
                 "Nhân viên kỹ thuật",
                 BigDecimal.valueOf(300_000_000),
                 24,
+                BigDecimal.valueOf(300_000_000),
+                24,
+                new BigDecimal("0.120000"),
+                BigDecimal.valueOf(14_124_000),
+                BigDecimal.valueOf(400_000_000),
                 loanStatus,
+                null,
                 new StaffRequestDetailResponse.AppointmentSummary(
                         88L,
                         8L,

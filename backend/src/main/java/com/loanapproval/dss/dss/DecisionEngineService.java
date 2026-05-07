@@ -1,12 +1,15 @@
 package com.loanapproval.dss.dss;
 
 import com.loanapproval.dss.loan.LoanPurpose;
+import com.loanapproval.dss.policy.CreditPolicyDefinition;
+import com.loanapproval.dss.policy.CreditPolicyService;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.Period;
 import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -14,31 +17,19 @@ public class DecisionEngineService {
 
     private static final Logger log = LoggerFactory.getLogger(DecisionEngineService.class);
 
-    private static final double WEIGHT_DTI = 0.23;
-    private static final double WEIGHT_INCOME = 0.18;
-    private static final double WEIGHT_CREDIT_HISTORY = 0.15;
-    private static final double WEIGHT_BURDEN = 0.12;
-    private static final double WEIGHT_EMPLOYMENT = 0.12;
-    private static final double WEIGHT_AGE = 0.07;
-    private static final double WEIGHT_COLLATERAL = 0.07;
-    private static final double WEIGHT_PURPOSE = 0.04;
-    private static final double WEIGHT_VERIFICATION = 0.02;
+    private final CreditPolicyService creditPolicyService;
 
-    private static final int SCORE_MIN = 300;
-    private static final int SCORE_MAX = 850;
-    private static final double SCORE_MULTIPLIER = 5.5;
+    @Autowired
+    public DecisionEngineService(CreditPolicyService creditPolicyService) {
+        this.creditPolicyService = creditPolicyService;
+    }
 
-    private static final int RANK_A_THRESHOLD = 780;
-    private static final int RANK_B_THRESHOLD = 700;
-    private static final int RANK_C_THRESHOLD = 620;
-
-    private static final double DTI_LOW_THRESHOLD = 35.0;
-    private static final double DTI_HIGH_DOWNGRADE_THRESHOLD = 55.0;
-    private static final double DTI_MODERATE_DOWNGRADE_THRESHOLD = 45.0;
-    private static final double DTI_EXTREME_THRESHOLD = 75.0;
-    private static final double DTI_REJECT_THRESHOLD = 60.0;
+    DecisionEngineService() {
+        this.creditPolicyService = null;
+    }
 
     public DssResult evaluate(DecisionInput input) {
+        CreditPolicyDefinition policy = currentPolicy();
         double monthlyIncome = toPositiveDouble(input.monthlyIncome());
         double requestedAmount = toPositiveDouble(input.requestedAmount());
         int termMonths = sanitizeTermMonths(input.termMonths());
@@ -50,7 +41,7 @@ public class DecisionEngineService {
         double debtToIncomeRatio = resolveDti(input.debtToIncomeRatio(), monthlyIncome, totalMonthlyDebt);
         double loanToAnnualIncomeRatio = monthlyIncome > 0 ? requestedAmount / (monthlyIncome * 12.0) : 5.0;
 
-        double dtiScore = dtiScore(debtToIncomeRatio);
+        double dtiScore = dtiScore(debtToIncomeRatio, policy);
         double incomeScore = incomeScore(monthlyIncome);
         double burdenScore = burdenScore(loanToAnnualIncomeRatio);
         double employmentScore = employmentScore(
@@ -62,32 +53,35 @@ public class DecisionEngineService {
         double purposeScore = purposeScore(input.purpose());
         double verificationScore = verificationScore(input);
 
-        double weightedRawScore = dtiScore * WEIGHT_DTI
-                + incomeScore * WEIGHT_INCOME
-                + burdenScore * WEIGHT_BURDEN
-                + employmentScore * WEIGHT_EMPLOYMENT
-                + ageScore * WEIGHT_AGE
-                + creditHistoryScore * WEIGHT_CREDIT_HISTORY
-                + collateralScore * WEIGHT_COLLATERAL
-                + purposeScore * WEIGHT_PURPOSE
-                + verificationScore * WEIGHT_VERIFICATION;
+        double weightedRawScore = dtiScore * policy.dssWeightDti()
+                + incomeScore * policy.dssWeightIncome()
+                + burdenScore * policy.dssWeightBurden()
+                + employmentScore * policy.dssWeightEmployment()
+                + ageScore * policy.dssWeightAge()
+                + creditHistoryScore * policy.dssWeightCreditHistory()
+                + collateralScore * policy.dssWeightCollateral()
+                + purposeScore * policy.dssWeightPurpose()
+                + verificationScore * policy.dssWeightVerification();
 
         int baseScore = clamp(
-                (int) Math.round(SCORE_MIN + weightedRawScore * SCORE_MULTIPLIER),
-                SCORE_MIN,
-                SCORE_MAX);
+                (int) Math.round(policy.dssScoreMin() + weightedRawScore * policy.dssScoreMultiplier()),
+                policy.dssScoreMin(),
+                policy.dssScoreMax());
 
         int paymentBonus = paymentRatingBonus(input.paymentRating());
         int compliancePenalty = compliancePenalty(input);
-        int creditScore = clamp(baseScore + paymentBonus + compliancePenalty, SCORE_MIN, SCORE_MAX);
+        int creditScore = clamp(
+                baseScore + paymentBonus + compliancePenalty,
+                policy.dssScoreMin(),
+                policy.dssScoreMax());
 
-        RiskRank riskRank = riskRank(creditScore, debtToIncomeRatio, input);
-        boolean lowDti = debtToIncomeRatio <= DTI_LOW_THRESHOLD;
+        RiskRank riskRank = riskRank(creditScore, debtToIncomeRatio, input, policy);
+        boolean lowDti = debtToIncomeRatio <= policy.dtiLowThreshold();
         boolean borderline = isBorderline(monthlyIncome, debtToIncomeRatio, loanToAnnualIncomeRatio, riskRank);
 
-        DssRecommendation recommendation = recommendation(input, riskRank, debtToIncomeRatio);
+        DssRecommendation recommendation = recommendation(input, riskRank, debtToIncomeRatio, policy);
         CustomerSegment customerSegment = customerSegment(riskRank, monthlyIncome, requestedAmount, debtToIncomeRatio);
-        String appliedRule = appliedRule(input, recommendation, riskRank, lowDti, borderline, debtToIncomeRatio);
+        String appliedRule = appliedRule(input, recommendation, riskRank, lowDti, borderline, debtToIncomeRatio, policy);
         String explanation = String.format(
                 Locale.US,
                 "Điểm=%d (nền=%d, thưởng thanh toán=%+d, phạt tuân thủ=%+d, DTI %.1f%%, thu nhập %.0f, tỷ lệ vay/thu nhập %.2fx, việc làm %.0f, tuổi %.0f, lịch sử tín dụng %.0f, tài sản bảo đảm %.0f, xác minh %.0f). Rủi ro=%s, phân khúc=%s, quy tắc=%s.",
@@ -117,11 +111,11 @@ public class DecisionEngineService {
         return new DssResult(creditScore, riskRank, customerSegment, recommendation, explanation);
     }
 
-    private double dtiScore(double dti) {
+    private double dtiScore(double dti, CreditPolicyDefinition policy) {
         if (dti <= 20) {
             return 100;
         }
-        if (dti <= 35) {
+        if (dti <= policy.dtiLowThreshold()) {
             return 82;
         }
         if (dti <= 50) {
@@ -186,26 +180,26 @@ public class DecisionEngineService {
         return Math.max(20, Math.min(95, score));
     }
 
-    private RiskRank riskRank(int creditScore, double dti, DecisionInput input) {
-        if (hasComplianceHardReject(input) || dti >= DTI_EXTREME_THRESHOLD) {
+    private RiskRank riskRank(int creditScore, double dti, DecisionInput input, CreditPolicyDefinition policy) {
+        if (hasComplianceHardReject(input) || dti >= policy.dtiExtremeThreshold()) {
             return RiskRank.D;
         }
 
         RiskRank rank;
-        if (creditScore >= RANK_A_THRESHOLD) {
+        if (creditScore >= policy.dssRankAThreshold()) {
             rank = RiskRank.A;
-        } else if (creditScore >= RANK_B_THRESHOLD) {
+        } else if (creditScore >= policy.dssRankBThreshold()) {
             rank = RiskRank.B;
-        } else if (creditScore >= RANK_C_THRESHOLD) {
+        } else if (creditScore >= policy.dssRankCThreshold()) {
             rank = RiskRank.C;
         } else {
             rank = RiskRank.D;
         }
 
-        if (dti > DTI_HIGH_DOWNGRADE_THRESHOLD && (rank == RiskRank.A || rank == RiskRank.B)) {
+        if (dti > policy.dtiHighDowngradeThreshold() && (rank == RiskRank.A || rank == RiskRank.B)) {
             return RiskRank.C;
         }
-        if (dti > DTI_MODERATE_DOWNGRADE_THRESHOLD && rank == RiskRank.A) {
+        if (dti > policy.dtiModerateDowngradeThreshold() && rank == RiskRank.A) {
             return RiskRank.B;
         }
         return rank;
@@ -224,12 +218,19 @@ public class DecisionEngineService {
                 || income < 15_000_000;
     }
 
-    private DssRecommendation recommendation(DecisionInput input, RiskRank riskRank, double dti) {
+    private DssRecommendation recommendation(
+            DecisionInput input,
+            RiskRank riskRank,
+            double dti,
+            CreditPolicyDefinition policy) {
         if (hasComplianceHardReject(input) || riskRank == RiskRank.D) {
             return DssRecommendation.REJECT_RECOMMENDED;
         }
-        if (riskRank == RiskRank.C && dti > DTI_REJECT_THRESHOLD) {
+        if (riskRank == RiskRank.C && dti > policy.dtiRejectThreshold()) {
             return DssRecommendation.REJECT_RECOMMENDED;
+        }
+        if (isUnsecuredApplication(input)) {
+            return DssRecommendation.MANUAL_REVIEW_RECOMMENDED;
         }
         return DssRecommendation.APPROVE_RECOMMENDED;
     }
@@ -260,15 +261,21 @@ public class DecisionEngineService {
             RiskRank riskRank,
             boolean lowDti,
             boolean borderline,
-            double dti) {
+            double dti,
+            CreditPolicyDefinition policy) {
         if (hasComplianceHardReject(input)) {
             return "Từ chối cứng theo quy tắc tuân thủ";
         }
         if (recommendation == DssRecommendation.REJECT_RECOMMENDED && riskRank == RiskRank.D) {
             return "Xếp hạng rủi ro D";
         }
-        if (recommendation == DssRecommendation.REJECT_RECOMMENDED && riskRank == RiskRank.C && dti > 60) {
+        if (recommendation == DssRecommendation.REJECT_RECOMMENDED
+                && riskRank == RiskRank.C
+                && dti > policy.dtiRejectThreshold()) {
             return "Xếp hạng rủi ro C với DTI rất cao";
+        }
+        if (recommendation == DssRecommendation.MANUAL_REVIEW_RECOMMENDED) {
+            return "Hồ sơ vay tín chấp đạt ngưỡng tiếp nhận nhưng phải qua thẩm định thủ công";
         }
         if (recommendation == DssRecommendation.APPROVE_RECOMMENDED && riskRank == RiskRank.A && lowDti) {
             return "Hạng A với DTI thấp";
@@ -326,6 +333,10 @@ public class DecisionEngineService {
             return 45;
         }
         return 60;
+    }
+
+    private boolean isUnsecuredApplication(DecisionInput input) {
+        return input.collateralValue() == null || input.collateralValue().compareTo(BigDecimal.ZERO) <= 0;
     }
 
     private double ageScore(LocalDate dateOfBirth) {
@@ -465,5 +476,11 @@ public class DecisionEngineService {
     private int clamp(int value, int min, int max) {
         return Math.min(max, Math.max(min, value));
     }
-}
 
+    private CreditPolicyDefinition currentPolicy() {
+        if (creditPolicyService == null) {
+            return CreditPolicyDefinition.defaultPolicy();
+        }
+        return creditPolicyService.currentPolicy();
+    }
+}

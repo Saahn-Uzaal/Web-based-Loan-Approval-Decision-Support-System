@@ -10,6 +10,8 @@ public record CustomerProfileRequest(
     @NotBlank @Size(max = 150) String fullName,
     @Size(max = 30) String phone,
     LocalDate dateOfBirth,
-    @DecimalMin(value = "0.00", inclusive = true) BigDecimal monthlyIncome
+    @DecimalMin(value = "0.00", inclusive = true) BigDecimal monthlyIncome,
+    @Size(max = 100) String employmentStatus,
+    LocalDate employmentStartDate
 ) {
 }

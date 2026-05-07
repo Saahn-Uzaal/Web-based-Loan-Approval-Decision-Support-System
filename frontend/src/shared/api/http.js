@@ -76,7 +76,7 @@ export async function downloadFile(path, { token, fileName } = {}) {
   }
 
   const blob = await response.blob();
-  const resolvedName = fileName || parseFileName(response.headers.get("content-disposition")) || "tep-tin";
+  const resolvedName = fileName || parseFileName(response.headers.get("content-disposition")) || "tệp-tin";
   const blobUrl = window.URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = blobUrl;
@@ -109,6 +109,6 @@ export async function getFileObjectUrl(path, { token } = {}) {
   return {
     objectUrl: window.URL.createObjectURL(blob),
     contentType: blob.type || response.headers.get("content-type") || "application/octet-stream",
-    fileName: parseFileName(response.headers.get("content-disposition")) || "xem-truoc"
+    fileName: parseFileName(response.headers.get("content-disposition")) || "xem-trước"
   };
 }

@@ -64,6 +64,28 @@ public class LoanRepository {
                         CollateralType collateralType,
                         BigDecimal eligibleLimit,
                         String intakeNote) {
+                return create(
+                                customerId,
+                                loanType,
+                                amount,
+                                termMonths,
+                                purpose,
+                                collateralType,
+                                LoanStatus.PENDING,
+                                eligibleLimit,
+                                intakeNote);
+        }
+
+        public LoanRecord create(
+                        Long customerId,
+                        LoanType loanType,
+                        BigDecimal amount,
+                        Integer termMonths,
+                        LoanPurpose purpose,
+                        CollateralType collateralType,
+                        LoanStatus status,
+                        BigDecimal eligibleLimit,
+                        String intakeNote) {
                 Map<String, Object> values = new HashMap<>();
                 values.put("customer_id", customerId);
                 values.put("loan_type", loanType.name());
@@ -71,7 +93,7 @@ public class LoanRepository {
                 values.put("term_months", termMonths);
                 values.put("purpose", purpose.name());
                 values.put("collateral_type", collateralType != null ? collateralType.name() : null);
-                values.put("status", LoanStatus.PENDING.name());
+                values.put("status", status.name());
                 values.put("final_reason", null);
                 values.put("eligible_limit", eligibleLimit);
                 values.put("intake_note", intakeNote);
@@ -103,6 +125,28 @@ public class LoanRepository {
                                 Long.class,
                                 customerId);
                 return count != null ? count : 0L;
+        }
+
+        public boolean existsOpenApplicationByCustomerId(Long customerId) {
+                Integer count = jdbcTemplate.queryForObject(
+                                """
+                                                SELECT COUNT(*)
+                                                FROM loan_requests
+                                                WHERE customer_id = ?
+                                                  AND status IN (
+                                                      'DRAFT',
+                                                      'PENDING',
+                                                      'NEEDS_MORE_INFO',
+                                                      'APPOINTMENT_SCHEDULED',
+                                                      'APPROVED',
+                                                      'CONTRACTED',
+                                                      'ACTIVE',
+                                                      'OVERDUE'
+                                                  )
+                                                """,
+                                Integer.class,
+                                customerId);
+                return count != null && count > 0;
         }
 
         public List<LoanRecord> findByCustomerIdPaged(Long customerId, int offset, int limit) {
@@ -161,6 +205,40 @@ public class LoanRepository {
                                 id);
         }
 
+        public int updateOwnedStatusAndReason(Long id, Long customerId, LoanStatus status, String reason) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET status = ?,
+                                                    final_reason = ?,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                                  AND customer_id = ?
+                                                  AND status IN ('DRAFT', 'PENDING', 'NEEDS_MORE_INFO', 'APPOINTMENT_SCHEDULED', 'APPROVED')
+                                                """,
+                                status.name(),
+                                reason,
+                                id,
+                                customerId);
+        }
+
+        public int markAcceptedAndContracted(Long id, Long customerId, String acceptedTermsVersion) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET status = 'CONTRACTED',
+                                                    accepted_at = CURRENT_TIMESTAMP,
+                                                    accepted_terms_version = ?,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                                  AND customer_id = ?
+                                                  AND status = 'APPROVED'
+                                                """,
+                                acceptedTermsVersion,
+                                id,
+                                customerId);
+        }
+
         public int updateStatusAndReason(Long id, LoanStatus status, String reason) {
                 return jdbcTemplate.update(
                                 """
@@ -169,6 +247,30 @@ public class LoanRepository {
                                                 WHERE id = ?
                                                 """,
                                 status.name(),
+                                reason,
+                                id);
+        }
+
+        public int updateCollateralValue(Long id, BigDecimal collateralValue) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET collateral_value = ?,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                                """,
+                                collateralValue,
+                                id);
+        }
+
+        public int updateFinalReason(Long id, String reason) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET final_reason = ?,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                                """,
                                 reason,
                                 id);
         }
@@ -227,6 +329,38 @@ public class LoanRepository {
                                 approvedMonthlyPayment,
                                 decisionPolicyVersion,
                                 id);
+        }
+
+        public int assignCaseIfUnassignedOrOwned(Long id, Long staffUserId) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET assigned_staff_user_id = ?,
+                                                    assigned_at = CASE
+                                                        WHEN assigned_staff_user_id IS NULL THEN CURRENT_TIMESTAMP
+                                                        ELSE assigned_at
+                                                    END,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                                  AND (assigned_staff_user_id IS NULL OR assigned_staff_user_id = ?)
+                                                """,
+                                staffUserId,
+                                id,
+                                staffUserId);
+        }
+
+        public int releaseCaseAssignment(Long id, Long staffUserId) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET assigned_staff_user_id = NULL,
+                                                    assigned_at = NULL,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                                  AND assigned_staff_user_id = ?
+                                                """,
+                                id,
+                                staffUserId);
         }
 
         private static java.time.Instant toInstant(Timestamp timestamp) {

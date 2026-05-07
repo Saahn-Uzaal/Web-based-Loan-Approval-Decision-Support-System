@@ -2,6 +2,7 @@ package com.loanapproval.dss.staff;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.contains;
@@ -19,6 +20,7 @@ import com.loanapproval.dss.loan.CollateralType;
 import com.loanapproval.dss.loan.LoanApprovalReassessmentService;
 import com.loanapproval.dss.loan.LoanDocumentRepository;
 import com.loanapproval.dss.loan.LoanDocumentStorageService;
+import com.loanapproval.dss.loan.LoanStatusHistoryService;
 import com.loanapproval.dss.loan.LoanPurpose;
 import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
@@ -28,6 +30,7 @@ import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.staff.dto.StaffDecisionRequest;
 import com.loanapproval.dss.staff.dto.StaffDecisionResponse;
 import com.loanapproval.dss.staff.dto.StaffRequestDetailResponse;
+import com.loanapproval.dss.verification.dto.UpdateCustomerVerificationRequest;
 import com.loanapproval.dss.verification.CustomerVerification;
 import com.loanapproval.dss.verification.CustomerVerificationService;
 import com.loanapproval.dss.verification.VerificationStatus;
@@ -76,14 +79,19 @@ class StaffReviewServiceTest {
     @Mock
     private NotificationService notificationService;
 
+    @Mock
+    private LoanStatusHistoryService loanStatusHistoryService;
+
     @InjectMocks
     private StaffReviewService staffReviewService;
 
     @Test
-    void shouldKeepReviewQueueLimitedToPendingLoans() {
+    void shouldKeepReviewQueueVisibleForPendingAndNeedsMoreInfo() {
         when(staffReviewRepository.findReviewQueue(LoanStatus.PENDING)).thenReturn(List.of());
+        when(staffReviewRepository.findReviewQueue(LoanStatus.NEEDS_MORE_INFO)).thenReturn(List.of());
 
         assertThat(staffReviewService.listReviewQueue(LoanStatus.PENDING)).isEmpty();
+        assertThat(staffReviewService.listReviewQueue(LoanStatus.NEEDS_MORE_INFO)).isEmpty();
         assertThatThrownBy(() -> staffReviewService.listReviewQueue(LoanStatus.APPROVED))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(error -> {
@@ -92,6 +100,7 @@ class StaffReviewServiceTest {
                 });
 
         verify(staffReviewRepository).findReviewQueue(LoanStatus.PENDING);
+        verify(staffReviewRepository).findReviewQueue(LoanStatus.NEEDS_MORE_INFO);
     }
 
     @Test
@@ -99,7 +108,7 @@ class StaffReviewServiceTest {
         when(staffReviewRepository.findOperationQueue(LoanStatus.CONTRACTED)).thenReturn(List.of());
 
         assertThat(staffReviewService.listOperationQueue(LoanStatus.CONTRACTED)).isEmpty();
-        assertThatThrownBy(() -> staffReviewService.listOperationQueue(LoanStatus.PENDING))
+        assertThatThrownBy(() -> staffReviewService.listOperationQueue(LoanStatus.APPOINTMENT_SCHEDULED))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(error -> {
                     ResponseStatusException exception = (ResponseStatusException) error;
@@ -139,6 +148,7 @@ class StaffReviewServiceTest {
                         false);
 
         when(loanRepository.findById(loanRequestId)).thenReturn(Optional.of(pendingLoan), Optional.of(updatedLoan));
+        when(staffReviewRepository.findAssignedStaffUserId(loanRequestId)).thenReturn(Optional.of(staffUserId));
         when(customerVerificationService.getOrDefault(customerId)).thenReturn(verification);
         when(loanApprovalReassessmentService.reassessAndPersist(
                         pendingLoan,
@@ -180,7 +190,7 @@ class StaffReviewServiceTest {
                 .updateDecision(
                         eq(loanRequestId),
                         eq(LoanStatus.APPOINTMENT_SCHEDULED),
-                        contains("Lịch hẹn gặp mặt"),
+                        anyString(),
                         eq(reassessment.eligibleLimit()),
                         eq(reassessment.approvedAmount()),
                         eq(reassessment.approvedTermMonths()),
@@ -206,6 +216,68 @@ class StaffReviewServiceTest {
     }
 
     @Test
+    void shouldCreatePendingContractPreviewWhenApprovingUnsecuredLoan() {
+        Long loanRequestId = 100L;
+        Long customerId = 45L;
+        Long staffUserId = 8L;
+        LoanRecord pendingLoan = loanRecord(loanRequestId, customerId, LoanType.UNSECURED, LoanStatus.PENDING);
+        LoanRecord updatedLoan = loanRecord(loanRequestId, customerId, LoanType.UNSECURED, LoanStatus.APPROVED);
+        CustomerVerification verification = fullyVerified(customerId);
+        StaffDecisionRequest request = new StaffDecisionRequest(
+                StaffDecisionAction.APPROVE,
+                null,
+                null,
+                null,
+                BigDecimal.valueOf(220_000_000),
+                24,
+                BigDecimal.valueOf(0.115000).setScale(6));
+        LoanApprovalReassessmentService.ReassessmentResult reassessment =
+                new LoanApprovalReassessmentService.ReassessmentResult(
+                        BigDecimal.valueOf(240_000_000),
+                        BigDecimal.valueOf(220_000_000),
+                        24,
+                        BigDecimal.valueOf(0.115000).setScale(6),
+                        BigDecimal.valueOf(10_800_000),
+                        "policy-v2",
+                        "ok",
+                        BigDecimal.valueOf(42),
+                        false);
+
+        when(loanRepository.findById(loanRequestId)).thenReturn(Optional.of(pendingLoan), Optional.of(updatedLoan));
+        when(staffReviewRepository.findAssignedStaffUserId(loanRequestId)).thenReturn(Optional.of(staffUserId));
+        when(customerVerificationService.getOrDefault(customerId)).thenReturn(verification);
+        when(loanApprovalReassessmentService.reassessAndPersist(
+                        pendingLoan,
+                        verification,
+                        request.approvedAmount(),
+                        request.approvedTermMonths(),
+                        request.approvedAnnualRate(),
+                        null,
+                        false))
+                .thenReturn(reassessment);
+        when(loanRepository.updateDecision(
+                        eq(loanRequestId),
+                        eq(LoanStatus.APPROVED),
+                        anyString(),
+                        eq(reassessment.eligibleLimit()),
+                        eq(reassessment.approvedAmount()),
+                        eq(reassessment.approvedTermMonths()),
+                        eq(reassessment.approvedAnnualRate()),
+                        eq(reassessment.approvedMonthlyPayment()),
+                        eq(reassessment.decisionPolicyVersion())))
+                .thenReturn(1);
+        when(staffReviewRepository.findRequestDetailById(loanRequestId))
+                .thenReturn(Optional.of(detail(updatedLoan, null)));
+        when(staffReviewRepository.findDecisionAuditsByLoanRequestId(loanRequestId)).thenReturn(List.of());
+        when(loanDocumentRepository.findByLoanRequestId(loanRequestId)).thenReturn(List.of());
+
+        StaffDecisionResponse response = staffReviewService.submitDecision(staffUserId, loanRequestId, request);
+
+        assertThat(response.status()).isEqualTo(LoanStatus.APPROVED);
+        verify(loanContractService).createIfMissingFromApprovedLoan(updatedLoan, staffUserId);
+    }
+
+    @Test
     void shouldBlockDirectContractCompletionForSecuredLoan() {
         Long loanRequestId = 109L;
         LoanRecord approvedSecuredLoan = loanRecord(loanRequestId, 55L, LoanType.SECURED, LoanStatus.APPROVED);
@@ -217,7 +289,7 @@ class StaffReviewServiceTest {
                 .satisfies(error -> {
                     ResponseStatusException exception = (ResponseStatusException) error;
                     assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-                    assertThat(exception.getReason()).contains("Khoản vay thế chấp");
+                    assertThat(exception.getReason()).contains("Khoản vay thế chấp phải hoàn tất hợp đồng");
                 });
 
         verify(loanContractService, never()).createIfMissingFromApprovedLoan(eq(approvedSecuredLoan), eq(9L));
@@ -233,6 +305,7 @@ class StaffReviewServiceTest {
         LoanRecord activeLoan = loanRecord(loanRequestId, customerId, LoanType.UNSECURED, LoanStatus.ACTIVE);
 
         when(loanRepository.findById(loanRequestId)).thenReturn(Optional.of(contractedLoan), Optional.of(activeLoan));
+        when(staffReviewRepository.assignCase(loanRequestId, staffUserId)).thenReturn(1);
         when(loanContractService.findByLoanRequestId(loanRequestId)).thenReturn(activeContract());
         when(staffReviewRepository.findRequestDetailById(loanRequestId)).thenReturn(Optional.of(detail(activeLoan, null)));
         when(staffReviewRepository.findDecisionAuditsByLoanRequestId(loanRequestId)).thenReturn(List.of());
@@ -242,6 +315,36 @@ class StaffReviewServiceTest {
 
         assertThat(response.status()).isEqualTo(LoanStatus.ACTIVE);
         verify(loanRepository).updateStatus(loanRequestId, LoanStatus.ACTIVE);
+    }
+
+    @Test
+    void shouldBlockVerificationUpdateAfterLoanHasBeenApproved() {
+        Long loanRequestId = 130L;
+        Long customerId = 70L;
+        Long staffUserId = 10L;
+        LoanRecord approvedLoan = loanRecord(loanRequestId, customerId, LoanType.UNSECURED, LoanStatus.APPROVED);
+        UpdateCustomerVerificationRequest request = new UpdateCustomerVerificationRequest(
+                VerificationStatus.PASSED,
+                VerificationStatus.PASSED,
+                VerificationStatus.PASSED,
+                VerificationStatus.PASSED,
+                VerificationStatus.PASSED,
+                VerificationStatus.PASSED,
+                false,
+                "Đã đối chiếu");
+
+        when(loanRepository.findById(loanRequestId)).thenReturn(Optional.of(approvedLoan));
+        when(staffReviewRepository.assignCase(loanRequestId, staffUserId)).thenReturn(1);
+
+        assertThatThrownBy(() -> staffReviewService.updateVerification(staffUserId, loanRequestId, request))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> {
+                    ResponseStatusException exception = (ResponseStatusException) error;
+                    assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(exception.getReason()).contains("Chỉ được cập nhật xác minh");
+                });
+
+        verify(customerVerificationService, never()).upsert(anyLong(), anyLong(), any());
     }
 
     private LoanRecord loanRecord(Long id, Long customerId, LoanType loanType, LoanStatus status) {
@@ -288,6 +391,7 @@ class StaffReviewServiceTest {
                 now,
                 now,
                 new StaffRequestDetailResponse.CustomerSummary(loan.customerId(), "customer@example.com"),
+                null,
                 null,
                 null,
                 null,

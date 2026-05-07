@@ -54,6 +54,11 @@ public class CustomerDebtService {
     public void delete(Long customerId, Long debtId) {
         int deleted = customerDebtRepository.deleteOwned(debtId, customerId);
         if (deleted == 0) {
+            CustomerDebt existing = customerDebtRepository.findOwnedById(debtId, customerId).orElse(null);
+            if (existing != null && existing.status() != DebtStatus.PENDING_VERIFICATION) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Khoản nợ đã được nhân viên xác minh nên không thể xóa. Vui lòng liên hệ nhân viên nếu cần điều chỉnh.");
+            }
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy khoản nợ");
         }
         recalculateAndSyncDti(customerId);
@@ -94,6 +99,18 @@ public class CustomerDebtService {
 
     public BigDecimal sumActiveMonthlyDebt(Long customerId) {
         return customerDebtRepository.sumActiveMonthlyDebt(customerId);
+    }
+
+    public int countActiveDebts(Long customerId) {
+        return customerDebtRepository.countVerifiedDebts(customerId);
+    }
+
+    public void markPendingAsVerified(Long customerId, Long staffUserId, String note) {
+        customerDebtRepository.markPendingAsVerified(customerId, staffUserId, note);
+    }
+
+    public void markPendingAsRejected(Long customerId, Long staffUserId, String note) {
+        customerDebtRepository.markPendingAsRejected(customerId, staffUserId, note);
     }
 
     private CustomerDebtResponse toResponse(CustomerDebt debt) {

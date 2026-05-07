@@ -31,6 +31,8 @@ public class PaymentConfirmationService {
     private final UserRepository userRepository;
     private final CustomerProfileRepository customerProfileRepository;
     private final RepaymentService repaymentService;
+    private final RepaymentRepository repaymentRepository;
+    private final LoanDelinquencyRepository loanDelinquencyRepository;
 
     public PaymentConfirmationService(
             PaymentConfirmationRepository paymentConfirmationRepository,
@@ -38,13 +40,17 @@ public class PaymentConfirmationService {
             LoanRepository loanRepository,
             UserRepository userRepository,
             CustomerProfileRepository customerProfileRepository,
-            RepaymentService repaymentService) {
+            RepaymentService repaymentService,
+            RepaymentRepository repaymentRepository,
+            LoanDelinquencyRepository loanDelinquencyRepository) {
         this.paymentConfirmationRepository = paymentConfirmationRepository;
         this.paymentProofStorageService = paymentProofStorageService;
         this.loanRepository = loanRepository;
         this.userRepository = userRepository;
         this.customerProfileRepository = customerProfileRepository;
         this.repaymentService = repaymentService;
+        this.repaymentRepository = repaymentRepository;
+        this.loanDelinquencyRepository = loanDelinquencyRepository;
     }
 
     public List<PaymentConfirmationItemResponse> listMine(Long customerId) {
@@ -54,38 +60,81 @@ public class PaymentConfirmationService {
     }
 
     @Transactional
-    public PaymentConfirmationItemResponse create(Long customerId, Long loanRequestId, String note, MultipartFile proofFile) {
-        LoanRecord loan = loanRepository.findOwnedById(loanRequestId, customerId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy khoản vay cần gửi xác nhận"));
-
-        if (loan.status() != LoanStatus.DISBURSED && loan.status() != LoanStatus.ACTIVE) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Chỉ được gửi bill xác nhận cho khoản vay đã giải ngân hoặc đang hoạt động");
+    public PaymentConfirmationItemResponse create(
+            Long customerId,
+            Long loanRequestId,
+            String note,
+            MultipartFile proofFile,
+            String idempotencyKey) {
+        String normalizedIdempotencyKey = sanitizeIdempotencyKey(idempotencyKey);
+        if (normalizedIdempotencyKey != null) {
+            PaymentConfirmationRequestRecord existing = paymentConfirmationRepository
+                    .findByCustomerIdAndIdempotencyKey(customerId, normalizedIdempotencyKey)
+                    .orElse(null);
+            if (existing != null) {
+                return toCustomerItemResponse(existing);
+            }
         }
+
+        LoanRecord loan = requireLoanEligibleForPaymentConfirmation(customerId, loanRequestId);
         if (paymentConfirmationRepository.existsPendingByLoanRequestAndCustomer(loanRequestId, customerId)) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
                     "Khoản vay này đã có một yêu cầu xác nhận thanh toán đang chờ nhân viên đối chiếu");
         }
 
-        LoanRepaymentSnapshot snapshot = repaymentService.snapshotForLoan(loan, customerId);
-        if (snapshot.fullyPaid() || snapshot.outstandingAmount().compareTo(BigDecimal.ZERO) <= 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Khoản vay này đã được tất toán");
+        LoanRepaymentSnapshot snapshot = requireOpenSnapshot(loan, customerId);
+        StoredPaymentProof storedProof = paymentProofStorageService.store(customerId, proofFile);
+        return createPendingConfirmation(
+                customerId,
+                loanRequestId,
+                note,
+                snapshot,
+                storedProof,
+                normalizedIdempotencyKey);
+    }
+
+    @Transactional
+    public PaymentConfirmationItemResponse cancelByCustomer(Long customerId, Long confirmationId) {
+        PaymentConfirmationRequestRecord record = getPendingCustomerConfirmation(customerId, confirmationId);
+        int updated = paymentConfirmationRepository.markCancelledByCustomer(confirmationId, customerId);
+        if (updated == 0) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Yêu cầu xác nhận thanh toán đã thay đổi trạng thái trong lúc xử lý");
+        }
+        return paymentConfirmationRepository.findByIdAndCustomerId(record.id(), customerId)
+                .map(this::toCustomerItemResponse)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Không tìm thấy yêu cầu xác nhận thanh toán"));
+    }
+
+    @Transactional
+    public PaymentConfirmationItemResponse replaceByCustomer(
+            Long customerId,
+            Long confirmationId,
+            String note,
+            MultipartFile proofFile) {
+        PaymentConfirmationRequestRecord existing = getPendingCustomerConfirmation(customerId, confirmationId);
+        LoanRecord loan = requireLoanEligibleForPaymentConfirmation(customerId, existing.loanRequestId());
+        LoanRepaymentSnapshot snapshot = requireOpenSnapshot(loan, customerId);
+        StoredPaymentProof storedProof = paymentProofStorageService.store(customerId, proofFile);
+
+        int updated = paymentConfirmationRepository.markCancelledByCustomer(confirmationId, customerId);
+        if (updated == 0) {
+            paymentProofStorageService.delete(customerId, storedProof.storageName());
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Yêu cầu xác nhận thanh toán đã thay đổi trạng thái trong lúc xử lý");
         }
 
-        StoredPaymentProof storedProof = paymentProofStorageService.store(customerId, proofFile);
-        PaymentConfirmationRequestRecord created = paymentConfirmationRepository.create(
-                loanRequestId,
-                customerId,
-                snapshot.currentAmountDue(),
-                snapshot.outstandingAmount(),
-                snapshot.installmentNumber(),
-                snapshot.dueDate(),
-                storedProof,
-                sanitizeNote(note));
-
-        return toCustomerItemResponse(created);
+        try {
+            return createPendingConfirmation(customerId, existing.loanRequestId(), note, snapshot, storedProof, null);
+        } catch (RuntimeException ex) {
+            paymentProofStorageService.delete(customerId, storedProof.storageName());
+            throw ex;
+        }
     }
 
     public PaymentProofDownload loadProofForCustomer(Long customerId, Long confirmationId) {
@@ -150,14 +199,11 @@ public class PaymentConfirmationService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Khoản vay này đã được tất toán, không thể ghi nhận thêm");
         }
 
-        boolean matchesCurrentInstallment = confirmedAmount.compareTo(currentSnapshot.currentAmountDue()) == 0;
-        boolean matchesFullSettlement = confirmedAmount.compareTo(currentSnapshot.outstandingAmount()) == 0;
-        if (!matchesCurrentInstallment && !matchesFullSettlement) {
+        if (confirmedAmount.compareTo(currentSnapshot.outstandingAmount()) > 0) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "Số tiền xác nhận phải bằng số tiền đến hạn kỳ hiện tại hoặc bằng dư nợ còn lại để tất toán");
+                    "Confirmed amount cannot exceed the remaining outstanding balance");
         }
-
         String repaymentNote = buildRepaymentNote(record.id(), bankTransactionCode, request.staffNote());
         RepaymentCreateResponse repayment = repaymentService.createByStaff(
                 record.loanRequestId(),
@@ -182,6 +228,62 @@ public class PaymentConfirmationService {
         return getForStaff(confirmationId);
     }
 
+    private PaymentConfirmationItemResponse createPendingConfirmation(
+            Long customerId,
+            Long loanRequestId,
+            String note,
+            LoanRepaymentSnapshot snapshot,
+            StoredPaymentProof storedProof,
+            String idempotencyKey) {
+        PaymentConfirmationRequestRecord created = paymentConfirmationRepository.create(
+                loanRequestId,
+                customerId,
+                snapshot.currentAmountDue(),
+                snapshot.outstandingAmount(),
+                snapshot.installmentNumber(),
+                snapshot.dueDate(),
+                storedProof,
+                sanitizeNote(note),
+                idempotencyKey);
+        return toCustomerItemResponse(created);
+    }
+
+    private LoanRecord requireLoanEligibleForPaymentConfirmation(Long customerId, Long loanRequestId) {
+        LoanRecord loan = loanRepository.findOwnedById(loanRequestId, customerId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Không tìm thấy khoản vay cần gửi xác nhận"));
+
+        if (loan.status() != LoanStatus.ACTIVE
+                && loan.status() != LoanStatus.OVERDUE) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Chỉ các khoản vay đang hoạt động hoặc đang quá hạn mới được gửi xác nhận thanh toán");
+        }
+        return loan;
+    }
+
+    private LoanRepaymentSnapshot requireOpenSnapshot(LoanRecord loan, Long customerId) {
+        LoanRepaymentSnapshot snapshot = repaymentService.snapshotForLoan(loan, customerId);
+        if (snapshot.fullyPaid() || snapshot.outstandingAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Khoản vay này đã được tất toán");
+        }
+        return snapshot;
+    }
+
+    private PaymentConfirmationRequestRecord getPendingCustomerConfirmation(Long customerId, Long confirmationId) {
+        PaymentConfirmationRequestRecord record = paymentConfirmationRepository.findByIdAndCustomerId(confirmationId, customerId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Không tìm thấy yêu cầu xác nhận thanh toán"));
+        if (record.status() != PaymentConfirmationStatus.PENDING_REVIEW) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Chỉ có thể hủy hoặc thay biên lai khi yêu cầu vẫn đang chờ nhân viên đối chiếu");
+        }
+        return record;
+    }
+
     private StaffPaymentConfirmationDetailResponse buildStaffDetail(PaymentConfirmationRequestRecord record) {
         LoanRecord loan = loanRepository.findById(record.loanRequestId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy khoản vay"));
@@ -194,15 +296,9 @@ public class PaymentConfirmationService {
             reviewedByEmail = userRepository.findById(record.reviewedBy()).map(UserAccount::email).orElse(null);
         }
 
-        RepaymentStatus repaymentStatus = null;
-        Integer ratingDelta = null;
-        if (record.status() == PaymentConfirmationStatus.CONFIRMED && record.loanRequestId() != null) {
-            repaymentStatus = record.confirmedPaidAt() != null && record.expectedDueDate() != null
-                    && record.confirmedPaidAt().atZone(java.time.ZoneId.systemDefault()).toLocalDate().isAfter(record.expectedDueDate())
-                    ? RepaymentStatus.LATE
-                    : RepaymentStatus.ON_TIME;
-            ratingDelta = repaymentStatus == RepaymentStatus.ON_TIME ? 5 : -8;
-        }
+        RepaymentRecord repaymentRecord = findRepaymentRecord(record);
+        RepaymentStatus repaymentStatus = repaymentRecord != null ? repaymentRecord.repaymentStatus() : null;
+        Integer ratingDelta = resolveVisibleRatingDelta(record, repaymentRecord);
 
         return new StaffPaymentConfirmationDetailResponse(
                 record.id(),
@@ -237,14 +333,9 @@ public class PaymentConfirmationService {
     }
 
     private PaymentConfirmationItemResponse toCustomerItemResponse(PaymentConfirmationRequestRecord record) {
-        RepaymentStatus repaymentStatus = null;
-        Integer ratingDelta = null;
-        if (record.status() == PaymentConfirmationStatus.CONFIRMED && record.confirmedPaidAt() != null) {
-            repaymentStatus = record.confirmedPaidAt().atZone(java.time.ZoneId.systemDefault()).toLocalDate().isAfter(record.expectedDueDate())
-                    ? RepaymentStatus.LATE
-                    : RepaymentStatus.ON_TIME;
-            ratingDelta = repaymentStatus == RepaymentStatus.ON_TIME ? 5 : -8;
-        }
+        RepaymentRecord repaymentRecord = findRepaymentRecord(record);
+        RepaymentStatus repaymentStatus = repaymentRecord != null ? repaymentRecord.repaymentStatus() : null;
+        Integer ratingDelta = resolveVisibleRatingDelta(record, repaymentRecord);
 
         return new PaymentConfirmationItemResponse(
                 record.id(),
@@ -266,6 +357,43 @@ public class PaymentConfirmationService {
                 record.rejectionReason(),
                 record.reviewedAt(),
                 record.createdAt());
+    }
+
+    private RepaymentRecord findRepaymentRecord(PaymentConfirmationRequestRecord record) {
+        if (record.repaymentId() == null) {
+            return null;
+        }
+        return repaymentRepository.findByIdAndCustomerId(record.repaymentId(), record.customerId()).orElse(null);
+    }
+
+    private Integer resolveVisibleRatingDelta(
+            PaymentConfirmationRequestRecord record,
+            RepaymentRecord repaymentRecord) {
+        if (repaymentRecord == null) {
+            return null;
+        }
+        Integer repaymentDelta = repaymentRecord.ratingDelta();
+        if (repaymentRecord.repaymentStatus() != RepaymentStatus.LATE) {
+            return repaymentDelta;
+        }
+        if (repaymentDelta != null && repaymentDelta != 0) {
+            return repaymentDelta;
+        }
+        if (record.expectedInstallmentNumber() == null || record.expectedDueDate() == null) {
+            return RepaymentRatingPolicy.firstLatePenalty();
+        }
+        LoanDelinquencyRecord delinquency = loanDelinquencyRepository
+                .findByLoanAndInstallment(
+                        record.loanRequestId(),
+                        record.expectedInstallmentNumber(),
+                        record.expectedDueDate())
+                .orElse(null);
+        if (delinquency != null
+                && delinquency.totalRatingDelta() != null
+                && delinquency.totalRatingDelta() < 0) {
+            return delinquency.totalRatingDelta();
+        }
+        return RepaymentRatingPolicy.firstLatePenalty();
     }
 
     private String buildRepaymentNote(Long confirmationId, String bankTransactionCode, String staffNote) {
@@ -292,6 +420,13 @@ public class PaymentConfirmationService {
         return value.trim();
     }
 
+    private String sanitizeIdempotencyKey(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
+    }
+
     private <T> T requireValue(T value, String message) {
         if (value == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, message);
@@ -306,4 +441,3 @@ public class PaymentConfirmationService {
         return value.setScale(0, java.math.RoundingMode.HALF_UP);
     }
 }
-

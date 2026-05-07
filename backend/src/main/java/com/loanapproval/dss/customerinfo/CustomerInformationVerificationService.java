@@ -8,6 +8,7 @@ import com.loanapproval.dss.customerinfo.dto.StaffCustomerInformationDetailRespo
 import com.loanapproval.dss.customerinfo.dto.StaffCustomerInformationSummaryResponse;
 import com.loanapproval.dss.debt.CustomerDebtRepository;
 import com.loanapproval.dss.notification.NotificationService;
+import com.loanapproval.dss.profile.CustomerProfile;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
 import com.loanapproval.dss.verification.CustomerVerification;
 import com.loanapproval.dss.verification.CustomerVerificationRepository;
@@ -111,17 +112,10 @@ public class CustomerInformationVerificationService {
             case REJECT -> VerificationStatus.FAILED;
         };
 
-        if (status == VerificationStatus.PASSED && detail.profile() == null) {
+        if (!hasSubmittedProfile(detail.profile())) {
             throw new ResponseStatusException(
                 HttpStatus.BAD_REQUEST,
-                "Không thể chấp thuận thông tin khách hàng trước khi hồ sơ được hoàn thiện"
-            );
-        }
-        if (status == VerificationStatus.PASSED &&
-            (detail.profile().payslipFileName() == null || detail.profile().payslipFileName().isBlank())) {
-            throw new ResponseStatusException(
-                HttpStatus.BAD_REQUEST,
-                "Không thể chấp thuận hồ sơ nếu khách hàng chưa nộp phiếu lương"
+                "Không thể xử lý xác minh khi khách hàng chưa nộp đầy đủ hồ sơ và phiếu lương"
             );
         }
 
@@ -139,7 +133,10 @@ public class CustomerInformationVerificationService {
             }
             customerProfileRepository.updateVerifiedMonthlyIncome(
                 customerId, request.verifiedMonthlyIncome());
+            customerDebtRepository.markPendingAsVerified(customerId, staffUserId, "Đã xác minh cùng hồ sơ thông tin");
             recalculateCustomerDti(customerId);
+        } else {
+            customerDebtRepository.markPendingAsRejected(customerId, staffUserId, reason);
         }
 
         customerInformationVerificationRepository.upsertDecision(
@@ -208,6 +205,36 @@ public class CustomerInformationVerificationService {
         }
         return customerVerificationRepository.findByCustomerId(customerId)
             .orElseGet(() -> customerVerificationRepository.defaultPending(customerId));
+    }
+
+    @Transactional
+    public void syncFromLoanApprovalVerification(
+        Long customerId,
+        Long staffUserId,
+        CustomerVerification verification
+    ) {
+        CustomerProfile profile = customerProfileRepository.findByUserId(customerId).orElse(null);
+        if (!hasSubmittedProfile(profile)) {
+            customerInformationVerificationRepository.markPending(customerId);
+            return;
+        }
+
+        VerificationStatus infoStatus = resolveInformationStatusFromLoanVerification(verification);
+        if (infoStatus == VerificationStatus.PENDING) {
+            customerInformationVerificationRepository.markPending(customerId);
+            return;
+        }
+
+        String reason = infoStatus == VerificationStatus.FAILED
+            ? buildReverseSyncedReason(verification)
+            : null;
+        customerInformationVerificationRepository.upsertDecision(
+            customerId,
+            infoStatus,
+            reason,
+            staffUserId,
+            Instant.now()
+        );
     }
 
     private CustomerInformationVerificationResponse toResponse(CustomerInformationVerification verification) {
@@ -292,5 +319,53 @@ public class CustomerInformationVerificationService {
             return "Từ chối ở bước xác minh thông tin";
         }
         return "Từ chối ở bước xác minh thông tin: " + reason;
+    }
+
+    private VerificationStatus resolveInformationStatusFromLoanVerification(CustomerVerification verification) {
+        if (verification == null) {
+            return VerificationStatus.PENDING;
+        }
+        if (verification.fraudFlag()
+            || verification.kycStatus() == VerificationStatus.FAILED
+            || verification.amlStatus() == VerificationStatus.FAILED
+            || verification.incomeStatus() == VerificationStatus.FAILED) {
+            return VerificationStatus.FAILED;
+        }
+        if (verification.incomeStatus() == VerificationStatus.PASSED
+            && verification.kycStatus() == VerificationStatus.PASSED
+            && verification.amlStatus() == VerificationStatus.PASSED) {
+            return VerificationStatus.PASSED;
+        }
+        return VerificationStatus.PENDING;
+    }
+
+    private String buildReverseSyncedReason(CustomerVerification verification) {
+        if (verification == null) {
+            return "Từ chối ở bước xác minh tổng hợp";
+        }
+        if (verification.fraudFlag()) {
+            return "Từ chối do cờ gian lận trong bước xác minh tổng hợp";
+        }
+        if (verification.kycStatus() == VerificationStatus.FAILED) {
+            return "Từ chối do KYC không đạt trong bước xác minh tổng hợp";
+        }
+        if (verification.amlStatus() == VerificationStatus.FAILED) {
+            return "Từ chối do AML không đạt trong bước xác minh tổng hợp";
+        }
+        if (verification.incomeStatus() == VerificationStatus.FAILED) {
+            return "Từ chối do thu nhập không đạt trong bước xác minh tổng hợp";
+        }
+        if (verification.note() != null && !verification.note().isBlank()) {
+            return verification.note().trim();
+        }
+        return "Từ chối ở bước xác minh tổng hợp";
+    }
+
+    private boolean hasSubmittedProfile(StaffCustomerInformationDetailResponse.ProfileSummary profile) {
+        return profile != null && profile.payslipFileName() != null && !profile.payslipFileName().isBlank();
+    }
+
+    private boolean hasSubmittedProfile(CustomerProfile profile) {
+        return profile != null && profile.payslipOriginalFilename() != null && !profile.payslipOriginalFilename().isBlank();
     }
 }

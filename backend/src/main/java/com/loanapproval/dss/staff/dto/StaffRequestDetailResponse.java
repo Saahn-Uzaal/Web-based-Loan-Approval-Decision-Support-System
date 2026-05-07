@@ -32,6 +32,7 @@ public record StaffRequestDetailResponse(
         Instant createdAt,
         Instant updatedAt,
         CustomerSummary customer,
+        AssignmentSummary assignment,
         CustomerProfileSummary customerProfile,
         DssSummary dss,
         VerificationSummary verification,
@@ -45,11 +46,20 @@ public record StaffRequestDetailResponse(
             String email) {
     }
 
+    public record AssignmentSummary(
+            Long staffUserId,
+            String staffEmail,
+            Instant assignedAt) {
+    }
+
     public record CustomerProfileSummary(
             String fullName,
             String phone,
             BigDecimal monthlyIncome,
             BigDecimal debtToIncomeRatio,
+            String employmentStatus,
+            java.time.LocalDate employmentStartDate,
+            Integer creditHistoryScore,
             String payslipFileName,
             Long payslipFileSize,
             Instant payslipUploadedAt) {

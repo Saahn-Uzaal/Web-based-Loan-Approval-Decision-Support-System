@@ -9,6 +9,7 @@ import {
   Paper,
   Select,
   Stack,
+  TablePagination,
   Table,
   TableBody,
   TableCell,
@@ -17,7 +18,10 @@ import {
   Typography
 } from "@mui/material";
 import { useCallback, useEffect, useState } from "react";
-import { deleteManagedUserApi, getManagedUsersApi } from "@/features/admin/api/adminUserApi";
+import {
+  deleteManagedUserApi,
+  getManagedUsersPagedApi
+} from "@/features/admin/api/adminUserApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { labelRole } from "@/shared/utils/labels";
 import ConfirmDialog from "@/shared/components/ConfirmDialog";
@@ -41,6 +45,9 @@ export default function AdminUsersPage() {
   const [success, setSuccess] = useState("");
   const [deletingIds, setDeletingIds] = useState([]);
   const [confirmDeleteUser, setConfirmDeleteUser] = useState(null);
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [totalRows, setTotalRows] = useState(0);
 
   const loadUsers = useCallback(async () => {
     if (!accessToken) {
@@ -49,14 +56,19 @@ export default function AdminUsersPage() {
     setLoading(true);
     setError("");
     try {
-      const users = await getManagedUsersApi(accessToken, roleFilter);
-      setRows(Array.isArray(users) ? users : []);
+      const response = await getManagedUsersPagedApi(accessToken, {
+        role: roleFilter,
+        page,
+        size: rowsPerPage
+      });
+      setRows(Array.isArray(response?.content) ? response.content : []);
+      setTotalRows(Number(response?.totalElements || 0));
     } catch (err) {
       setError(err.message || "Không tải được danh sách người dùng");
     } finally {
       setLoading(false);
     }
-  }, [accessToken, roleFilter]);
+  }, [accessToken, page, roleFilter, rowsPerPage]);
 
   useEffect(() => {
     loadUsers();
@@ -78,8 +90,12 @@ export default function AdminUsersPage() {
     setDeletingIds((prev) => [...prev, user.id]);
     try {
       await deleteManagedUserApi(accessToken, user.id);
-      setRows((prev) => prev.filter((item) => item.id !== user.id));
       setSuccess(`Đã xóa tài khoản: ${user.email}`);
+      if (rows.length === 1 && page > 0) {
+        setPage((prev) => prev - 1);
+      } else {
+        await loadUsers();
+      }
     } catch (err) {
       setError(err.message || "Không xóa được người dùng");
     } finally {
@@ -101,7 +117,10 @@ export default function AdminUsersPage() {
             labelId="admin-role-filter-label"
             value={roleFilter}
             label="Lọc vai trò"
-            onChange={(event) => setRoleFilter(event.target.value)}
+            onChange={(event) => {
+              setRoleFilter(event.target.value);
+              setPage(0);
+            }}
           >
             <MenuItem value="ALL">Tất cả</MenuItem>
             <MenuItem value="CUSTOMER">Khách hàng</MenuItem>
@@ -122,7 +141,7 @@ export default function AdminUsersPage() {
         </Paper>
       )}
 
-      {!loading && rows.length === 0 && (
+      {!loading && totalRows === 0 && (
         <Paper sx={{ p: 3 }}>
           <Typography variant="body2" color="text.secondary">
             Không tìm thấy người dùng với bộ lọc này.
@@ -170,6 +189,19 @@ export default function AdminUsersPage() {
             })}
           </TableBody>
         </Table>
+        <TablePagination
+          component="div"
+          count={totalRows}
+          page={page}
+          onPageChange={(_, nextPage) => setPage(nextPage)}
+          rowsPerPage={rowsPerPage}
+          onRowsPerPageChange={(event) => {
+            setRowsPerPage(Number(event.target.value));
+            setPage(0);
+          }}
+          rowsPerPageOptions={[5, 10, 25]}
+          labelRowsPerPage="Số dòng"
+        />
       </Paper>
 
       <ConfirmDialog

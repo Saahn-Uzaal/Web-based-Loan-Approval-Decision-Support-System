@@ -39,6 +39,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -46,6 +47,8 @@ import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 @ExtendWith(MockitoExtension.class)
 class CustomerLoanServiceTest {
@@ -95,6 +98,15 @@ class CustomerLoanServiceTest {
     @Mock
     private NotificationService notificationService;
 
+    @Mock
+    private LoanApplicationSnapshotRepository loanApplicationSnapshotRepository;
+
+    @Mock
+    private LoanStatusHistoryService loanStatusHistoryService;
+
+    @Mock
+    private LoanAppointmentRepository loanAppointmentRepository;
+
     @InjectMocks
     private CustomerLoanService customerLoanService;
 
@@ -130,7 +142,7 @@ class CustomerLoanServiceTest {
 
         when(customerProfileRepository.findByUserId(customerId)).thenReturn(Optional.of(profile));
         when(customerDebtService.sumActiveMonthlyDebt(customerId)).thenReturn(BigDecimal.valueOf(5_000_000));
-        when(loanContractService.calculateProjectedMonthlyPayment(request.amount(), request.termMonths()))
+        when(loanContractService.calculateProjectedMonthlyPayment(LoanType.UNSECURED, request.amount(), request.termMonths()))
                 .thenReturn(BigDecimal.valueOf(5_000_000));
         when(customerVerificationService.getOrDefault(customerId)).thenReturn(fullyVerified(customerId));
         when(decisionEngineService.evaluate(any(DecisionInput.class))).thenReturn(dssResult);
@@ -156,8 +168,10 @@ class CustomerLoanServiceTest {
         DecisionInput capturedInput = decisionInputCaptor.getValue();
         assertThat(capturedInput.monthlyIncome()).isEqualByComparingTo("20000000");
         assertThat(capturedInput.debtToIncomeRatio()).isEqualByComparingTo("50.00");
+        assertThat(capturedInput.creditHistoryScore()).isNull();
         assertThat(response.status()).isEqualTo(LoanStatus.PENDING);
         verify(notificationService).notifyStaffLoanApplicationSubmitted(createdLoan.id(), customerId, LoanType.UNSECURED);
+        verify(loanRepository, never()).updateCollateralValue(anyLong(), any());
     }
 
     @Test
@@ -189,7 +203,7 @@ class CustomerLoanServiceTest {
 
         when(customerProfileRepository.findByUserId(customerId)).thenReturn(Optional.of(profile));
         when(customerDebtService.sumActiveMonthlyDebt(customerId)).thenReturn(BigDecimal.valueOf(3_000_000));
-        when(loanContractService.calculateProjectedMonthlyPayment(request.amount(), request.termMonths()))
+        when(loanContractService.calculateProjectedMonthlyPayment(LoanType.SECURED, request.amount(), request.termMonths()))
                 .thenReturn(BigDecimal.valueOf(9_500_000));
         when(customerVerificationService.getOrDefault(customerId)).thenReturn(fullyVerified(customerId));
         when(decisionEngineService.evaluate(any(DecisionInput.class))).thenReturn(dssResult);
@@ -212,6 +226,7 @@ class CustomerLoanServiceTest {
         LoanDetailResponse response = customerLoanService.create(customerId, request);
 
         assertThat(response.status()).isEqualTo(LoanStatus.PENDING);
+        verify(loanRepository).updateCollateralValue(createdLoan.id(), request.collateralValue());
         verify(loanRepository, never())
                 .updateDecision(
                         eq(createdLoan.id()),
@@ -254,7 +269,7 @@ class CustomerLoanServiceTest {
 
         when(customerProfileRepository.findByUserId(customerId)).thenReturn(Optional.of(profile));
         when(customerDebtService.sumActiveMonthlyDebt(customerId)).thenReturn(BigDecimal.valueOf(2_000_000));
-        when(loanContractService.calculateProjectedMonthlyPayment(request.amount(), request.termMonths()))
+        when(loanContractService.calculateProjectedMonthlyPayment(LoanType.SECURED, request.amount(), request.termMonths()))
                 .thenReturn(BigDecimal.valueOf(11_000_000));
         when(customerVerificationService.getOrDefault(customerId)).thenReturn(fullyVerified(customerId));
         when(decisionEngineService.evaluate(any(DecisionInput.class))).thenReturn(dssResult);
@@ -276,6 +291,7 @@ class CustomerLoanServiceTest {
 
         customerLoanService.create(customerId, request);
 
+        verify(loanRepository).updateCollateralValue(createdLoan.id(), request.collateralValue());
         verify(loanRepository, times(1))
                 .updateDecision(
                         eq(createdLoan.id()),
@@ -297,10 +313,44 @@ class CustomerLoanServiceTest {
                         eq(true));
     }
 
+    @Test
+    void shouldRejectCreatingNewLoanWhenCustomerAlreadyHasOpenApplication() {
+        Long customerId = 40L;
+        CreateLoanRequest request = new CreateLoanRequest(
+                LoanType.UNSECURED,
+                BigDecimal.valueOf(80_000_000),
+                18,
+                LoanPurpose.PERSONAL,
+                null,
+                null);
+        when(loanRepository.existsOpenApplicationByCustomerId(customerId)).thenReturn(true);
+
+        ResponseStatusException exception = Assertions.assertThrows(
+                ResponseStatusException.class,
+                () -> customerLoanService.create(customerId, request));
+
+        assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(exception.getReason()).contains("1 hồ sơ vay");
+    }
+
+    @Test
+    void shouldRequireSupplementalDocumentsWhenResubmittingLoan() {
+        Long customerId = 50L;
+        LoanRecord loan = loanRecord(500L, customerId, LoanType.SECURED, LoanStatus.NEEDS_MORE_INFO);
+        when(loanRepository.findOwnedById(loan.id(), customerId)).thenReturn(Optional.of(loan));
+
+        ResponseStatusException exception = Assertions.assertThrows(
+                ResponseStatusException.class,
+                () -> customerLoanService.resubmitLoan(customerId, loan.id()));
+
+        assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(exception.getReason()).contains("ít nhất một giấy tờ bổ sung");
+    }
+
     private CustomerProfile profile(BigDecimal monthlyIncome, BigDecimal verifiedMonthlyIncome) {
         return new CustomerProfile(
                 1L,
-                "Nguyen Van A",
+                "Nguyễn Văn A",
                 "0900000000",
                 LocalDate.of(1990, 1, 1),
                 monthlyIncome,

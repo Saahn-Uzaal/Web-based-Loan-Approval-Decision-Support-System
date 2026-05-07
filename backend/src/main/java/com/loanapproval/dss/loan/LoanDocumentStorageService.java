@@ -21,7 +21,9 @@ import org.springframework.web.server.ResponseStatusException;
 public class LoanDocumentStorageService {
 
     private static final long MAX_FILE_SIZE = 10L * 1024 * 1024;
-    private static final Set<String> ALLOWED_EXTENSIONS = Set.of("jpg", "jpeg", "png", "webp");
+    private static final Set<String> IMAGE_EXTENSIONS = Set.of("jpg", "jpeg", "png", "webp");
+    private static final Set<String> SUPPLEMENTAL_EXTENSIONS = Set.of(
+            "jpg", "jpeg", "png", "webp", "pdf", "doc", "docx", "xls", "xlsx");
 
     private final Path storageRoot;
 
@@ -40,10 +42,12 @@ public class LoanDocumentStorageService {
 
         String originalFileName = sanitizeFileName(file.getOriginalFilename(), documentType);
         String extension = extractExtension(originalFileName);
-        if (!ALLOWED_EXTENSIONS.contains(extension)) {
+        if (!allowedExtensionsFor(documentType).contains(extension)) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "Chỉ chấp nhận ảnh JPG, JPEG, PNG hoặc WEBP cho chứng từ hồ sơ vay");
+                    documentType == LoanDocumentType.SUPPLEMENTAL_DOCUMENT
+                            ? "Giấy tờ bổ sung chỉ chấp nhận JPG, JPEG, PNG, WEBP, PDF, DOC, DOCX, XLS, XLSX"
+                            : "Chỉ chấp nhận ảnh JPG, JPEG, PNG hoặc WEBP cho chứng từ hồ sơ vay");
         }
 
         Path loanDirectory = storageRoot.resolve(String.valueOf(loanRequestId)).normalize();
@@ -121,8 +125,17 @@ public class LoanDocumentStorageService {
             case "jpg", "jpeg" -> "image/jpeg";
             case "png" -> "image/png";
             case "webp" -> "image/webp";
+            case "pdf" -> "application/pdf";
+            case "doc" -> "application/msword";
+            case "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+            case "xls" -> "application/vnd.ms-excel";
+            case "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
             default -> "application/octet-stream";
         };
+    }
+
+    private Set<String> allowedExtensionsFor(LoanDocumentType documentType) {
+        return documentType == LoanDocumentType.SUPPLEMENTAL_DOCUMENT ? SUPPLEMENTAL_EXTENSIONS : IMAGE_EXTENSIONS;
     }
 
     public record StoredLoanDocument(

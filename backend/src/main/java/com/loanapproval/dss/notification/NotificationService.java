@@ -7,10 +7,14 @@ import com.loanapproval.dss.notification.dto.NotificationFeedResponse;
 import com.loanapproval.dss.notification.dto.NotificationResponse;
 import com.loanapproval.dss.shared.Role;
 import com.loanapproval.dss.verification.VerificationStatus;
+import java.math.BigDecimal;
+import java.text.NumberFormat;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Locale;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -20,6 +24,8 @@ public class NotificationService {
 
     private static final DateTimeFormatter DATE_TIME_FORMATTER =
         DateTimeFormatter.ofPattern("HH:mm dd/MM/yyyy").withZone(ZoneId.systemDefault());
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+    private static final Locale VIETNAM_LOCALE = Locale.forLanguageTag("vi-VN");
 
     private final NotificationRepository notificationRepository;
     private final UserRepository userRepository;
@@ -125,6 +131,12 @@ public class NotificationService {
             if (reason != null && !reason.isBlank()) {
                 message = message + " Lý do: " + reason;
             }
+        } else if (status == LoanStatus.NEEDS_MORE_INFO) {
+            title = "Hồ sơ " + loanLabel + " cần bổ sung";
+            message = "Nhân viên yêu cầu bổ sung hồ sơ vay #" + loanRequestId + ".";
+            if (reason != null && !reason.isBlank()) {
+                message = message + " Nội dung: " + reason;
+            }
         } else if (status == LoanStatus.APPOINTMENT_SCHEDULED) {
             title = "Hồ sơ vay thế chấp đã được duyệt sơ bộ";
             message = "Hồ sơ vay thế chấp #" + loanRequestId
@@ -194,6 +206,30 @@ public class NotificationService {
         );
     }
 
+    public void notifyCustomerPaymentDueSoon(
+        Long loanRequestId,
+        Long customerId,
+        Integer installmentNumber,
+        LocalDate dueDate,
+        BigDecimal currentAmountDue,
+        BigDecimal outstandingAmount
+    ) {
+        String message = "Khoản vay #" + loanRequestId
+            + " sắp đến hạn thanh toán kỳ #" + installmentNumber
+            + " vào ngày " + formatDate(dueDate)
+            + ". Số tiền cần thanh toán kỳ này: " + formatMoney(currentAmountDue)
+            + ". Dư nợ còn lại: " + formatMoney(outstandingAmount) + ".";
+
+        createForRecipients(
+            List.of(customerId),
+            null,
+            NotificationCategory.PAYMENT_DUE_SOON,
+            "Khoản vay sắp đến hạn thanh toán",
+            message,
+            "/customer/payments"
+        );
+    }
+
     private void createForStaff(
         Long actorUserId,
         NotificationCategory type,
@@ -233,5 +269,16 @@ public class NotificationService {
             return "chưa xác định";
         }
         return DATE_TIME_FORMATTER.format(value);
+    }
+
+    private String formatDate(LocalDate value) {
+        return value != null ? DATE_FORMATTER.format(value) : "chưa xác định";
+    }
+
+    private String formatMoney(BigDecimal value) {
+        if (value == null) {
+            return "0 ₫";
+        }
+        return NumberFormat.getCurrencyInstance(VIETNAM_LOCALE).format(value);
     }
 }

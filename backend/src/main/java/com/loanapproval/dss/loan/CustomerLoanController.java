@@ -57,7 +57,7 @@ public class CustomerLoanController {
             Authentication authentication,
             @Valid @RequestBody CreateLoanRequest request) {
         AuthenticatedUser user = extractUser(authentication);
-        return customerLoanService.create(user.id(), request);
+        return customerLoanService.createDraft(user.id(), request);
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -80,7 +80,8 @@ public class CustomerLoanController {
                         licensePlateImage,
                         idCardFront,
                         idCardBack,
-                        faceCapture));
+                        faceCapture,
+                        List.of()));
     }
 
     @GetMapping
@@ -106,13 +107,55 @@ public class CustomerLoanController {
         return customerLoanService.getMineById(user.id(), id);
     }
 
-    @GetMapping("/{id}/documents/{documentType}")
+    @PostMapping("/{id}/accept")
+    public LoanDetailResponse acceptApprovedLoan(
+            Authentication authentication,
+            @PathVariable("id") Long id) {
+        AuthenticatedUser user = extractUser(authentication);
+        return customerLoanService.acceptApprovedLoan(user.id(), id);
+    }
+
+    @PostMapping("/{id}/withdraw")
+    public LoanDetailResponse withdrawLoan(
+            Authentication authentication,
+            @PathVariable("id") Long id) {
+        AuthenticatedUser user = extractUser(authentication);
+        return customerLoanService.withdrawLoan(user.id(), id);
+    }
+
+    @PostMapping(value = "/{id}/resubmit", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public LoanDetailResponse resubmitLoanMultipart(
+            Authentication authentication,
+            @PathVariable("id") Long id,
+            @RequestPart(value = "supplementalDocuments", required = false) List<MultipartFile> supplementalDocuments) {
+        AuthenticatedUser user = extractUser(authentication);
+        return customerLoanService.resubmitLoan(
+                user.id(),
+                id,
+                new LoanApplicationFiles(
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        supplementalDocuments != null ? supplementalDocuments : List.of()));
+    }
+
+    @PostMapping("/{id}/resubmit")
+    public LoanDetailResponse resubmitLoan(
+            Authentication authentication,
+            @PathVariable("id") Long id) {
+        AuthenticatedUser user = extractUser(authentication);
+        return customerLoanService.resubmitLoan(user.id(), id);
+    }
+
+    @GetMapping("/{id}/documents/{documentId}")
     public ResponseEntity<Resource> downloadLoanDocument(
             Authentication authentication,
             @PathVariable("id") Long id,
-            @PathVariable("documentType") LoanDocumentType documentType) {
+            @PathVariable("documentId") Long documentId) {
         AuthenticatedUser user = extractUser(authentication);
-        return toDownloadResponse(customerLoanService.downloadDocument(user.id(), id, documentType));
+        return toDownloadResponse(customerLoanService.downloadDocument(user.id(), id, documentId));
     }
 
     private CreateLoanRequest parseAndValidateLoan(String loanJson) {

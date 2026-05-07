@@ -91,6 +91,7 @@ public class ApiExceptionHandler {
             case FORBIDDEN -> "Bị từ chối truy cập";
             case NOT_FOUND -> "Không tìm thấy";
             case CONFLICT -> "Xung đột dữ liệu";
+            case TOO_MANY_REQUESTS -> "Quá nhiều yêu cầu";
             case INTERNAL_SERVER_ERROR -> "Lỗi máy chủ nội bộ";
             default -> status.getReasonPhrase();
         };

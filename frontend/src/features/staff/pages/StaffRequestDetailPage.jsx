@@ -20,17 +20,19 @@ import { useEffect, useState } from "react";
 import { Link as RouterLink, useParams } from "react-router-dom";
 import { downloadInformationVerificationPayslipApi } from "@/features/staff/api/informationVerificationApi";
 import {
-  completeStaffContractApi,
+  assignStaffCaseApi,
   disburseStaffLoanApi,
   downloadStaffLoanDocumentApi,
   getStaffRequestDetailApi,
+  releaseStaffCaseApi,
   submitStaffDecisionApi,
-  updateStaffCustomerVerificationApi
+  updateStaffRequestVerificationApi
 } from "@/features/staff/api/staffApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
 import { clearFieldError, fieldErrorProps, mapFieldErrors } from "@/shared/utils/formErrors";
 import { formatFileSize } from "@/shared/utils/files";
+import { formatPercentInputFromFraction, normalizePercentInput, percentInputToFraction } from "@/shared/utils/percent";
 import {
   labelContractStatus,
   labelCollateralType,
@@ -85,6 +87,7 @@ function toIsoInstant(localDateTime) {
 
 const VERIFICATION_STATUSES = ["PENDING", "PASSED", "FAILED"];
 const DECISION_EDITABLE_STATUSES = ["PENDING"];
+const VERIFICATION_EDITABLE_STATUSES = ["PENDING", "NEEDS_MORE_INFO"];
 
 const decisionFieldKeywords = {
   action: ["hành động", "quyết định", "action"],
@@ -106,18 +109,56 @@ const verificationStepFieldKeywords = {
   note: ["ghi chú xác minh", "note"]
 };
 
+function resolveWorkflowStage(status) {
+  if (status === "PENDING" || status === "NEEDS_MORE_INFO") {
+    return {
+      title: "Thẩm định hồ sơ",
+      description: "Rà soát hồ sơ vay, cập nhật xác minh trước phê duyệt và đưa ra quyết định thẩm định ban đầu."
+    };
+  }
+  if (status === "APPOINTMENT_SCHEDULED") {
+    return {
+      title: "Thủ tục vay thế chấp",
+      description: "Hồ sơ đã qua quyết định ban đầu và đang chờ gặp mặt trực tiếp để đối chiếu tài sản bảo đảm."
+    };
+  }
+  if (status === "APPROVED" || status === "CONTRACTED") {
+    return {
+      title: "Tiền giải ngân",
+      description: "Hồ sơ đang ở giai đoạn hoàn tất điều khoản, hiệu lực hợp đồng và chuẩn bị giải ngân."
+    };
+  }
+  if (status === "ACTIVE") {
+    return {
+      title: "Theo dõi khoản vay",
+      description: "Khoản vay đã kích hoạt. Màn hình này dùng để tra cứu hồ sơ, hợp đồng và lịch sử quyết định."
+    };
+  }
+  if (status === "OVERDUE") {
+    return {
+      title: "Xử lý khoản vay quá hạn",
+      description: "Khoản vay đã quá hạn. Màn hình này hỗ trợ tra cứu hồ sơ gốc và dữ liệu thẩm định trước đó."
+    };
+  }
+  return {
+    title: "Chi tiết hồ sơ vay",
+    description: "Theo dõi hồ sơ vay và toàn bộ thông tin đã được lưu trong quá trình xử lý."
+  };
+}
+
 export default function StaffRequestDetailPage() {
   const { id } = useParams();
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [submitError, setSubmitError] = useState("");
   const [submitSuccess, setSubmitSuccess] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [submittingContract, setSubmittingContract] = useState(false);
   const [submittingDisbursement, setSubmittingDisbursement] = useState(false);
   const [submittingVerification, setSubmittingVerification] = useState(false);
+  const [claimingCase, setClaimingCase] = useState(false);
+  const [releasingCase, setReleasingCase] = useState(false);
   const [downloadingPayslip, setDownloadingPayslip] = useState(false);
   const [downloadingDocument, setDownloadingDocument] = useState("");
   const [decisionFieldErrors, setDecisionFieldErrors] = useState({});
@@ -183,7 +224,7 @@ export default function StaffRequestDetailPage() {
                   ? formatVndInput(response.amount)
                   : "",
             approvedTermMonths: response?.approvedTermMonths || response?.termMonths || "",
-            approvedAnnualRate: response?.approvedAnnualRate || ""
+            approvedAnnualRate: formatPercentInputFromFraction(response?.approvedAnnualRate, 3)
           };
         });
       } catch (err) {
@@ -205,10 +246,15 @@ export default function StaffRequestDetailPage() {
   }, [accessToken, id]);
 
   const finalized = detail ? !DECISION_EDITABLE_STATUSES.includes(detail.status) : false;
+  const verificationEditable = detail ? VERIFICATION_EDITABLE_STATUSES.includes(detail.status) : false;
+  const assignmentOwnedByCurrentUser = Boolean(user?.id && detail?.assignment?.staffUserId === user.id);
+  const assignmentBlockedByOtherStaff = Boolean(detail?.assignment?.staffUserId && !assignmentOwnedByCurrentUser);
+  const stage = resolveWorkflowStage(detail?.status);
   const showApprovalFields = decision.action === "APPROVE";
   const showAppointmentFields = showApprovalFields && detail?.loanType === "SECURED";
   const showRejectReasonField = decision.action === "REJECT";
-  const hasSelectedAction = decision.action === "APPROVE" || decision.action === "REJECT";
+  const showMoreInfoReasonField = decision.action === "REQUEST_MORE_INFO";
+  const hasSelectedAction = ["APPROVE", "REJECT", "REQUEST_MORE_INFO"].includes(decision.action);
 
   const handleDecisionChange = (field) => (event) => {
     setDecisionFieldErrors((prev) => clearFieldError(prev, field));
@@ -223,6 +269,14 @@ export default function StaffRequestDetailPage() {
     setDecision((prev) => ({
       ...prev,
       approvedAmount: formatVndInput(event.target.value)
+    }));
+  };
+
+  const handleApprovedAnnualRateChange = (event) => {
+    setDecisionFieldErrors((prev) => clearFieldError(prev, "approvedAnnualRate"));
+    setDecision((prev) => ({
+      ...prev,
+      approvedAnnualRate: normalizePercentInput(event.target.value)
     }));
   };
 
@@ -245,7 +299,7 @@ export default function StaffRequestDetailPage() {
     setSubmitSuccess("");
     setVerificationFieldErrors({});
     try {
-      await updateStaffCustomerVerificationApi(accessToken, detail.customer.id, verificationForm);
+      await updateStaffRequestVerificationApi(accessToken, detail.id, verificationForm);
       const refreshed = await getStaffRequestDetailApi(accessToken, detail.id);
       setDetail(refreshed);
       setSubmitSuccess("Đã cập nhật các bước xác minh hồ sơ.");
@@ -275,6 +329,12 @@ export default function StaffRequestDetailPage() {
       setDecisionFieldErrors({ rejectionReason: message });
       return;
     }
+    if (showMoreInfoReasonField && !decision.appointmentNote.trim()) {
+      const message = "Vui lòng nhập nội dung cần khách hàng bổ sung.";
+      setSubmitError(message);
+      setDecisionFieldErrors({ appointmentNote: message });
+      return;
+    }
     if (showAppointmentFields && !decision.scheduledAt) {
       const message = "Vui lòng chọn lịch hẹn gặp mặt.";
       setSubmitError(message);
@@ -291,10 +351,12 @@ export default function StaffRequestDetailPage() {
         action: decision.action,
         scheduledAt: shouldSchedule ? toIsoInstant(decision.scheduledAt) : null,
         appointmentLocation: "",
-        appointmentNote: shouldSchedule ? decision.appointmentNote.trim() : decision.rejectionReason.trim(),
+        appointmentNote: shouldSchedule || decision.action === "REQUEST_MORE_INFO"
+          ? decision.appointmentNote.trim()
+          : decision.rejectionReason.trim(),
         approvedAmount: decision.action === "APPROVE" ? parseVndInput(decision.approvedAmount) : null,
         approvedTermMonths: decision.action === "APPROVE" && decision.approvedTermMonths !== "" ? Number(decision.approvedTermMonths) : null,
-        approvedAnnualRate: decision.action === "APPROVE" && decision.approvedAnnualRate !== "" ? Number(decision.approvedAnnualRate) : null
+        approvedAnnualRate: decision.action === "APPROVE" ? percentInputToFraction(decision.approvedAnnualRate) : null
       });
       const refreshed = await getStaffRequestDetailApi(accessToken, detail.id);
       setDetail(refreshed);
@@ -333,35 +395,17 @@ export default function StaffRequestDetailPage() {
   };
 
   const handleDownloadDocument = async (document) => {
-    if (!detail?.id || !document?.documentType) {
+    if (!detail?.id || !document?.id) {
       return;
     }
-    setDownloadingDocument(document.documentType);
+    setDownloadingDocument(String(document.id));
     setError("");
     try {
-      await downloadStaffLoanDocumentApi(accessToken, detail.id, document.documentType, document.fileName);
+      await downloadStaffLoanDocumentApi(accessToken, detail.id, document.id, document.fileName);
     } catch (err) {
       setError(err.message || "Không tải được chứng từ hồ sơ vay");
     } finally {
       setDownloadingDocument("");
-    }
-  };
-
-  const handleCompleteContract = async () => {
-    if (!detail?.id) {
-      return;
-    }
-    setSubmittingContract(true);
-    setSubmitError("");
-    setSubmitSuccess("");
-    try {
-      const refreshed = await completeStaffContractApi(accessToken, detail.id);
-      setDetail(refreshed);
-      setSubmitSuccess("Đã hoàn thiện hợp đồng vay cho hồ sơ này.");
-    } catch (err) {
-      setSubmitError(err.message || "Không hoàn thiện được hợp đồng vay");
-    } finally {
-      setSubmittingContract(false);
     }
   };
 
@@ -375,7 +419,7 @@ export default function StaffRequestDetailPage() {
     try {
       const refreshed = await disburseStaffLoanApi(accessToken, detail.id);
       setDetail(refreshed);
-      setSubmitSuccess("Đã giải ngân khoản vay. Khách hàng có thể bắt đầu thanh toán.");
+      setSubmitSuccess("Đã giải ngân và kích hoạt khoản vay. Khách hàng có thể bắt đầu thanh toán.");
     } catch (err) {
       setSubmitError(err.message || "Không giải ngân được khoản vay");
     } finally {
@@ -383,12 +427,51 @@ export default function StaffRequestDetailPage() {
     }
   };
 
+  const handleAssignCase = async () => {
+    if (!detail?.id) {
+      return;
+    }
+    setClaimingCase(true);
+    setSubmitError("");
+    setSubmitSuccess("");
+    try {
+      const refreshed = await assignStaffCaseApi(accessToken, detail.id);
+      setDetail(refreshed);
+      setSubmitSuccess("Bạn đã nhận phụ trách hồ sơ này.");
+    } catch (err) {
+      setSubmitError(err.message || "Không nhận được phụ trách hồ sơ");
+    } finally {
+      setClaimingCase(false);
+    }
+  };
+
+  const handleReleaseCase = async () => {
+    if (!detail?.id) {
+      return;
+    }
+    setReleasingCase(true);
+    setSubmitError("");
+    setSubmitSuccess("");
+    try {
+      const refreshed = await releaseStaffCaseApi(accessToken, detail.id);
+      setDetail(refreshed);
+      setSubmitSuccess("Bạn đã bỏ nhận hồ sơ này.");
+    } catch (err) {
+      setSubmitError(err.message || "Không thể bỏ nhận hồ sơ");
+    } finally {
+      setReleasingCase(false);
+    }
+  };
+
   const statusColorMap = {
+    DRAFT: "default",
+    NEEDS_MORE_INFO: "warning",
+    WITHDRAWN: "default",
     APPOINTMENT_SCHEDULED: "info",
     APPROVED: "success",
     CONTRACTED: "info",
-    DISBURSED: "primary",
     ACTIVE: "primary",
+    OVERDUE: "error",
     CLOSED: "default",
     REJECTED: "error",
     PENDING: "warning"
@@ -396,9 +479,9 @@ export default function StaffRequestDetailPage() {
 
   return (
     <Stack spacing={2}>
-      <Typography variant="h4">Thẩm định hồ sơ #{id}</Typography>
+      <Typography variant="h4">{stage.title} #{id}</Typography>
       <Typography color="text.secondary">
-        Màn hình nhân viên: hồ sơ khách hàng, thông tin khoản vay, kết quả DSS và quyết định cuối cùng.
+        {stage.description}
       </Typography>
       {error && <Alert severity="error">{error}</Alert>}
       {loading && (
@@ -418,6 +501,42 @@ export default function StaffRequestDetailPage() {
       )}
       {detail && (
         <Grid container spacing={2}>
+          <Grid item xs={12}>
+            <Paper sx={{ p: 2 }}>
+              <Stack
+                direction={{ xs: "column", md: "row" }}
+                spacing={1.5}
+                justifyContent="space-between"
+                alignItems={{ xs: "flex-start", md: "center" }}
+              >
+                <Stack spacing={0.5}>
+                  <Typography variant="subtitle1">Phân công xử lý hồ sơ</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {detail.assignment?.staffEmail
+                      ? `Đang do ${detail.assignment.staffEmail} phụ trách${detail.assignment.assignedAt ? ` từ ${new Date(detail.assignment.assignedAt).toLocaleString()}` : ""}.`
+                      : "Hồ sơ này chưa có người phụ trách."}
+                  </Typography>
+                  {assignmentBlockedByOtherStaff && (
+                    <Alert severity="info">
+                      Bạn đang ở chế độ chỉ xem. Chỉ nhân viên đang phụ trách mới được cập nhật xác minh, ra quyết định hoặc giải ngân.
+                    </Alert>
+                  )}
+                </Stack>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                  {!detail.assignment && (
+                    <Button variant="outlined" onClick={handleAssignCase} disabled={claimingCase}>
+                      {claimingCase ? "Đang nhận..." : "Nhận phụ trách"}
+                    </Button>
+                  )}
+                  {assignmentOwnedByCurrentUser && (
+                    <Button variant="text" color="inherit" onClick={handleReleaseCase} disabled={releasingCase}>
+                      {releasingCase ? "Đang bỏ nhận..." : "Bỏ nhận hồ sơ"}
+                    </Button>
+                  )}
+                </Stack>
+              </Stack>
+            </Paper>
+          </Grid>
           <Grid item xs={12} md={6}>
             <InfoCard title="Tóm tắt hồ sơ khách hàng">
               <Typography variant="body2">Mã khách hàng: #{detail.customer?.id}</Typography>
@@ -464,7 +583,7 @@ export default function StaffRequestDetailPage() {
                 <Typography variant="body2">Tài sản bảo đảm: {labelCollateralType(detail.collateralType)}</Typography>
               )}
               <Typography variant="body2">
-                Hạn mức tạm tính: {detail.eligibleLimit != null ? formatVnd(detail.eligibleLimit) : "-"}
+                Hạn mức đánh giá nội bộ: {detail.eligibleLimit != null ? formatVnd(detail.eligibleLimit) : "-"}
               </Typography>
               <Typography variant="body2">
                 Số tiền phê duyệt: {detail.approvedAmount != null ? formatVnd(detail.approvedAmount) : "-"}
@@ -525,6 +644,11 @@ export default function StaffRequestDetailPage() {
                   </Alert>
                   {submitError && <Alert severity="error">{submitError}</Alert>}
                   {submitSuccess && <Alert severity="success">{submitSuccess}</Alert>}
+                  {detail.loanType !== "SECURED" && (
+                    <Alert severity="info">
+                      Cho khách hàng chấp nhận điều khoản/ký hợp đồng trên màn hình khách hàng trước khi giải ngân.
+                    </Alert>
+                  )}
                   {detail.loanType === "SECURED" ? (
                     <Button
                       component={RouterLink}
@@ -535,15 +659,18 @@ export default function StaffRequestDetailPage() {
                       Xử lý thủ tục vay thế chấp
                     </Button>
                   ) : (
-                    <Button
-                      variant="contained"
-                      onClick={handleCompleteContract}
-                      disabled={submittingContract}
-                      sx={{ alignSelf: "flex-start" }}
-                    >
-                      {submittingContract ? "Đang hoàn thiện..." : "Hoàn thiện hợp đồng vay"}
-                    </Button>
+                    <Alert severity="info">
+                      Hợp đồng tín chấp được tạo để khách hàng tự xem và chấp nhận điều khoản trên màn hình khách hàng trước khi giải ngân.
+                    </Alert>
                   )}
+                </>
+              )}
+              {detail.status === "APPROVED" && detail.contract && (
+                <>
+                  <Divider />
+                  <Alert severity="info">
+                    Hợp đồng đã được tạo và đang chờ khách hàng xem, chấp nhận điều khoản trên màn hình khách hàng trước khi chuyển sang trạng thái đã ký hợp đồng.
+                  </Alert>
                 </>
               )}
               {detail.status === "CONTRACTED" && detail.contract && (
@@ -554,14 +681,40 @@ export default function StaffRequestDetailPage() {
                   </Alert>
                   {submitError && <Alert severity="error">{submitError}</Alert>}
                   {submitSuccess && <Alert severity="success">{submitSuccess}</Alert>}
+                  {detail.loanType === "SECURED" && (
+                    <Button
+                      component={RouterLink}
+                      to={`/staff/secured-procedures/${detail.id}`}
+                      variant="outlined"
+                      sx={{ alignSelf: "flex-start" }}
+                    >
+                      Mở lại thủ tục vay thế chấp
+                    </Button>
+                  )}
                   <Button
                     variant="contained"
                     onClick={handleDisburse}
-                    disabled={submittingDisbursement}
+                    disabled={submittingDisbursement || assignmentBlockedByOtherStaff}
                     sx={{ alignSelf: "flex-start" }}
                   >
                     {submittingDisbursement ? "Đang giải ngân..." : "Giải ngân khoản vay"}
                   </Button>
+                </>
+              )}
+              {detail.status === "ACTIVE" && (
+                <>
+                  <Divider />
+                  <Alert severity="success">
+                    Khoản vay đã kích hoạt ngay sau giải ngân và đang ở giai đoạn theo dõi thanh toán định kỳ.
+                  </Alert>
+                </>
+              )}
+              {detail.status === "OVERDUE" && (
+                <>
+                  <Divider />
+                  <Alert severity="warning">
+                    Khoản vay đang quá hạn. Màn hình này chỉ dùng để tra cứu hồ sơ gốc, hợp đồng và kết quả thẩm định ban đầu.
+                  </Alert>
                 </>
               )}
             </InfoCard>
@@ -575,7 +728,7 @@ export default function StaffRequestDetailPage() {
               )}
               {detail.documents?.map((document) => (
                 <Stack
-                  key={document.documentType}
+                  key={document.id}
                   direction={{ xs: "column", sm: "row" }}
                   spacing={1}
                   alignItems={{ sm: "center" }}
@@ -588,9 +741,9 @@ export default function StaffRequestDetailPage() {
                     size="small"
                     variant="outlined"
                     onClick={() => handleDownloadDocument(document)}
-                    disabled={downloadingDocument === document.documentType}
+                    disabled={downloadingDocument === String(document.id)}
                   >
-                    {downloadingDocument === document.documentType ? "Đang tải..." : "Tải xuống"}
+                    {downloadingDocument === String(document.id) ? "Đang tải..." : "Tải xuống"}
                   </Button>
                 </Stack>
               ))}
@@ -635,6 +788,16 @@ export default function StaffRequestDetailPage() {
                     Cờ gian lận: {detail.verification.fraudFlag ? "Có" : "Không"}
                   </Typography>
                   {detail.verification.note && <Alert severity="info">{detail.verification.note}</Alert>}
+                  {!verificationEditable && (
+                    <Alert severity="info">
+                      Bằng chứng xác minh đã bị khóa vì hồ sơ đã qua bước thẩm định ban đầu. Nếu cần rà soát lại, hãy đưa hồ sơ về một luồng tái thẩm định riêng.
+                    </Alert>
+                  )}
+                  {assignmentBlockedByOtherStaff && verificationEditable && (
+                    <Alert severity="info">
+                      Hồ sơ này đang do nhân viên khác phụ trách nên bạn không thể cập nhật xác minh ở màn hình này.
+                    </Alert>
+                  )}
                   <Divider />
                   <Stack spacing={2} component="form" onSubmit={handleSaveVerification}>
                     <Typography variant="subtitle2">Cập nhật từng bước xác minh</Typography>
@@ -655,7 +818,7 @@ export default function StaffRequestDetailPage() {
                             value={verificationForm[field]}
                             onChange={handleVerificationChange(field)}
                             fullWidth
-                            disabled={submittingVerification}
+                            disabled={submittingVerification || !verificationEditable || assignmentBlockedByOtherStaff}
                             {...fieldErrorProps(verificationFieldErrors, field)}
                           >
                             {VERIFICATION_STATUSES.map((status) => (
@@ -672,7 +835,7 @@ export default function StaffRequestDetailPage() {
                           value={String(verificationForm.fraudFlag)}
                           onChange={handleVerificationChange("fraudFlag")}
                           fullWidth
-                          disabled={submittingVerification}
+                          disabled={submittingVerification || !verificationEditable || assignmentBlockedByOtherStaff}
                         >
                           <MenuItem value="false">Không</MenuItem>
                           <MenuItem value="true">Có</MenuItem>
@@ -687,12 +850,16 @@ export default function StaffRequestDetailPage() {
                           fullWidth
                           multiline
                           minRows={2}
-                          disabled={submittingVerification}
+                          disabled={submittingVerification || !verificationEditable || assignmentBlockedByOtherStaff}
                           {...fieldErrorProps(verificationFieldErrors, "note")}
                         />
                       </Grid>
                       <Grid item xs={12}>
-                        <Button type="submit" variant="outlined" disabled={submittingVerification}>
+                        <Button
+                          type="submit"
+                          variant="outlined"
+                          disabled={submittingVerification || !verificationEditable || assignmentBlockedByOtherStaff}
+                        >
                           {submittingVerification ? "Đang lưu..." : "Lưu xác minh"}
                         </Button>
                       </Grid>
@@ -720,13 +887,18 @@ export default function StaffRequestDetailPage() {
             </InfoCard>
           </Grid>
           <Grid item xs={12} md={6}>
-            <InfoCard title="Quyết định cuối cùng">
+            <InfoCard title={finalized ? "Thông tin bước thẩm định" : "Quyết định thẩm định ban đầu"}>
               <Stack spacing={2} component="form" onSubmit={handleSubmitDecision}>
                 {submitError && <Alert severity="error">{submitError}</Alert>}
                 {submitSuccess && <Alert severity="success">{submitSuccess}</Alert>}
                 {finalized && (
                   <Alert severity="info">
-                    Hồ sơ này đã chốt kết quả. Không thể gửi thêm quyết định.
+                    Hồ sơ này đã qua bước thẩm định ban đầu. Màn hình quyết định được giữ ở chế độ tra cứu.
+                  </Alert>
+                )}
+                {assignmentBlockedByOtherStaff && !finalized && (
+                  <Alert severity="info">
+                    Hồ sơ này đang do nhân viên khác phụ trách nên bạn không thể gửi quyết định ở màn hình này.
                   </Alert>
                 )}
                 <TextField
@@ -734,7 +906,7 @@ export default function StaffRequestDetailPage() {
                   label="Hành động"
                   value={decision.action}
                   onChange={handleDecisionChange("action")}
-                  disabled={submitting || finalized}
+                  disabled={submitting || finalized || assignmentBlockedByOtherStaff}
                   {...fieldErrorProps(decisionFieldErrors, "action")}
                 >
                   <MenuItem value="">
@@ -742,6 +914,7 @@ export default function StaffRequestDetailPage() {
                   </MenuItem>
                   <MenuItem value="APPROVE">Duyệt</MenuItem>
                   <MenuItem value="REJECT">Từ chối</MenuItem>
+                  <MenuItem value="REQUEST_MORE_INFO">Yêu cầu bổ sung hồ sơ</MenuItem>
                 </TextField>
                 {showApprovalFields && (
                   <>
@@ -752,7 +925,7 @@ export default function StaffRequestDetailPage() {
                           type="text"
                           value={decision.approvedAmount}
                           onChange={handleApprovedAmountChange}
-                          disabled={submitting || finalized}
+                          disabled={submitting || finalized || assignmentBlockedByOtherStaff}
                           fullWidth
                           inputProps={{ inputMode: "numeric" }}
                           {...fieldErrorProps(decisionFieldErrors, "approvedAmount")}
@@ -764,7 +937,7 @@ export default function StaffRequestDetailPage() {
                           type="number"
                           value={decision.approvedTermMonths}
                           onChange={handleDecisionChange("approvedTermMonths")}
-                          disabled={submitting || finalized}
+                          disabled={submitting || finalized || assignmentBlockedByOtherStaff}
                           fullWidth
                           inputProps={{ min: 1, step: 1 }}
                           {...fieldErrorProps(decisionFieldErrors, "approvedTermMonths")}
@@ -772,14 +945,14 @@ export default function StaffRequestDetailPage() {
                       </Grid>
                       <Grid item xs={12} sm={4}>
                         <TextField
-                          label="Lãi suất năm"
-                          type="number"
+                          label="Lãi suất năm (%/năm)"
+                          type="text"
                           value={decision.approvedAnnualRate}
-                          onChange={handleDecisionChange("approvedAnnualRate")}
-                          disabled={submitting || finalized}
+                          onChange={handleApprovedAnnualRateChange}
+                          disabled={submitting || finalized || assignmentBlockedByOtherStaff}
                           fullWidth
-                          inputProps={{ min: 0, max: 1, step: 0.001 }}
-                          {...fieldErrorProps(decisionFieldErrors, "approvedAnnualRate", "Nhập dạng thập phân, ví dụ 0.12")}
+                          inputProps={{ inputMode: "decimal" }}
+                          {...fieldErrorProps(decisionFieldErrors, "approvedAnnualRate", "Nhập theo phần trăm, ví dụ 10,5 cho 10,5%/năm.")}
                         />
                       </Grid>
                     </Grid>
@@ -793,7 +966,7 @@ export default function StaffRequestDetailPage() {
                       required
                       value={decision.scheduledAt}
                       onChange={handleDecisionChange("scheduledAt")}
-                      disabled={submitting || finalized}
+                      disabled={submitting || finalized || assignmentBlockedByOtherStaff}
                       InputLabelProps={{ shrink: true }}
                       {...fieldErrorProps(decisionFieldErrors, "scheduledAt", "Chọn thời điểm khách hàng đến gặp trực tiếp.")}
                     />
@@ -803,11 +976,24 @@ export default function StaffRequestDetailPage() {
                       rows={3}
                       value={decision.appointmentNote}
                       onChange={handleDecisionChange("appointmentNote")}
-                      disabled={submitting || finalized}
+                      disabled={submitting || finalized || assignmentBlockedByOtherStaff}
                       placeholder="Nhắc khách hàng mang bản gốc CCCD, giấy tờ xe và hồ sơ tài sản bảo đảm."
                       {...fieldErrorProps(decisionFieldErrors, "appointmentNote")}
                     />
                   </>
+                )}
+                {showMoreInfoReasonField && (
+                  <TextField
+                    label="Nội dung cần bổ sung"
+                    multiline
+                    rows={3}
+                    required
+                    value={decision.appointmentNote}
+                    onChange={handleDecisionChange("appointmentNote")}
+                    disabled={submitting || finalized || assignmentBlockedByOtherStaff}
+                    placeholder="Nhập danh sách giấy tờ/thông tin khách hàng cần bổ sung."
+                    {...fieldErrorProps(decisionFieldErrors, "appointmentNote")}
+                  />
                 )}
                 {showRejectReasonField && (
                   <TextField
@@ -817,12 +1003,16 @@ export default function StaffRequestDetailPage() {
                     required
                     value={decision.rejectionReason}
                     onChange={handleDecisionChange("rejectionReason")}
-                    disabled={submitting || finalized}
+                    disabled={submitting || finalized || assignmentBlockedByOtherStaff}
                     placeholder="Nhập lý do từ chối hồ sơ."
                     {...fieldErrorProps(decisionFieldErrors, "rejectionReason")}
                   />
                 )}
-                <Button type="submit" variant="contained" disabled={submitting || finalized || !hasSelectedAction}>
+                <Button
+                  type="submit"
+                  variant="contained"
+                  disabled={submitting || finalized || assignmentBlockedByOtherStaff || !hasSelectedAction}
+                >
                   {submitting ? "Đang gửi..." : "Gửi quyết định"}
                 </Button>
               </Stack>

@@ -2,9 +2,11 @@ package com.loanapproval.dss.contract;
 
 import com.loanapproval.dss.compliance.ComplianceAuditService;
 import com.loanapproval.dss.compliance.ComplianceOutcome;
+import com.loanapproval.dss.contract.dto.LoanContractInstallmentResponse;
 import com.loanapproval.dss.contract.dto.LoanContractResponse;
 import com.loanapproval.dss.loan.LoanEligibilityService;
 import com.loanapproval.dss.loan.LoanRecord;
+import com.loanapproval.dss.loan.LoanRepository;
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.loan.LoanType;
 import com.loanapproval.dss.notification.NotificationService;
@@ -12,7 +14,7 @@ import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
 import java.time.LocalDate;
-import org.springframework.beans.factory.annotation.Value;
+import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,27 +26,34 @@ public class LoanContractService {
     private static final MathContext MATH_CONTEXT = new MathContext(18, RoundingMode.HALF_UP);
 
     private final LoanContractRepository loanContractRepository;
+    private final LoanRepository loanRepository;
     private final ComplianceAuditService complianceAuditService;
-    private final BigDecimal defaultAnnualInterestRate;
     private final LoanEligibilityService loanEligibilityService;
     private final NotificationService notificationService;
+    private final LoanInstallmentService loanInstallmentService;
 
     public LoanContractService(
             LoanContractRepository loanContractRepository,
+            LoanRepository loanRepository,
             ComplianceAuditService complianceAuditService,
-            @Value("${app.loan.default-annual-interest-rate:0.12}") BigDecimal defaultAnnualInterestRate,
             LoanEligibilityService loanEligibilityService,
-            NotificationService notificationService) {
+            NotificationService notificationService,
+            LoanInstallmentService loanInstallmentService) {
         this.loanContractRepository = loanContractRepository;
+        this.loanRepository = loanRepository;
         this.complianceAuditService = complianceAuditService;
-        this.defaultAnnualInterestRate = defaultAnnualInterestRate;
         this.loanEligibilityService = loanEligibilityService;
         this.notificationService = notificationService;
+        this.loanInstallmentService = loanInstallmentService;
     }
 
     @Transactional
     public LoanContract createIfMissingFromApprovedLoan(LoanRecord loan, Long actorUserId) {
-        return createIfMissingFromApprovedLoan(loan, actorUserId, null);
+        return createIfMissingFromApprovedLoan(
+                loan,
+                actorUserId,
+                null,
+                LoanContractStatus.PENDING_ACCEPTANCE);
     }
 
     @Transactional
@@ -52,22 +61,59 @@ public class LoanContractService {
             LoanRecord loan,
             Long actorUserId,
             LoanContractScheduleTerms scheduleTerms) {
+        return createIfMissingFromApprovedLoan(
+                loan,
+                actorUserId,
+                scheduleTerms,
+                LoanContractStatus.ACTIVE);
+    }
+
+    @Transactional
+    public LoanContract createIfMissingFromApprovedLoan(
+            LoanRecord loan,
+            Long actorUserId,
+            LoanContractScheduleTerms scheduleTerms,
+            LoanContractStatus desiredStatus) {
         if (loan.status() != LoanStatus.APPROVED) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Hồ sơ vay chưa ở trạng thái đã duyệt");
         }
 
-        return loanContractRepository.findByLoanRequestId(loan.id())
-                .orElseGet(() -> createContract(loan, actorUserId, scheduleTerms));
+        LoanContract existing = loanContractRepository.findByLoanRequestId(loan.id()).orElse(null);
+        if (existing != null) {
+            if (desiredStatus == LoanContractStatus.ACTIVE && existing.status() != LoanContractStatus.ACTIVE) {
+                loanContractRepository.updateStatus(existing.id(), LoanContractStatus.ACTIVE);
+                LoanContract updated = loanContractRepository.findById(existing.id()).orElse(existing);
+                loanInstallmentService.ensureSchedule(updated);
+                return updated;
+            }
+            loanInstallmentService.ensureSchedule(existing);
+            return existing;
+        }
+        return createContract(loan, actorUserId, scheduleTerms, desiredStatus);
     }
 
     public LoanContractResponse getMine(Long customerId, Long loanRequestId) {
-        LoanContract contract = loanContractRepository.findByLoanRequestIdAndCustomerId(loanRequestId, customerId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hợp đồng vay"));
+        LoanContract contract = getOrCreateContractForCustomer(customerId, loanRequestId);
         return toResponse(contract);
     }
 
+    @Transactional
+    public LoanContract activateForCustomer(Long customerId, Long loanRequestId) {
+        LoanContract contract = getOrCreateContractForCustomer(customerId, loanRequestId);
+        if (contract.status() == LoanContractStatus.ACTIVE) {
+            loanInstallmentService.ensureSchedule(contract);
+            return contract;
+        }
+        loanContractRepository.updateStatus(contract.id(), LoanContractStatus.ACTIVE);
+        LoanContract updated = loanContractRepository.findById(contract.id()).orElse(contract);
+        loanInstallmentService.ensureSchedule(updated);
+        return updated;
+    }
+
     public LoanContract findByLoanRequestId(Long loanRequestId) {
-        return loanContractRepository.findByLoanRequestId(loanRequestId).orElse(null);
+        LoanContract contract = loanContractRepository.findByLoanRequestId(loanRequestId).orElse(null);
+        loanInstallmentService.ensureSchedule(contract);
+        return contract;
     }
 
     @Transactional
@@ -76,10 +122,32 @@ public class LoanContractService {
     }
 
     public BigDecimal calculateProjectedMonthlyPayment(BigDecimal principalAmount, Integer termMonths) {
-        return calculateMonthlyPayment(principalAmount, termMonths, defaultAnnualInterestRate);
+        return calculateProjectedMonthlyPayment(LoanType.UNSECURED, principalAmount, termMonths);
+    }
+
+    public BigDecimal calculateProjectedMonthlyPayment(
+            LoanType loanType,
+            BigDecimal principalAmount,
+            Integer termMonths) {
+        return calculateMonthlyPayment(principalAmount, termMonths, defaultAnnualRate(loanType));
     }
 
     public LoanContractResponse toResponse(LoanContract contract) {
+        loanInstallmentService.ensureSchedule(contract);
+        List<LoanContractInstallmentResponse> installments = loanInstallmentService.listByContractId(contract.id())
+                .stream()
+                .map(installment -> new LoanContractInstallmentResponse(
+                        installment.installmentNumber(),
+                        installment.dueDate(),
+                        installment.openingPrincipal(),
+                        installment.scheduledPrincipal(),
+                        installment.scheduledInterest(),
+                        installment.scheduledAmount(),
+                        installment.paidAmount(),
+                        installment.remainingAmount(),
+                        installment.status(),
+                        installment.lastPaidAt()))
+                .toList();
         return new LoanContractResponse(
                 contract.id(),
                 contract.loanRequestId(),
@@ -94,10 +162,30 @@ public class LoanContractService {
                 contract.monthlyPayment(),
                 contract.totalInterest(),
                 contract.status(),
-                contract.createdAt());
+                contract.createdAt(),
+                installments);
     }
 
-    private LoanContract createContract(LoanRecord loan, Long actorUserId, LoanContractScheduleTerms scheduleTerms) {
+    private LoanContract getOrCreateContractForCustomer(Long customerId, Long loanRequestId) {
+        LoanContract existing = loanContractRepository.findByLoanRequestIdAndCustomerId(loanRequestId, customerId)
+                .orElse(null);
+        if (existing != null) {
+            return existing;
+        }
+
+        LoanRecord loan = loanRepository.findOwnedById(loanRequestId, customerId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hợp đồng vay"));
+        if (loan.status() != LoanStatus.APPROVED) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hợp đồng vay");
+        }
+        return createIfMissingFromApprovedLoan(loan, customerId);
+    }
+
+    private LoanContract createContract(
+            LoanRecord loan,
+            Long actorUserId,
+            LoanContractScheduleTerms scheduleTerms,
+            LoanContractStatus contractStatus) {
         BigDecimal principalAmount = loan.approvedAmount() != null ? loan.approvedAmount() : loan.amount();
         Integer termMonths = loan.approvedTermMonths() != null ? loan.approvedTermMonths() : loan.termMonths();
         BigDecimal annualRate = sanitizeAnnualRate(resolveAnnualRate(loan, scheduleTerms));
@@ -134,7 +222,9 @@ public class LoanContractService {
                 monthlyPaymentDay,
                 finalPaymentDate,
                 monthlyPayment,
-                totalInterest);
+                totalInterest,
+                contractStatus);
+        loanInstallmentService.ensureSchedule(created);
 
         complianceAuditService.log(
                 loan.customerId(),
@@ -220,7 +310,7 @@ public class LoanContractService {
         if (loanType != null) {
             return loanEligibilityService.defaultAnnualRate(loanType);
         }
-        return defaultAnnualInterestRate;
+        return loanEligibilityService.defaultAnnualRate(LoanType.UNSECURED);
     }
 }
 

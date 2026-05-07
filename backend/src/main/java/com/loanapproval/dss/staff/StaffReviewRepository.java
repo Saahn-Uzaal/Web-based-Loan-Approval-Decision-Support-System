@@ -21,9 +21,9 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class StaffReviewRepository {
 
-    private static final String REVIEW_QUEUE_STATUSES_SQL = "'PENDING'";
+    private static final String REVIEW_QUEUE_STATUSES_SQL = "'PENDING', 'NEEDS_MORE_INFO'";
     private static final String OPERATION_QUEUE_STATUSES_SQL =
-            "'APPOINTMENT_SCHEDULED', 'APPROVED', 'CONTRACTED', 'DISBURSED', 'ACTIVE'";
+            "'APPROVED', 'CONTRACTED', 'ACTIVE', 'OVERDUE'";
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -106,6 +106,9 @@ public class StaffReviewRepository {
                     lr.loan_type,
                     u.email AS customer_email,
                     cp.full_name AS customer_name,
+                    lr.assigned_staff_user_id,
+                    assigned_staff.email AS assigned_staff_email,
+                    lr.assigned_at,
                     lr.amount,
                     lr.term_months,
                     lr.purpose,
@@ -118,6 +121,7 @@ public class StaffReviewRepository {
                 FROM loan_requests lr
                 INNER JOIN users u ON u.id = lr.customer_id
                 LEFT JOIN customer_profiles cp ON cp.user_id = lr.customer_id
+                LEFT JOIN users assigned_staff ON assigned_staff.id = lr.assigned_staff_user_id
                 LEFT JOIN dss_results dr ON dr.loan_request_id = lr.id
                 WHERE %s
                 ORDER BY lr.created_at DESC, lr.id DESC
@@ -132,6 +136,9 @@ public class StaffReviewRepository {
                 LoanType.valueOf(rs.getString("loan_type")),
                 rs.getString("customer_email"),
                 rs.getString("customer_name"),
+                (Long) rs.getObject("assigned_staff_user_id"),
+                rs.getString("assigned_staff_email"),
+                toInstant(rs.getTimestamp("assigned_at")),
                 rs.getBigDecimal("amount"),
                 rs.getInt("term_months"),
                 LoanPurpose.valueOf(rs.getString("purpose")),
@@ -177,10 +184,16 @@ public class StaffReviewRepository {
                             lr.updated_at,
                             u.id AS customer_id,
                             u.email AS customer_email,
+                            lr.assigned_staff_user_id,
+                            assigned_staff.email AS assigned_staff_email,
+                            lr.assigned_at,
                             cp.full_name,
                             cp.phone,
                             cp.monthly_income,
                             cp.debt_to_income_ratio,
+                            cp.employment_status,
+                            cp.employment_start_date,
+                            cp.credit_history_score,
                             cp.payslip_original_filename,
                             cp.payslip_file_size,
                             cp.payslip_uploaded_at,
@@ -254,6 +267,7 @@ public class StaffReviewRepository {
                             la.created_at AS appointment_created_at
                         FROM loan_requests lr
                         INNER JOIN users u ON u.id = lr.customer_id
+                        LEFT JOIN users assigned_staff ON assigned_staff.id = lr.assigned_staff_user_id
                         LEFT JOIN customer_profiles cp ON cp.user_id = lr.customer_id
                         LEFT JOIN customer_verifications cv ON cv.customer_id = lr.customer_id
                         LEFT JOIN customer_information_verifications civ ON civ.customer_id = lr.customer_id
@@ -275,11 +289,22 @@ public class StaffReviewRepository {
                             rs.getLong("customer_id"),
                             rs.getString("customer_email"));
 
+                    StaffRequestDetailResponse.AssignmentSummary assignmentSummary = null;
+                    if (rs.getObject("assigned_staff_user_id") != null) {
+                        assignmentSummary = new StaffRequestDetailResponse.AssignmentSummary(
+                                rs.getLong("assigned_staff_user_id"),
+                                rs.getString("assigned_staff_email"),
+                                toInstant(rs.getTimestamp("assigned_at")));
+                    }
+
                     StaffRequestDetailResponse.CustomerProfileSummary customerProfileSummary = new StaffRequestDetailResponse.CustomerProfileSummary(
                             rs.getString("full_name"),
                             rs.getString("phone"),
                             rs.getBigDecimal("monthly_income"),
                             rs.getBigDecimal("debt_to_income_ratio"),
+                            rs.getString("employment_status"),
+                            rs.getObject("employment_start_date", java.time.LocalDate.class),
+                            (Integer) rs.getObject("credit_history_score"),
                             rs.getString("payslip_original_filename"),
                             (Long) rs.getObject("payslip_file_size"),
                             toInstant(rs.getTimestamp("payslip_uploaded_at")));
@@ -363,6 +388,7 @@ public class StaffReviewRepository {
                             toInstant(rs.getTimestamp("created_at")),
                             toInstant(rs.getTimestamp("updated_at")),
                             customerSummary,
+                            assignmentSummary,
                             customerProfileSummary,
                             dssSummary,
                             verificationSummary,
@@ -372,6 +398,45 @@ public class StaffReviewRepository {
                             List.of(),
                             List.of());
                 },
+                loanRequestId).stream().findFirst();
+    }
+
+    public int assignCase(Long loanRequestId, Long staffUserId) {
+        return jdbcTemplate.update(
+                """
+                        UPDATE loan_requests
+                        SET assigned_staff_user_id = ?,
+                            assigned_at = CASE
+                                WHEN assigned_staff_user_id IS NULL THEN CURRENT_TIMESTAMP
+                                ELSE assigned_at
+                            END,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                          AND (assigned_staff_user_id IS NULL OR assigned_staff_user_id = ?)
+                        """,
+                staffUserId,
+                loanRequestId,
+                staffUserId);
+    }
+
+    public int releaseCase(Long loanRequestId, Long staffUserId) {
+        return jdbcTemplate.update(
+                """
+                        UPDATE loan_requests
+                        SET assigned_staff_user_id = NULL,
+                            assigned_at = NULL,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                          AND assigned_staff_user_id = ?
+                        """,
+                loanRequestId,
+                staffUserId);
+    }
+
+    public Optional<Long> findAssignedStaffUserId(Long loanRequestId) {
+        return jdbcTemplate.query(
+                "SELECT assigned_staff_user_id FROM loan_requests WHERE id = ?",
+                (rs, rowNum) -> (Long) rs.getObject("assigned_staff_user_id"),
                 loanRequestId).stream().findFirst();
     }
 

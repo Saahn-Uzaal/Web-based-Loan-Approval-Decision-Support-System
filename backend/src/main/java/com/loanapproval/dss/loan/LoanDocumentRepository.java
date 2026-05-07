@@ -60,6 +60,33 @@ public class LoanDocumentRepository {
                 .orElseThrow(() -> new IllegalStateException("Created loan document was not found"));
     }
 
+    public void upsert(
+            Long loanRequestId,
+            LoanDocumentType documentType,
+            LoanDocumentStorageService.StoredLoanDocument document) {
+        Optional<LoanDocumentRecord> existing = findByLoanRequestIdAndType(loanRequestId, documentType);
+        if (existing.isPresent()) {
+            jdbcTemplate.update(
+                    """
+                            UPDATE loan_request_documents
+                            SET original_file_name = ?,
+                                storage_name = ?,
+                                content_type = ?,
+                                file_size = ?,
+                                uploaded_at = ?
+                            WHERE id = ?
+                            """,
+                    document.originalFileName(),
+                    document.storageName(),
+                    document.contentType(),
+                    document.fileSize(),
+                    Timestamp.from(document.uploadedAt()),
+                    existing.get().id());
+            return;
+        }
+        create(loanRequestId, documentType, document);
+    }
+
     public List<LoanDocumentRecord> findByLoanRequestId(Long loanRequestId) {
         return jdbcTemplate.query(
                 """
@@ -96,10 +123,32 @@ public class LoanDocumentRepository {
                             uploaded_at
                         FROM loan_request_documents
                         WHERE loan_request_id = ? AND document_type = ?
+                        ORDER BY id ASC
+                        LIMIT 1
                         """,
                 DOCUMENT_ROW_MAPPER,
                 loanRequestId,
                 documentType.name()).stream().findFirst();
+    }
+
+    public Optional<LoanDocumentRecord> findByLoanRequestIdAndDocumentId(Long loanRequestId, Long documentId) {
+        return jdbcTemplate.query(
+                """
+                        SELECT
+                            id,
+                            loan_request_id,
+                            document_type,
+                            original_file_name,
+                            storage_name,
+                            content_type,
+                            file_size,
+                            uploaded_at
+                        FROM loan_request_documents
+                        WHERE loan_request_id = ? AND id = ?
+                        """,
+                DOCUMENT_ROW_MAPPER,
+                loanRequestId,
+                documentId).stream().findFirst();
     }
 
     private Optional<LoanDocumentRecord> findById(Long id) {

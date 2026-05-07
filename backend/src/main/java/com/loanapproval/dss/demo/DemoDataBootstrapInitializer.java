@@ -23,6 +23,7 @@ import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.loan.LoanType;
 import com.loanapproval.dss.profile.CustomerProfile;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
+import com.loanapproval.dss.profile.EmploymentStatus;
 import com.loanapproval.dss.repayment.RepaymentRepository;
 import com.loanapproval.dss.repayment.RepaymentStatus;
 import com.loanapproval.dss.risk.RiskAssessment;
@@ -202,7 +203,12 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
         deleteByIds("DELETE FROM compliance_audit_logs WHERE loan_request_id IN (%s)", loanIds);
         deleteByIds("DELETE FROM decision_audits WHERE loan_request_id IN (%s)", loanIds);
         deleteByIds("DELETE FROM payment_confirmation_requests WHERE loan_request_id IN (%s)", loanIds);
+        deleteByIds("DELETE FROM loan_payment_due_reminders WHERE loan_request_id IN (%s)", loanIds);
+        deleteByIds("DELETE FROM loan_delinquencies WHERE loan_request_id IN (%s)", loanIds);
         deleteByIds("DELETE FROM loan_repayments WHERE loan_request_id IN (%s)", loanIds);
+        deleteByIds("DELETE FROM loan_installments WHERE loan_request_id IN (%s)", loanIds);
+        deleteByIds("DELETE FROM loan_status_history WHERE loan_request_id IN (%s)", loanIds);
+        deleteByIds("DELETE FROM loan_application_snapshots WHERE loan_request_id IN (%s)", loanIds);
         deleteByIds("DELETE FROM loan_contracts WHERE loan_request_id IN (%s)", loanIds);
         deleteByIds("DELETE FROM secured_loan_procedures WHERE loan_request_id IN (%s)", loanIds);
         deleteByIds("DELETE FROM loan_appointments WHERE loan_request_id IN (%s)", loanIds);
@@ -421,7 +427,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
             approvedTerm,
             annualRate,
             monthlyPayment,
-            LoanEligibilityService.POLICY_VERSION
+            loanEligibilityService.currentPolicyVersion()
         );
         staffReviewRepository.insertDecisionAudit(loan.id(), staff.id(), StaffDecisionAction.APPROVE, reason);
     }
@@ -471,7 +477,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
             approvedTerm,
             annualRate,
             monthlyPayment,
-            LoanEligibilityService.POLICY_VERSION
+            loanEligibilityService.currentPolicyVersion()
         );
         staffReviewRepository.insertAppointment(
             loan.id(),
@@ -528,7 +534,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
             approvedTerm,
             annualRate,
             monthlyPayment,
-            LoanEligibilityService.POLICY_VERSION
+            loanEligibilityService.currentPolicyVersion()
         );
         staffReviewRepository.insertDecisionAudit(loan.id(), staff.id(), StaffDecisionAction.APPROVE, reason);
 
@@ -671,7 +677,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
             approvedTerm,
             annualRate,
             monthlyPayment,
-            LoanEligibilityService.POLICY_VERSION
+            loanEligibilityService.currentPolicyVersion()
         );
         staffReviewRepository.insertAppointment(
             loan.id(),
@@ -760,7 +766,31 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
         BigDecimal eligibleLimit,
         String intakeNote
     ) {
-        return loanRepository.create(
+        return createLoan(
+            customerId,
+            loanType,
+            amount,
+            termMonths,
+            purpose,
+            collateralType,
+            eligibleLimit,
+            intakeNote,
+            loanType == LoanType.SECURED
+        );
+    }
+
+    private LoanRecord createLoan(
+        Long customerId,
+        LoanType loanType,
+        BigDecimal amount,
+        int termMonths,
+        LoanPurpose purpose,
+        CollateralType collateralType,
+        BigDecimal eligibleLimit,
+        String intakeNote,
+        boolean persistCollateralValue
+    ) {
+        LoanRecord loan = loanRepository.create(
             customerId,
             loanType,
             amount,
@@ -770,6 +800,11 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
             eligibleLimit,
             intakeNote
         );
+        if (persistCollateralValue && collateralType != null && eligibleLimit != null) {
+            loanRepository.updateCollateralValue(loan.id(), eligibleLimit);
+            return loanRepository.findById(loan.id()).orElse(loan);
+        }
+        return loan;
     }
 
     private void createUnsecuredDocuments(Long loanRequestId) {
@@ -820,7 +855,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
             monthlyIncome,
             verifiedMonthlyIncome,
             debtToIncomeRatio,
-            employmentStatus,
+            normalizeEmploymentStatus(employmentStatus),
             employmentStartDate,
             creditHistoryScore,
             paymentRating,
@@ -852,6 +887,11 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
             payslip != null ? java.sql.Timestamp.from(payslip.uploadedAt()) : null,
             userId
         );
+    }
+
+    private String normalizeEmploymentStatus(String value) {
+        EmploymentStatus status = EmploymentStatus.fromInput(value);
+        return status != null ? status.name() : null;
     }
 
     private UserAccount createUser(String email, Role role) {

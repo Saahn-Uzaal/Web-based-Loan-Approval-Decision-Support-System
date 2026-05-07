@@ -69,7 +69,7 @@ class DecisionEngineServiceTest {
     }
 
     @Test
-    void shouldKeepBorderlineCasesInApproveLaneForStaffReview() {
+    void shouldKeepBorderlineUnsecuredCasesInManualReviewLane() {
         DecisionInput input = new DecisionInput(
                 3L,
                 BigDecimal.valueOf(18_000_000),
@@ -93,7 +93,35 @@ class DecisionEngineServiceTest {
         DssResult result = decisionEngineService.evaluate(input);
 
         Assertions.assertTrue(result.riskRank() == RiskRank.B || result.riskRank() == RiskRank.C);
-        Assertions.assertEquals(DssRecommendation.APPROVE_RECOMMENDED, result.recommendation());
+        Assertions.assertEquals(DssRecommendation.MANUAL_REVIEW_RECOMMENDED, result.recommendation());
+    }
+
+    @Test
+    void shouldKeepStrongUnsecuredCasesInManualReviewLane() {
+        DecisionInput input = new DecisionInput(
+                6L,
+                BigDecimal.valueOf(90_000_000),
+                BigDecimal.valueOf(15),
+                "Permanent",
+                LocalDate.of(1991, 4, 18),
+                LocalDate.of(2014, 2, 1),
+                90,
+                null,
+                BigDecimal.valueOf(3_000_000),
+                BigDecimal.valueOf(120_000_000),
+                18,
+                LoanPurpose.HOME,
+                100,
+                false,
+                false,
+                false,
+                true,
+                BigDecimal.valueOf(7_000_000));
+
+        DssResult result = decisionEngineService.evaluate(input);
+
+        Assertions.assertEquals(RiskRank.A, result.riskRank());
+        Assertions.assertEquals(DssRecommendation.MANUAL_REVIEW_RECOMMENDED, result.recommendation());
     }
 
     @Test

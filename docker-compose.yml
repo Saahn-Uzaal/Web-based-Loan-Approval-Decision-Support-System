@@ -31,9 +31,14 @@ services:
       SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-loan_user}
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-loan_password}
       APP_JWT_SECRET: ${APP_JWT_SECRET:-bG9hbi1kc3MtZGV2LXNlY3JldC1rZXktdGhpcnR5LXR3by1ieXRlcw==}
+      # Bootstrap: enabled for dev, override to false in production
       APP_BOOTSTRAP_ADMIN_ENABLED: ${APP_BOOTSTRAP_ADMIN_ENABLED:-true}
       APP_BOOTSTRAP_ADMIN_EMAIL: ${APP_BOOTSTRAP_ADMIN_EMAIL:-admin@gmail.com}
       APP_BOOTSTRAP_ADMIN_PASSWORD: ${APP_BOOTSTRAP_ADMIN_PASSWORD:-123456}
+      APP_BOOTSTRAP_DEMO_ENABLED: ${APP_BOOTSTRAP_DEMO_ENABLED:-true}
+      APP_BOOTSTRAP_DEMO_PASSWORD: ${APP_BOOTSTRAP_DEMO_PASSWORD:-123456}
+      # Demo time resolver: enabled for dev, MUST be false in production
+      APP_DEMO_ENABLED: ${APP_DEMO_ENABLED:-true}
     ports:
       - "${BACKEND_PORT:-8080}:8080"
     volumes:

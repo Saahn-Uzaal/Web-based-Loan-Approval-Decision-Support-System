@@ -117,6 +117,9 @@ public class CustomerInformationVerificationRepository {
                 LEFT JOIN customer_profiles cp ON cp.user_id = u.id
                 LEFT JOIN customer_information_verifications civ ON civ.customer_id = u.id
                 WHERE u.role = 'CUSTOMER'
+                  AND cp.user_id IS NOT NULL
+                  AND cp.payslip_original_filename IS NOT NULL
+                  AND TRIM(cp.payslip_original_filename) <> ''
                 ORDER BY
                     CASE COALESCE(civ.status, 'PENDING')
                         WHEN 'PENDING' THEN 0
@@ -158,6 +161,9 @@ public class CustomerInformationVerificationRepository {
             LEFT JOIN customer_profiles cp ON cp.user_id = u.id
             LEFT JOIN customer_information_verifications civ ON civ.customer_id = u.id
             WHERE u.role = 'CUSTOMER'
+              AND cp.user_id IS NOT NULL
+              AND cp.payslip_original_filename IS NOT NULL
+              AND TRIM(cp.payslip_original_filename) <> ''
               AND COALESCE(civ.status, 'PENDING') = ?
             ORDER BY u.created_at DESC, u.id DESC
             """,

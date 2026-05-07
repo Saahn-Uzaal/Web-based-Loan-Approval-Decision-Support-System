@@ -1,5 +1,6 @@
 package com.loanapproval.dss.security;
 
+import com.loanapproval.dss.auth.UserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -21,9 +22,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
 
     private final JwtService jwtService;
+    private final UserRepository userRepository;
 
-    public JwtAuthenticationFilter(JwtService jwtService) {
+    public JwtAuthenticationFilter(JwtService jwtService, UserRepository userRepository) {
         this.jwtService = jwtService;
+        this.userRepository = userRepository;
     }
 
     @Override
@@ -37,8 +40,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7);
             try {
-                AuthenticatedUser user = jwtService.parseToken(token);
+                AuthenticatedUser user = jwtService.parseAccessToken(token);
                 if (SecurityContextHolder.getContext().getAuthentication() == null) {
+                    if (userRepository.findById(user.id()).isEmpty()) {
+                        SecurityContextHolder.clearContext();
+                        filterChain.doFilter(request, response);
+                        return;
+                    }
                     UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(
                             user,

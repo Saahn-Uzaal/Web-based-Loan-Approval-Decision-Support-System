@@ -32,7 +32,7 @@ public class UserRepository {
 
     public Optional<UserAccount> findByEmail(String email) {
         return jdbcTemplate.query(
-            "SELECT id, email, password_hash, role FROM users WHERE email = ?",
+            "SELECT id, email, password_hash, role FROM users WHERE email = ? AND disabled_at IS NULL",
             (rs, rowNum) -> new UserAccount(
                 rs.getLong("id"),
                 rs.getString("email"),
@@ -45,7 +45,7 @@ public class UserRepository {
 
     public Optional<UserAccount> findById(Long id) {
         return jdbcTemplate.query(
-            "SELECT id, email, password_hash, role FROM users WHERE id = ?",
+            "SELECT id, email, password_hash, role FROM users WHERE id = ? AND disabled_at IS NULL",
             (rs, rowNum) -> new UserAccount(
                 rs.getLong("id"),
                 rs.getString("email"),
@@ -58,7 +58,7 @@ public class UserRepository {
 
     public List<Long> findIdsByRole(Role role) {
         return jdbcTemplate.query(
-            "SELECT id FROM users WHERE role = ? ORDER BY id ASC",
+            "SELECT id FROM users WHERE role = ? AND disabled_at IS NULL ORDER BY id ASC",
             (rs, rowNum) -> rs.getLong("id"),
             role.name()
         );

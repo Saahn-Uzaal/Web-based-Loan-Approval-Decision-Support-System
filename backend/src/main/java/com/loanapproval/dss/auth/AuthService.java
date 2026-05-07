@@ -7,6 +7,7 @@ import com.loanapproval.dss.auth.dto.UserResponse;
 import com.loanapproval.dss.security.AuthenticatedUser;
 import com.loanapproval.dss.security.JwtService;
 import com.loanapproval.dss.shared.Role;
+import io.jsonwebtoken.JwtException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -22,15 +23,18 @@ public class AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final LoginRateLimitService loginRateLimitService;
 
     public AuthService(
         UserRepository userRepository,
         PasswordEncoder passwordEncoder,
-        JwtService jwtService
+        JwtService jwtService,
+        LoginRateLimitService loginRateLimitService
     ) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
+        this.loginRateLimitService = loginRateLimitService;
     }
 
     public AuthResponse register(RegisterRequest request) {
@@ -52,16 +56,30 @@ public class AuthService {
         return toAuthResponse(user);
     }
 
-    public AuthResponse login(AuthRequest request) {
+    public AuthResponse login(AuthRequest request, String clientIp) {
         String normalizedEmail = request.email().trim().toLowerCase();
-        UserAccount user = userRepository.findByEmail(normalizedEmail)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Email hoặc mật khẩu không đúng"));
-
-        if (!passwordEncoder.matches(request.password(), user.passwordHash())) {
+        loginRateLimitService.assertAllowed(normalizedEmail, clientIp);
+        UserAccount user = userRepository.findByEmail(normalizedEmail).orElse(null);
+        if (user == null || !passwordEncoder.matches(request.password(), user.passwordHash())) {
             log.warn("Failed login attempt for email={}", normalizedEmail);
+            loginRateLimitService.recordFailure(normalizedEmail, clientIp);
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Email hoặc mật khẩu không đúng");
         }
+        loginRateLimitService.recordSuccess(normalizedEmail, clientIp);
         log.info("User logged in: userId={}, email={}", user.id(), normalizedEmail);
+        return toAuthResponse(user);
+    }
+
+    public AuthResponse refresh(String refreshToken) {
+        AuthenticatedUser principal;
+        try {
+            principal = jwtService.parseRefreshToken(refreshToken);
+        } catch (JwtException | IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token không hợp lệ hoặc đã hết hạn");
+        }
+
+        UserAccount user = userRepository.findById(principal.id())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Phiên đăng nhập không hợp lệ"));
         return toAuthResponse(user);
     }
 
@@ -72,8 +90,9 @@ public class AuthService {
     }
 
     private AuthResponse toAuthResponse(UserAccount user) {
-        String token = jwtService.generateAccessToken(user);
-        return new AuthResponse(token, toUserResponse(user));
+        String accessToken = jwtService.generateAccessToken(user);
+        String refreshToken = jwtService.generateRefreshToken(user);
+        return new AuthResponse(accessToken, refreshToken, toUserResponse(user));
     }
 
     private UserResponse toUserResponse(UserAccount user) {

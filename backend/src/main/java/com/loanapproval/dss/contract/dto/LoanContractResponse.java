@@ -4,6 +4,7 @@ import com.loanapproval.dss.contract.LoanContractStatus;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 
 public record LoanContractResponse(
     Long id,
@@ -19,6 +20,7 @@ public record LoanContractResponse(
     BigDecimal monthlyPayment,
     BigDecimal totalInterest,
     LoanContractStatus status,
-    Instant createdAt
+    Instant createdAt,
+    List<LoanContractInstallmentResponse> installments
 ) {
 }

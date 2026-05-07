@@ -5,10 +5,14 @@ import {
   Chip,
   CircularProgress,
   Divider,
+  FormControl,
+  FormHelperText,
   FormControlLabel,
   Grid,
+  InputLabel,
   MenuItem,
   Paper,
+  Select,
   Stack,
   Table,
   TableBody,
@@ -21,17 +25,23 @@ import {
 import { useEffect, useState } from "react";
 import { Link as RouterLink, useParams } from "react-router-dom";
 import {
+  assignStaffCaseApi,
+  cancelStaffSecuredAppointmentApi,
   getStaffSecuredProcedureDetailApi,
   getStaffSecuredProceduresApi,
+  noShowStaffSecuredAppointmentApi,
+  releaseStaffCaseApi,
+  rescheduleStaffSecuredAppointmentApi,
   saveStaffSecuredProcedureApi
 } from "@/features/staff/api/staffApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
 import { clearFieldError, fieldErrorProps, mapFieldErrors } from "@/shared/utils/formErrors";
-import { labelLoanStatus, labelSecuredProcedureStatus } from "@/shared/utils/labels";
+import { formatPercentInputFromFraction, normalizePercentInput, percentInputToFraction } from "@/shared/utils/percent";
+import { labelAppointmentStatus, labelLoanStatus, labelSecuredProcedureStatus } from "@/shared/utils/labels";
 
 const DEMO_TIME_STORAGE_KEY_PREFIX = "loan_dss_demo_now_";
-const MONEY_FIELDS = new Set(["salePrice", "downPayment", "appraisalValue", "monthlyPaymentAmount"]);
+const MONEY_FIELDS = new Set(["appraisalValue", "monthlyPaymentAmount"]);
 
 const securedProcedureFieldKeywords = {
   demoNow: ["ngày giờ giả lập", "thời gian giả lập", "demo now"],
@@ -54,8 +64,6 @@ const securedProcedureFieldKeywords = {
   collateralOwnerName: ["tên trên giấy đăng ký", "chủ sở hữu"],
   collateralIdentifier: ["biển số", "mã tài sản"],
   registrationNumber: ["số giấy đăng ký"],
-  salePrice: ["giá bán"],
-  downPayment: ["tiền mặt trả trước", "trả trước"],
   appraisalValue: ["giá trị thẩm định"],
   appraisalReportCode: ["mã biên bản thẩm định"],
   insurancePolicyNumber: ["hợp đồng bảo hiểm"],
@@ -88,8 +96,6 @@ const defaultForm = {
   collateralOwnerName: "",
   collateralIdentifier: "",
   registrationNumber: "",
-  salePrice: "",
-  downPayment: "",
   appraisalValue: "",
   monthlyInterestRate: "",
   monthlyPaymentAmount: "",
@@ -240,11 +246,18 @@ function toMoneyInputValue(value) {
   return value == null || value === "" ? "" : formatVndInput(value);
 }
 
+function toPercentInputValue(value, maximumFractionDigits = 4) {
+  return value == null || value === "" ? "" : formatPercentInputFromFraction(value, maximumFractionDigits);
+}
+
 function buildInitialForm(detail) {
+  const approvedAmount = detail.approvedAmount ?? detail.amount;
+  const approvedTermMonths = detail.approvedTermMonths ?? detail.termMonths;
+  const approvedMonthlyRate = detail.approvedAnnualRate != null ? Number(detail.approvedAnnualRate) / 12 : "";
   const signedDate =
     (detail.contractSignedDate && toDateInputValue(detail.contractSignedDate)) ||
     toDateInputValue(detail.appointment?.scheduledAt);
-  const paymentSchedule = buildPaymentSchedule(signedDate, detail.termMonths);
+  const paymentSchedule = buildPaymentSchedule(signedDate, approvedTermMonths);
 
   return {
     mortgageeName: detail.mortgageeName || "",
@@ -266,11 +279,9 @@ function buildInitialForm(detail) {
     collateralOwnerName: detail.collateralOwnerName || detail.customerName || "",
     collateralIdentifier: detail.collateralIdentifier || "",
     registrationNumber: detail.registrationNumber || "",
-    salePrice: toMoneyInputValue(detail.salePrice ?? detail.amount),
-    downPayment: toMoneyInputValue(detail.downPayment),
-    appraisalValue: toMoneyInputValue(detail.appraisalValue ?? detail.amount),
-    monthlyInterestRate: detail.monthlyInterestRate ?? "",
-    monthlyPaymentAmount: toMoneyInputValue(detail.monthlyPaymentAmount),
+    appraisalValue: toMoneyInputValue(detail.appraisalValue ?? detail.declaredCollateralValue ?? approvedAmount),
+    monthlyInterestRate: toPercentInputValue(detail.monthlyInterestRate ?? approvedMonthlyRate, 4),
+    monthlyPaymentAmount: toMoneyInputValue(detail.monthlyPaymentAmount ?? detail.approvedMonthlyPayment),
     firstPaymentDate: detail.firstPaymentDate ? toDateInputValue(detail.firstPaymentDate) : paymentSchedule.firstPaymentDate,
     monthlyPaymentDay: detail.monthlyPaymentDay || paymentSchedule.monthlyPaymentDay,
     finalPaymentDate: detail.finalPaymentDate ? toDateInputValue(detail.finalPaymentDate) : paymentSchedule.finalPaymentDate,
@@ -287,7 +298,7 @@ function buildInitialForm(detail) {
     contractSigned: Boolean(detail.contractSigned),
     collateralHandoverConfirmed: Boolean(detail.collateralHandoverConfirmed),
     disbursementReady: Boolean(detail.disbursementReady),
-    status: detail.status || "DRAFT",
+    status: detail.loanStatus === "CONTRACTED" ? "COMPLETED" : detail.status || "DRAFT",
     note: detail.note || ""
   };
 }
@@ -301,7 +312,7 @@ function toPayload(form) {
         return [key, parseVndInput(value)];
       }
       if (decimalFields.has(key)) {
-        return [key, value === "" ? null : Number(value)];
+        return [key, percentInputToFraction(value)];
       }
       return [key, value === "" ? null : value];
     })
@@ -338,7 +349,7 @@ function ProcedureList({ rows, loading, error }) {
       <Stack spacing={0.5}>
         <Typography variant="h4">Thủ tục vay thế chấp</Typography>
         <Typography color="text.secondary">
-          Danh sách hồ sơ vay thế chấp cần lập mẫu hợp đồng, đối chiếu tài sản và hoàn tất điều kiện pháp lý.
+          Danh sách hồ sơ vay thế chấp đang ở bước lịch hẹn hoặc đối chiếu tài sản. Hồ sơ đã hoàn tất thủ tục được xem từ chi tiết hồ sơ vay.
         </Typography>
       </Stack>
 
@@ -367,6 +378,7 @@ function ProcedureList({ rows, loading, error }) {
               <TableRow>
                 <TableCell>Mã hồ sơ</TableCell>
                 <TableCell>Khách hàng</TableCell>
+                <TableCell>Phụ trách</TableCell>
                 <TableCell>Số tiền</TableCell>
                 <TableCell>Trạng thái hồ sơ</TableCell>
                 <TableCell>Lịch hẹn</TableCell>
@@ -379,6 +391,7 @@ function ProcedureList({ rows, loading, error }) {
                 <TableRow key={row.loanRequestId} hover>
                   <TableCell>#{row.loanRequestId}</TableCell>
                   <TableCell>{row.customerName || row.customerEmail}</TableCell>
+                  <TableCell>{row.assignedStaffEmail || "Chưa có người phụ trách"}</TableCell>
                   <TableCell>{formatVnd(row.amount)}</TableCell>
                   <TableCell>{labelLoanStatus(row.loanStatus)}</TableCell>
                   <TableCell>
@@ -415,16 +428,24 @@ function ProcedureList({ rows, loading, error }) {
 
 export default function StaffSecuredProceduresPage() {
   const { loanRequestId } = useParams();
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const [rows, setRows] = useState([]);
   const [detail, setDetail] = useState(null);
   const [form, setForm] = useState(defaultForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [claimingCase, setClaimingCase] = useState(false);
+  const [releasingCase, setReleasingCase] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [demoNow, setDemoNow] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
+  const [appointmentAction, setAppointmentAction] = useState("");
+  const [appointmentForm, setAppointmentForm] = useState({
+    scheduledAt: "",
+    location: "",
+    note: ""
+  });
 
   useEffect(() => {
     let active = true;
@@ -445,6 +466,11 @@ export default function StaffSecuredProceduresPage() {
           }
           setDetail(response);
           setForm(buildInitialForm(response));
+          setAppointmentForm({
+            scheduledAt: response.appointment?.scheduledAt ? toDateTimeLocalValue(response.appointment.scheduledAt) : "",
+            location: response.appointment?.location || "",
+            note: response.appointment?.note || ""
+          });
           const storedDemoNow = localStorage.getItem(`${DEMO_TIME_STORAGE_KEY_PREFIX}${loanRequestId}`);
           if (storedDemoNow) {
             setDemoNow(storedDemoNow);
@@ -488,9 +514,16 @@ export default function StaffSecuredProceduresPage() {
     localStorage.setItem(`${DEMO_TIME_STORAGE_KEY_PREFIX}${loanRequestId}`, demoNow);
   }, [demoNow, loanRequestId]);
 
+  const approvedAmount = detail?.approvedAmount ?? detail?.amount;
+  const approvedTermMonths = detail?.approvedTermMonths ?? detail?.termMonths;
+
   const handleChange = (field) => (event) => {
     const value = event.target.type === "checkbox" ? event.target.checked : event.target.value;
-    const normalizedValue = MONEY_FIELDS.has(field) ? formatVndInput(value) : value;
+    const normalizedValue = MONEY_FIELDS.has(field)
+      ? formatVndInput(value)
+      : field === "monthlyInterestRate"
+        ? normalizePercentInput(value)
+        : value;
     setFieldErrors((prev) => clearFieldError(prev, field));
     setForm((prev) => {
       const next = {
@@ -499,17 +532,21 @@ export default function StaffSecuredProceduresPage() {
       };
 
       if (field === "contractSignedDate" && value && !prev.firstPaymentDate) {
-        Object.assign(next, buildPaymentSchedule(value, detail?.termMonths));
+        Object.assign(next, buildPaymentSchedule(value, approvedTermMonths));
       }
 
       if (field === "firstPaymentDate") {
-        Object.assign(next, buildPaymentSchedule(value, detail?.termMonths));
+        Object.assign(next, buildPaymentSchedule(value, approvedTermMonths));
       }
 
       if (field === "monthlyInterestRate") {
-        next.monthlyPaymentAmount = value === ""
+        next.monthlyPaymentAmount = normalizedValue === ""
           ? ""
-          : estimateMonthlyPayment(detail?.amount, detail?.termMonths, value);
+          : estimateMonthlyPayment(
+              approvedAmount,
+              approvedTermMonths,
+              percentInputToFraction(normalizedValue) ?? 0
+            );
       }
 
       return next;
@@ -554,6 +591,83 @@ export default function StaffSecuredProceduresPage() {
     }
   };
 
+  const syncAppointmentForm = (response) => {
+    setAppointmentForm({
+      scheduledAt: response.appointment?.scheduledAt ? toDateTimeLocalValue(response.appointment.scheduledAt) : "",
+      location: response.appointment?.location || "",
+      note: response.appointment?.note || ""
+    });
+  };
+
+  const handleAppointmentAction = async (action) => {
+    if (!loanRequestId) {
+      return;
+    }
+    setAppointmentAction(action);
+    setError("");
+    setSuccess("");
+    try {
+      let response;
+      if (action === "reschedule") {
+        response = await rescheduleStaffSecuredAppointmentApi(accessToken, loanRequestId, {
+          scheduledAt: toIsoInstant(appointmentForm.scheduledAt),
+          location: appointmentForm.location.trim() || null,
+          note: appointmentForm.note.trim() || null
+        });
+      } else if (action === "cancel") {
+        response = await cancelStaffSecuredAppointmentApi(accessToken, loanRequestId);
+      } else {
+        response = await noShowStaffSecuredAppointmentApi(accessToken, loanRequestId);
+      }
+      setDetail(response);
+      setForm(buildInitialForm(response));
+      syncAppointmentForm(response);
+      setSuccess("Đã cập nhật lịch hẹn thế chấp.");
+    } catch (err) {
+      setError(err.message || "Không cập nhật được lịch hẹn thế chấp");
+    } finally {
+      setAppointmentAction("");
+    }
+  };
+
+  const handleAssignCase = async () => {
+    if (!loanRequestId) {
+      return;
+    }
+    setClaimingCase(true);
+    setError("");
+    setSuccess("");
+    try {
+      await assignStaffCaseApi(accessToken, loanRequestId);
+      const response = await getStaffSecuredProcedureDetailApi(accessToken, loanRequestId);
+      setDetail(response);
+      setSuccess("Bạn đã nhận phụ trách hồ sơ vay thế chấp này.");
+    } catch (err) {
+      setError(err.message || "Không nhận được phụ trách hồ sơ");
+    } finally {
+      setClaimingCase(false);
+    }
+  };
+
+  const handleReleaseCase = async () => {
+    if (!loanRequestId) {
+      return;
+    }
+    setReleasingCase(true);
+    setError("");
+    setSuccess("");
+    try {
+      await releaseStaffCaseApi(accessToken, loanRequestId);
+      const response = await getStaffSecuredProcedureDetailApi(accessToken, loanRequestId);
+      setDetail(response);
+      setSuccess("Bạn đã bỏ nhận hồ sơ vay thế chấp này.");
+    } catch (err) {
+      setError(err.message || "Không thể bỏ nhận hồ sơ");
+    } finally {
+      setReleasingCase(false);
+    }
+  };
+
   if (!loanRequestId) {
     return <ProcedureList rows={rows} loading={loading} error={error} />;
   }
@@ -564,12 +678,14 @@ export default function StaffSecuredProceduresPage() {
     appointmentScheduledAt &&
     simulatedNowIso &&
     new Date(simulatedNowIso).getTime() >= new Date(appointmentScheduledAt).getTime() - 60 * 1000;
+  const assignmentOwnedByCurrentUser = Boolean(user?.id && detail?.assignment?.staffUserId === user.id);
+  const assignmentBlockedByOtherStaff = Boolean(detail?.assignment?.staffUserId && !assignmentOwnedByCurrentUser);
 
   return (
     <Stack spacing={2}>
       <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "flex-start", sm: "center" }}>
         <Stack spacing={0.5}>
-          <Typography variant="h4">Mẫu xử lí thủ tục thế chấp #{loanRequestId}</Typography>
+          <Typography variant="h4">Biểu mẫu xử lý thủ tục thế chấp #{loanRequestId}</Typography>
           <Typography color="text.secondary">
             Bố cục biểu mẫu được tổ chức theo dạng hợp đồng thế chấp: bên thế chấp, bên nhận thế chấp, tài sản và khoản vay được bảo đảm.
           </Typography>
@@ -599,8 +715,11 @@ export default function StaffSecuredProceduresPage() {
                   <Typography variant="h6">Tình trạng hồ sơ</Typography>
                   <Typography variant="body2">Khách hàng: {detail.customerName || detail.customerEmail}</Typography>
                   <Typography variant="body2">Điện thoại: {detail.customerPhone || "-"}</Typography>
-                  <Typography variant="body2">Số tiền vay: {formatVnd(detail.amount)}</Typography>
-                  <Typography variant="body2">Kỳ hạn vay: {detail.termMonths} tháng</Typography>
+                  <Typography variant="body2">
+                    Nhân viên phụ trách: {detail.assignment?.staffEmail || "Chưa có người phụ trách"}
+                  </Typography>
+                  <Typography variant="body2">Số tiền phê duyệt: {formatVnd(approvedAmount)}</Typography>
+                  <Typography variant="body2">Kỳ hạn phê duyệt: {approvedTermMonths} tháng</Typography>
                   <Typography variant="body2">Trạng thái hồ sơ: {labelLoanStatus(detail.loanStatus)}</Typography>
                   <Chip
                     size="small"
@@ -608,6 +727,34 @@ export default function StaffSecuredProceduresPage() {
                     label={labelSecuredProcedureStatus(detail.status || form.status)}
                     sx={{ alignSelf: "flex-start" }}
                   />
+                  {!detail.assignment && (
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={handleAssignCase}
+                      disabled={claimingCase}
+                      sx={{ alignSelf: "flex-start" }}
+                    >
+                      {claimingCase ? "Đang nhận..." : "Nhận phụ trách"}
+                    </Button>
+                  )}
+                  {assignmentOwnedByCurrentUser && (
+                    <Button
+                      variant="text"
+                      color="inherit"
+                      size="small"
+                      onClick={handleReleaseCase}
+                      disabled={releasingCase}
+                      sx={{ alignSelf: "flex-start" }}
+                    >
+                      {releasingCase ? "Đang bỏ nhận..." : "Bỏ nhận hồ sơ"}
+                    </Button>
+                  )}
+                  {assignmentBlockedByOtherStaff && (
+                    <Alert severity="info">
+                      Hồ sơ này hiện do {detail.assignment.staffEmail} phụ trách. Bạn chỉ có thể xem cho đến khi được bàn giao.
+                    </Alert>
+                  )}
                 </Stack>
               </Paper>
 
@@ -617,8 +764,65 @@ export default function StaffSecuredProceduresPage() {
                   <Typography variant="body2">
                     {detail.appointment?.scheduledAt ? new Date(detail.appointment.scheduledAt).toLocaleString() : "-"}
                   </Typography>
+                  <Typography variant="body2">
+                    Trạng thái lịch hẹn: {labelAppointmentStatus(detail.appointment?.status)}
+                  </Typography>
                   <Typography variant="body2">{detail.appointment?.location || "-"}</Typography>
                   {detail.appointment?.note && <Alert severity="info">{detail.appointment.note}</Alert>}
+                  <TextField
+                    label="Đổi lịch hẹn"
+                    type="datetime-local"
+                    size="small"
+                    value={appointmentForm.scheduledAt}
+                    onChange={(event) => setAppointmentForm((prev) => ({ ...prev, scheduledAt: event.target.value }))}
+                    InputLabelProps={{ shrink: true }}
+                  />
+                  <TextField
+                    label="Địa điểm"
+                    size="small"
+                    value={appointmentForm.location}
+                    onChange={(event) => setAppointmentForm((prev) => ({ ...prev, location: event.target.value }))}
+                  />
+                  <TextField
+                    label="Ghi chú lịch hẹn"
+                    size="small"
+                    multiline
+                    minRows={2}
+                    value={appointmentForm.note}
+                    onChange={(event) => setAppointmentForm((prev) => ({ ...prev, note: event.target.value }))}
+                  />
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => handleAppointmentAction("reschedule")}
+                      disabled={
+                        Boolean(appointmentAction) ||
+                        detail.appointment?.status !== "SCHEDULED" ||
+                        assignmentBlockedByOtherStaff
+                      }
+                    >
+                      {appointmentAction === "reschedule" ? "Đang lưu..." : "Đổi lịch"}
+                    </Button>
+                    <Button
+                      size="small"
+                      color="warning"
+                      variant="outlined"
+                      onClick={() => handleAppointmentAction("no-show")}
+                      disabled={Boolean(appointmentAction) || detail.appointment?.status !== "SCHEDULED" || assignmentBlockedByOtherStaff}
+                    >
+                      Khách vắng mặt
+                    </Button>
+                    <Button
+                      size="small"
+                      color="error"
+                      variant="outlined"
+                      onClick={() => handleAppointmentAction("cancel")}
+                      disabled={Boolean(appointmentAction) || detail.appointment?.status !== "SCHEDULED" || assignmentBlockedByOtherStaff}
+                    >
+                      Hủy lịch
+                    </Button>
+                  </Stack>
                 </Stack>
               </Paper>
 
@@ -635,7 +839,7 @@ export default function StaffSecuredProceduresPage() {
                     size="small"
                     sx={{ alignSelf: "flex-start" }}
                   >
-                    Mở hồ sơ thẩm định
+                    Mở hồ sơ vay
                   </Button>
                 </Stack>
               </Paper>
@@ -875,28 +1079,6 @@ export default function StaffSecuredProceduresPage() {
                       {...fieldErrorProps(fieldErrors, "registrationNumber")}
                     />
                   </Grid>
-                  <Grid item xs={12} md={3}>
-                    <TextField
-                      label="3.5 Giá bán"
-                      type="number"
-                      value={form.salePrice}
-                      onChange={handleChange("salePrice")}
-                      inputProps={{ inputMode: "numeric" }}
-                      fullWidth
-                      {...fieldErrorProps(fieldErrors, "salePrice")}
-                    />
-                  </Grid>
-                  <Grid item xs={12} md={3}>
-                    <TextField
-                      label="3.6 Tiền mặt trả trước"
-                      type="text"
-                      value={form.downPayment}
-                      onChange={handleChange("downPayment")}
-                      inputProps={{ inputMode: "numeric" }}
-                      fullWidth
-                      {...fieldErrorProps(fieldErrors, "downPayment")}
-                    />
-                  </Grid>
                   <Grid item xs={12} md={4}>
                     <TextField
                       label="Giá trị thẩm định"
@@ -956,20 +1138,20 @@ export default function StaffSecuredProceduresPage() {
                     />
                   </Grid>
                   <Grid item xs={12} md={4}>
-                    <ReadOnlyField label="4.1 Khoản cấp vốn" value={formatVnd(detail.amount)} />
+                    <ReadOnlyField label="4.1 Khoản cấp vốn" value={formatVnd(approvedAmount)} />
                   </Grid>
                   <Grid item xs={12} md={4}>
-                    <ReadOnlyField label="4.2 Thời hạn vay" value={`${detail.termMonths} tháng`} />
+                    <ReadOnlyField label="4.2 Thời hạn vay" value={`${approvedTermMonths} tháng`} />
                   </Grid>
                   <Grid item xs={12} md={4}>
                     <TextField
-                      label="4.3 Lãi suất thực tế hàng tháng"
-                      type="number"
+                      label="4.3 Lãi suất thực tế hàng tháng (%/tháng)"
+                      type="text"
                       value={form.monthlyInterestRate}
                       onChange={handleChange("monthlyInterestRate")}
-                      inputProps={{ min: 0, step: 0.0001 }}
+                      inputProps={{ inputMode: "decimal" }}
                       fullWidth
-                      {...fieldErrorProps(fieldErrors, "monthlyInterestRate")}
+                      {...fieldErrorProps(fieldErrors, "monthlyInterestRate", "Nhập theo phần trăm mỗi tháng, ví dụ 0,5 cho 0,5%/tháng.")}
                     />
                   </Grid>
                   <Grid item xs={12} md={4}>
@@ -1049,17 +1231,29 @@ export default function StaffSecuredProceduresPage() {
                   </Grid>
                 </Grid>
 
-                <TextField
-                  select
-                  label="Trạng thái thủ tục"
-                  value={form.status}
-                  onChange={handleChange("status")}
-                  {...fieldErrorProps(fieldErrors, "status")}
-                >
-                  <MenuItem value="DRAFT">Chưa xử lý</MenuItem>
-                  <MenuItem value="IN_PROGRESS">Đang xử lý</MenuItem>
-                  <MenuItem value="COMPLETED">Hoàn tất</MenuItem>
-                </TextField>
+                <FormControl fullWidth error={Boolean(fieldErrors.status)}>
+                  <InputLabel id="secured-procedure-status-label">Trạng thái thủ tục</InputLabel>
+                  <Select
+                    labelId="secured-procedure-status-label"
+                    label="Trạng thái thủ tục"
+                    value={form.status}
+                    onChange={handleChange("status")}
+                    disabled={detail?.loanStatus === "CONTRACTED"}
+                  >
+                    {detail?.loanStatus === "CONTRACTED" ? (
+                      <MenuItem value="COMPLETED">Hoàn tất</MenuItem>
+                    ) : (
+                      [
+                        <MenuItem key="draft" value="DRAFT">Chưa xử lý</MenuItem>,
+                        <MenuItem key="in-progress" value="IN_PROGRESS">Đang xử lý</MenuItem>,
+                        <MenuItem key="completed" value="COMPLETED">Hoàn tất</MenuItem>
+                      ]
+                    )}
+                  </Select>
+                  {fieldErrors.status && (
+                    <FormHelperText>{fieldErrors.status}</FormHelperText>
+                  )}
+                </FormControl>
 
                 <TextField
                   label="Ghi chú nghiệp vụ"
@@ -1072,11 +1266,11 @@ export default function StaffSecuredProceduresPage() {
                 />
 
                 <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                  <Button type="submit" variant="contained" disabled={saving}>
+                  <Button type="submit" variant="contained" disabled={saving || assignmentBlockedByOtherStaff}>
                     {saving ? "Đang lưu..." : "Lưu mẫu thủ tục"}
                   </Button>
                   <Button component={RouterLink} to={`/staff/requests/${loanRequestId}`} variant="outlined">
-                    Mở hồ sơ thẩm định
+                    Mở hồ sơ vay
                   </Button>
                 </Stack>
               </Stack>

@@ -2,6 +2,7 @@ package com.loanapproval.dss.staff;
 
 import com.loanapproval.dss.compliance.ComplianceAuditService;
 import com.loanapproval.dss.compliance.ComplianceOutcome;
+import com.loanapproval.dss.contract.LoanContractStatus;
 import com.loanapproval.dss.contract.LoanContractScheduleTerms;
 import com.loanapproval.dss.contract.LoanContractService;
 import com.loanapproval.dss.customerinfo.CustomerInformationVerificationService;
@@ -9,7 +10,10 @@ import com.loanapproval.dss.loan.LoanApprovalReassessmentService;
 import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
 import com.loanapproval.dss.loan.LoanStatus;
+import com.loanapproval.dss.loan.LoanStatusHistoryService;
 import com.loanapproval.dss.loan.LoanType;
+import com.loanapproval.dss.notification.NotificationService;
+import com.loanapproval.dss.staff.dto.StaffAppointmentRequest;
 import com.loanapproval.dss.staff.dto.StaffSecuredProcedureRequest;
 import com.loanapproval.dss.staff.dto.StaffSecuredProcedureResponse;
 import com.loanapproval.dss.staff.dto.StaffSecuredProcedureSummaryResponse;
@@ -38,6 +42,8 @@ public class SecuredLoanProcedureService {
     private final CustomerInformationVerificationService customerInformationVerificationService;
     private final CustomerVerificationService customerVerificationService;
     private final LoanApprovalReassessmentService loanApprovalReassessmentService;
+    private final LoanStatusHistoryService loanStatusHistoryService;
+    private final NotificationService notificationService;
 
     public SecuredLoanProcedureService(
             SecuredLoanProcedureRepository securedLoanProcedureRepository,
@@ -46,7 +52,9 @@ public class SecuredLoanProcedureService {
             ComplianceAuditService complianceAuditService,
             CustomerInformationVerificationService customerInformationVerificationService,
             CustomerVerificationService customerVerificationService,
-            LoanApprovalReassessmentService loanApprovalReassessmentService) {
+            LoanApprovalReassessmentService loanApprovalReassessmentService,
+            LoanStatusHistoryService loanStatusHistoryService,
+            NotificationService notificationService) {
         this.securedLoanProcedureRepository = securedLoanProcedureRepository;
         this.loanRepository = loanRepository;
         this.loanContractService = loanContractService;
@@ -54,6 +62,8 @@ public class SecuredLoanProcedureService {
         this.customerInformationVerificationService = customerInformationVerificationService;
         this.customerVerificationService = customerVerificationService;
         this.loanApprovalReassessmentService = loanApprovalReassessmentService;
+        this.loanStatusHistoryService = loanStatusHistoryService;
+        this.notificationService = notificationService;
     }
 
     public List<StaffSecuredProcedureSummaryResponse> listSecuredProcedures() {
@@ -69,12 +79,90 @@ public class SecuredLoanProcedureService {
     }
 
     @Transactional
+    public StaffSecuredProcedureResponse rescheduleAppointment(
+            Long staffUserId,
+            Long loanRequestId,
+            StaffAppointmentRequest request) {
+        LoanRecord loan = assertSecuredLoan(loanRequestId);
+        ensureCaseAssignedTo(staffUserId, loanRequestId);
+        assertAppointmentManageable(loan);
+        if (request.scheduledAt() == null || request.scheduledAt().isBefore(Instant.now().minusSeconds(60))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Lịch hẹn mới phải nằm trong tương lai");
+        }
+        int updated = securedLoanProcedureRepository.rescheduleLatestAppointment(
+                loanRequestId,
+                staffUserId,
+                request.scheduledAt(),
+                request.location(),
+                request.note());
+        if (updated == 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Không tìm thấy lịch hẹn hợp lệ để đổi lịch");
+        }
+        loanRepository.updateFinalReason(
+                loanRequestId,
+                buildAppointmentReason(request.scheduledAt(), request.location(), request.note()));
+        complianceAuditService.log(
+                loan.customerId(),
+                loan.id(),
+                staffUserId,
+                "SECURED_APPOINTMENT_RESCHEDULED",
+                ComplianceOutcome.INFO,
+                "appointment rescheduled to " + request.scheduledAt());
+        notificationService.notifyCustomerAppointmentScheduled(
+                loanRequestId,
+                loan.customerId(),
+                staffUserId,
+                request.scheduledAt(),
+                request.location());
+        return getSecuredProcedure(loanRequestId);
+    }
+
+    @Transactional
+    public StaffSecuredProcedureResponse cancelAppointment(Long staffUserId, Long loanRequestId) {
+        LoanRecord loan = assertSecuredLoan(loanRequestId);
+        ensureCaseAssignedTo(staffUserId, loanRequestId);
+        assertAppointmentManageable(loan);
+        int updated = securedLoanProcedureRepository.cancelLatestAppointment(loanRequestId);
+        if (updated == 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Không tìm thấy lịch hẹn đang chờ để hủy");
+        }
+        complianceAuditService.log(
+                loan.customerId(),
+                loan.id(),
+                staffUserId,
+                "SECURED_APPOINTMENT_CANCELLED",
+                ComplianceOutcome.INFO,
+                "appointment cancelled by staff");
+        return getSecuredProcedure(loanRequestId);
+    }
+
+    @Transactional
+    public StaffSecuredProcedureResponse markAppointmentNoShow(Long staffUserId, Long loanRequestId) {
+        LoanRecord loan = assertSecuredLoan(loanRequestId);
+        ensureCaseAssignedTo(staffUserId, loanRequestId);
+        assertAppointmentManageable(loan);
+        int updated = securedLoanProcedureRepository.markLatestAppointmentNoShow(loanRequestId);
+        if (updated == 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Không tìm thấy lịch hẹn đang chờ để đánh dấu khách vắng mặt");
+        }
+        complianceAuditService.log(
+                loan.customerId(),
+                loan.id(),
+                staffUserId,
+                "SECURED_APPOINTMENT_NO_SHOW",
+                ComplianceOutcome.INFO,
+                "appointment marked as no-show by staff");
+        return getSecuredProcedure(loanRequestId);
+    }
+
+    @Transactional
     public StaffSecuredProcedureResponse saveSecuredProcedure(
             Long staffUserId,
             Long loanRequestId,
             StaffSecuredProcedureRequest request,
             Instant effectiveNow) {
         LoanRecord loan = assertSecuredLoan(loanRequestId);
+        ensureCaseAssignedTo(staffUserId, loanRequestId);
         StaffSecuredProcedureResponse currentDetail = securedLoanProcedureRepository.findByLoanRequestId(loanRequestId)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND,
@@ -82,8 +170,22 @@ public class SecuredLoanProcedureService {
         SecuredProcedureStatus status = request.status() != null
                 ? request.status()
                 : SecuredProcedureStatus.DRAFT;
+        boolean finalizingBeforeContract = status == SecuredProcedureStatus.COMPLETED
+                && (loan.status() == LoanStatus.APPOINTMENT_SCHEDULED || loan.status() == LoanStatus.APPROVED);
+        boolean postContractPostAudit = status == SecuredProcedureStatus.COMPLETED
+                && loan.status() == LoanStatus.CONTRACTED;
+        if (loan.status() == LoanStatus.CONTRACTED && status != SecuredProcedureStatus.COMPLETED) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Hồ sơ đã ký hợp đồng nên thủ tục thế chấp chỉ được giữ ở trạng thái hoàn tất");
+        }
+        if (status == SecuredProcedureStatus.COMPLETED && !finalizingBeforeContract && !postContractPostAudit) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Chỉ được hoàn tất thủ tục sau khi hồ sơ đã được lên lịch hẹn gặp mặt");
+        }
         LoanApprovalReassessmentService.ReassessmentResult reassessment = null;
-        if (status == SecuredProcedureStatus.COMPLETED) {
+        if (finalizingBeforeContract) {
             validateCompletion(loan, currentDetail, request, effectiveNow);
             BigDecimal requestedAnnualRate = toAnnualRate(request.monthlyInterestRate());
             reassessment = loanApprovalReassessmentService.reassessAndPersist(
@@ -98,7 +200,7 @@ public class SecuredLoanProcedureService {
         }
 
         securedLoanProcedureRepository.upsert(loanRequestId, staffUserId, request);
-        if (status == SecuredProcedureStatus.COMPLETED) {
+        if (finalizingBeforeContract) {
             loanRepository.updateDecision(
                     loanRequestId,
                     LoanStatus.APPROVED,
@@ -109,6 +211,12 @@ public class SecuredLoanProcedureService {
                     reassessment.approvedAnnualRate(),
                     reassessment.approvedMonthlyPayment(),
                     reassessment.decisionPolicyVersion());
+            loanStatusHistoryService.recordTransition(
+                    loan,
+                    LoanStatus.APPROVED,
+                    staffUserId,
+                    "SECURED_PROCEDURE_COMPLETION",
+                    buildCompletionReason(currentDetail, request, reassessment));
             securedLoanProcedureRepository.markLatestAppointmentCompleted(loanRequestId);
             LoanRecord approvedLoan = loanRepository.findById(loanRequestId)
                     .orElseThrow(() -> new ResponseStatusException(
@@ -117,8 +225,8 @@ public class SecuredLoanProcedureService {
             loanContractService.createIfMissingFromApprovedLoan(
                     approvedLoan,
                     staffUserId,
-                    buildContractScheduleTerms(request, reassessment));
-            loanRepository.updateStatus(loanRequestId, LoanStatus.CONTRACTED);
+                    buildContractScheduleTerms(request, reassessment),
+                    LoanContractStatus.PENDING_ACCEPTANCE);
         }
 
         complianceAuditService.log(
@@ -145,6 +253,24 @@ public class SecuredLoanProcedureService {
         return loan;
     }
 
+    private void assertAppointmentManageable(LoanRecord loan) {
+        if (loan.status() != LoanStatus.APPOINTMENT_SCHEDULED && loan.status() != LoanStatus.APPROVED) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Chỉ hồ sơ thế chấp đang ở bước lịch hẹn hoặc đối chiếu tài sản mới được phép cập nhật lịch hẹn");
+        }
+    }
+
+    private void ensureCaseAssignedTo(Long staffUserId, Long loanRequestId) {
+        int updated = loanRepository.assignCaseIfUnassignedOrOwned(loanRequestId, staffUserId);
+        if (updated > 0) {
+            return;
+        }
+        throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Hồ sơ vay thế chấp này đang được nhân viên khác phụ trách. Bạn không thể chỉnh sửa khi chưa được bàn giao.");
+    }
+
     private void validateCompletion(
             LoanRecord loan,
             StaffSecuredProcedureResponse currentDetail,
@@ -160,7 +286,8 @@ public class SecuredLoanProcedureService {
                     HttpStatus.BAD_REQUEST,
                     "Khoản vay thế chấp chưa có lịch hẹn gặp mặt hợp lệ");
         }
-        if ("CANCELLED".equalsIgnoreCase(currentDetail.appointment().status())) {
+        if ("CANCELLED".equalsIgnoreCase(currentDetail.appointment().status())
+                || "NO_SHOW".equalsIgnoreCase(currentDetail.appointment().status())) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "Lịch hẹn hiện tại đã bị hủy, không thể hoàn tất thủ tục");
@@ -195,12 +322,6 @@ public class SecuredLoanProcedureService {
                             + String.join(", ", missingFields));
         }
 
-        if (request.salePrice() == null || request.salePrice().compareTo(BigDecimal.ZERO) <= 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Giá bán tài sản phải lớn hơn 0");
-        }
-        if (request.downPayment() == null || request.downPayment().compareTo(BigDecimal.ZERO) < 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Khoản tiền mặt trả trước không hợp lệ");
-        }
         if (request.appraisalValue() == null || request.appraisalValue().compareTo(BigDecimal.ZERO) <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Giá trị thẩm định tài sản phải lớn hơn 0");
         }
@@ -308,6 +429,17 @@ public class SecuredLoanProcedureService {
         return monthlyInterestRate != null
                 ? monthlyInterestRate.multiply(BigDecimal.valueOf(12)).setScale(6, RoundingMode.HALF_UP)
                 : null;
+    }
+
+    private String buildAppointmentReason(Instant scheduledAt, String location, String note) {
+        StringBuilder builder = new StringBuilder("Lịch hẹn gặp mặt: ").append(scheduledAt);
+        if (!isBlank(location)) {
+            builder.append("; địa điểm: ").append(location.trim());
+        }
+        if (!isBlank(note)) {
+            builder.append("; ghi chú: ").append(note.trim());
+        }
+        return builder.toString();
     }
 
     private void validateMonthlyPaymentMatchesDss(

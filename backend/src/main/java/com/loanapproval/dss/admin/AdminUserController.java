@@ -3,6 +3,7 @@ package com.loanapproval.dss.admin;
 import com.loanapproval.dss.admin.dto.AdminUserResponse;
 import com.loanapproval.dss.admin.dto.AdminCreateUserRequest;
 import com.loanapproval.dss.security.AuthenticatedUser;
+import com.loanapproval.dss.shared.PageResponse;
 import com.loanapproval.dss.shared.Role;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -36,6 +37,15 @@ public class AdminUserController {
         @RequestParam(value = "role", required = false) Role role
     ) {
         return adminUserService.listManagedUsers(role);
+    }
+
+    @GetMapping("/paged")
+    public PageResponse<AdminUserResponse> listUsersPaged(
+        @RequestParam(value = "role", required = false) Role role,
+        @RequestParam(defaultValue = "0") int page,
+        @RequestParam(defaultValue = "10") int size
+    ) {
+        return adminUserService.listManagedUsersPaged(role, page, size);
     }
 
     @PostMapping

@@ -6,12 +6,15 @@ const ROLE_LABELS = {
 };
 
 const LOAN_STATUS_LABELS = {
+  DRAFT: "Bản nháp",
+  NEEDS_MORE_INFO: "Cần bổ sung hồ sơ",
+  WITHDRAWN: "Đã rút hồ sơ",
   PENDING: "Chờ xử lý",
   APPOINTMENT_SCHEDULED: "Đã lên lịch hẹn",
   APPROVED: "Đã duyệt",
   CONTRACTED: "Đã ký hợp đồng",
-  DISBURSED: "Đã giải ngân",
   ACTIVE: "Đang vay",
+  OVERDUE: "Quá hạn",
   CLOSED: "Đã tất toán",
   REJECTED: "Từ chối"
 };
@@ -37,11 +40,13 @@ const LOAN_DOCUMENT_TYPE_LABELS = {
   LICENSE_PLATE_IMAGE: "Ảnh biển số xe",
   ID_CARD_FRONT: "CCCD mặt trước",
   ID_CARD_BACK: "CCCD mặt sau",
-  FACE_CAPTURE: "Ảnh khuôn mặt hiện tại"
+  FACE_CAPTURE: "Ảnh khuôn mặt hiện tại",
+  SUPPLEMENTAL_DOCUMENT: "Giấy tờ bổ sung"
 };
 
 const DSS_RECOMMENDATION_LABELS = {
   APPROVE_RECOMMENDED: "Đề xuất duyệt",
+  MANUAL_REVIEW_RECOMMENDED: "Cần thẩm định thủ công",
   REJECT_RECOMMENDED: "Đề xuất từ chối"
 };
 
@@ -72,16 +77,31 @@ const RISK_LEVEL_LABELS = {
 };
 
 const CONTRACT_STATUS_LABELS = {
+  PENDING_ACCEPTANCE: "Chờ khách hàng chấp nhận",
   ACTIVE: "Đang hiệu lực",
   CLOSED: "Đã đóng"
 };
 
+const EMPLOYMENT_STATUS_LABELS = {
+  EMPLOYED: "Nhân viên chính thức",
+  SELF_EMPLOYED: "Tự kinh doanh / tự do",
+  BUSINESS_OWNER: "Chủ hộ kinh doanh / doanh nghiệp",
+  PART_TIME: "Bán thời gian",
+  CONTRACTOR: "Theo hợp đồng",
+  UNEMPLOYED: "Thất nghiệp",
+  STUDENT: "Sinh viên",
+  RETIRED: "Đã nghỉ hưu",
+  OTHER: "Khác"
+};
+
 const REPAYMENT_STATUS_LABELS = {
+  EARLY: "Trả sớm",
   ON_TIME: "Đúng hạn",
   LATE: "Trễ hạn"
 };
 
 const STAFF_ACTION_LABELS = {
+  REQUEST_MORE_INFO: "Yêu cầu bổ sung",
   APPROVE: "Duyệt",
   REJECT: "Từ chối"
 };
@@ -92,8 +112,16 @@ const SECURED_PROCEDURE_STATUS_LABELS = {
   COMPLETED: "Hoàn tất"
 };
 
+const APPOINTMENT_STATUS_LABELS = {
+  SCHEDULED: "Đã lên lịch",
+  COMPLETED: "Đã hoàn tất",
+  CANCELLED: "Đã hủy",
+  NO_SHOW: "Khách vắng mặt"
+};
+
 const PAYMENT_CONFIRMATION_STATUS_LABELS = {
   PENDING_REVIEW: "Chờ đối chiếu",
+  CANCELLED_BY_CUSTOMER: "Đã hủy bởi khách hàng",
   CONFIRMED: "Đã xác nhận",
   REJECTED: "Bị từ chối"
 };
@@ -150,6 +178,10 @@ export function labelContractStatus(value) {
   return CONTRACT_STATUS_LABELS[value] || fallback(value);
 }
 
+export function labelEmploymentStatus(value) {
+  return EMPLOYMENT_STATUS_LABELS[value] || fallback(value);
+}
+
 export function labelRepaymentStatus(value) {
   return REPAYMENT_STATUS_LABELS[value] || fallback(value);
 }
@@ -164,4 +196,8 @@ export function labelStaffAction(value) {
 
 export function labelSecuredProcedureStatus(value) {
   return SECURED_PROCEDURE_STATUS_LABELS[value] || fallback(value);
+}
+
+export function labelAppointmentStatus(value) {
+  return APPOINTMENT_STATUS_LABELS[value] || fallback(value);
 }

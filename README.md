@@ -142,11 +142,13 @@ Auth:
 
 - `POST /api/auth/register`
 - `POST /api/auth/login`
+- `POST /api/auth/refresh`
 - `GET /api/auth/me`
 
 Admin:
 
 - `GET /api/admin/users`
+- `GET /api/admin/users/paged`
 - `POST /api/admin/users`
 - `DELETE /api/admin/users/{id}`
 
@@ -272,6 +274,10 @@ SPRING_PROFILES_ACTIVE=dev
 BACKEND_PORT=8080
 FRONTEND_PORT=5173
 APP_JWT_SECRET=...
+APP_JWT_REFRESH_EXPIRATION_DAYS=30
+APP_AUTH_LOGIN_RATE_LIMIT_MAX_ATTEMPTS=5
+APP_AUTH_LOGIN_RATE_LIMIT_WINDOW_MINUTES=15
+APP_AUTH_LOGIN_RATE_LIMIT_LOCK_MINUTES=15
 APP_BOOTSTRAP_ADMIN_ENABLED=true
 APP_BOOTSTRAP_ADMIN_EMAIL=admin@gmail.com
 APP_BOOTSTRAP_ADMIN_PASSWORD=123456

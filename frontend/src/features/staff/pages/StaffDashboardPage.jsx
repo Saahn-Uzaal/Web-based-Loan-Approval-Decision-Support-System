@@ -1,4 +1,4 @@
-﻿import {
+import {
   Alert,
   Button,
   Chip,
@@ -16,13 +16,20 @@
 } from "@mui/material";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
-import { getStaffRequestsApi } from "@/features/staff/api/staffApi";
+import { getInformationVerificationsApi } from "@/features/staff/api/informationVerificationApi";
+import {
+  getStaffLoanOperationsApi,
+  getStaffPaymentConfirmationsApi,
+  getStaffRequestsApi,
+  getStaffSecuredProceduresApi
+} from "@/features/staff/api/staffApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd } from "@/shared/utils/currency";
 import { labelDssRecommendation, labelLoanStatus, labelRiskRank } from "@/shared/utils/labels";
 
 const recommendationOrder = [
   "APPROVE_RECOMMENDED",
+  "MANUAL_REVIEW_RECOMMENDED",
   "REJECT_RECOMMENDED"
 ];
 
@@ -80,7 +87,13 @@ function EmptyCard({ message }) {
 
 export default function StaffDashboardPage() {
   const { accessToken } = useAuth();
-  const [rows, setRows] = useState([]);
+  const [queues, setQueues] = useState({
+    review: [],
+    operations: [],
+    secured: [],
+    infoPending: [],
+    paymentPending: []
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
@@ -92,8 +105,28 @@ export default function StaffDashboardPage() {
     setLoading(true);
     setError("");
     try {
-      const response = await getStaffRequestsApi(accessToken);
-      setRows(Array.isArray(response) ? response : []);
+      const [
+        reviewResult,
+        operationResult,
+        securedResult,
+        infoPendingResult,
+        paymentPendingResult
+      ] = await Promise.allSettled([
+        getStaffRequestsApi(accessToken),
+        getStaffLoanOperationsApi(accessToken),
+        getStaffSecuredProceduresApi(accessToken),
+        getInformationVerificationsApi(accessToken, "PENDING"),
+        getStaffPaymentConfirmationsApi(accessToken, "PENDING_REVIEW")
+      ]);
+
+      const toList = (result) => (result.status === "fulfilled" && Array.isArray(result.value) ? result.value : []);
+      setQueues({
+        review: toList(reviewResult),
+        operations: toList(operationResult),
+        secured: toList(securedResult),
+        infoPending: toList(infoPendingResult),
+        paymentPending: toList(paymentPendingResult)
+      });
       setLastUpdatedAt(new Date());
     } catch (err) {
       setError(err.message || "Không tải được dữ liệu bảng điều khiển");
@@ -107,43 +140,56 @@ export default function StaffDashboardPage() {
   }, [loadDashboard]);
 
   const dashboard = useMemo(() => {
-    const totalQueue = rows.length;
-    const pending = rows.filter((row) => row.status === "PENDING" || row.status === "APPOINTMENT_SCHEDULED").length;
-    const totalAmount = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
-    const averageAmount = totalQueue > 0 ? totalAmount / totalQueue : 0;
+    const reviewRows = queues.review;
+    const operationRows = queues.operations;
+    const securedRows = queues.secured;
+    const infoPendingRows = queues.infoPending;
+    const paymentPendingRows = queues.paymentPending;
+    const totalWorkItems =
+      reviewRows.length +
+      operationRows.length +
+      infoPendingRows.length +
+      paymentPendingRows.length;
+    const totalReviewAmount = reviewRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+    const averageReviewAmount = reviewRows.length > 0 ? totalReviewAmount / reviewRows.length : 0;
 
     const recommendationRows = recommendationOrder.map((label) => ({
       label,
-      count: rows.filter((row) => row.dssRecommendation === label).length
+      count: reviewRows.filter((row) => row.dssRecommendation === label).length
     }));
 
     const riskRows = riskRankOrder.map((label) => ({
       label,
-      count: rows.filter((row) => row.riskRank === label).length
+      count: reviewRows.filter((row) => row.riskRank === label).length
     }));
 
-    const priorityRows = [...rows]
+    const priorityRows = [...reviewRows]
       .filter((row) =>
-        row.status === "PENDING" || row.status === "APPOINTMENT_SCHEDULED" || row.dssRecommendation === "REJECT_RECOMMENDED"
+        row.status === "PENDING" || row.status === "NEEDS_MORE_INFO" || row.dssRecommendation === "REJECT_RECOMMENDED"
       )
       .sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0))
       .slice(0, 6);
 
-    const highValueRows = [...rows]
+    const highValueRows = [...reviewRows]
       .sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0))
       .slice(0, 6);
 
     return {
-      totalQueue,
-      pending,
-      totalAmount,
-      averageAmount,
+      totalWorkItems,
+      reviewQueue: reviewRows.length,
+      operationQueue: operationRows.length,
+      securedQueue: securedRows.length,
+      infoPendingQueue: infoPendingRows.length,
+      paymentPendingQueue: paymentPendingRows.length,
+      overdueOperations: operationRows.filter((row) => row.status === "OVERDUE").length,
+      totalReviewAmount,
+      averageReviewAmount,
       recommendationRows,
       riskRows,
       priorityRows,
       highValueRows
     };
-  }, [rows]);
+  }, [queues]);
 
   return (
     <Stack spacing={2.5}>
@@ -151,7 +197,7 @@ export default function StaffDashboardPage() {
         <Stack spacing={0.5}>
           <Typography variant="h4">Bảng điều khiển nhân viên</Typography>
           <Typography color="text.secondary">
-            Góc nhìn vận hành theo thời gian thực cho hàng đợi thẩm định, tín hiệu DSS và các hồ sơ ưu tiên.
+            Theo dõi tổng khối lượng công việc ở thẩm định, vận hành khoản vay, xác minh thông tin và xác nhận thanh toán.
           </Typography>
           {lastUpdatedAt && (
             <Typography variant="caption" color="text.secondary">
@@ -180,26 +226,34 @@ export default function StaffDashboardPage() {
           <Grid container spacing={2}>
             <Grid item xs={12} sm={6} lg={3}>
               <MetricCard
-                title="Tổng hồ sơ trong hàng đợi"
-                value={dashboard.totalQueue}
-                description="Tổng số hồ sơ hiện đang chờ nhân viên xử lý."
+                title="Tổng mục công việc"
+                value={dashboard.totalWorkItems}
+                description="Tổng các việc cần xử lý trên tất cả queue nghiệp vụ của staff."
                 color="#1976d2"
               />
             </Grid>
             <Grid item xs={12} sm={6} lg={3}>
               <MetricCard
-                title="Chờ xử lý"
-                value={dashboard.pending}
-                description="Hồ sơ đang chờ thao tác thẩm định đầu tiên."
+                title="Hàng đợi thẩm định"
+                value={dashboard.reviewQueue}
+                description={`Bao gồm hồ sơ PENDING và NEEDS_MORE_INFO. Giá trị TB: ${formatVnd(dashboard.averageReviewAmount)}`}
                 color="#ed6c02"
               />
             </Grid>
             <Grid item xs={12} sm={6} lg={3}>
               <MetricCard
-                title="Tổng số tiền trong hàng đợi"
-                value={formatVnd(dashboard.totalAmount)}
-                description={`Giá trị trung bình mỗi hồ sơ: ${formatVnd(dashboard.averageAmount)}`}
+                title="Vận hành khoản vay"
+                value={dashboard.operationQueue}
+                description={`Có ${dashboard.overdueOperations} khoản đang quá hạn; thủ tục thế chấp: ${dashboard.securedQueue}.`}
                 color="#2e7d32"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} lg={3}>
+              <MetricCard
+                title="Xác minh & thanh toán"
+                value={dashboard.infoPendingQueue + dashboard.paymentPendingQueue}
+                description={`Xác minh chờ xử lý: ${dashboard.infoPendingQueue}; biên lai chờ đối chiếu: ${dashboard.paymentPendingQueue}.`}
+                color="#6a1b9a"
               />
             </Grid>
           </Grid>
@@ -207,17 +261,17 @@ export default function StaffDashboardPage() {
           <Grid container spacing={2}>
             <Grid item xs={12} md={6}>
               <DistributionSection
-                title="Phân bố khuyến nghị DSS"
+                title="Phân bố khuyến nghị DSS (queue thẩm định)"
                 rows={dashboard.recommendationRows}
-                total={dashboard.totalQueue}
+                total={dashboard.reviewQueue}
                 labelFormatter={labelDssRecommendation}
               />
             </Grid>
             <Grid item xs={12} md={6}>
               <DistributionSection
-                title="Phân bố hạng rủi ro"
+                title="Phân bố hạng rủi ro (queue thẩm định)"
                 rows={dashboard.riskRows}
-                total={dashboard.totalQueue}
+                total={dashboard.reviewQueue}
                 labelFormatter={labelRiskRank}
               />
             </Grid>
@@ -227,9 +281,9 @@ export default function StaffDashboardPage() {
             <Grid item xs={12} lg={6}>
               <Paper sx={{ p: 3 }}>
                 <Stack spacing={2}>
-                  <Typography variant="h6">Hồ sơ ưu tiên</Typography>
+                  <Typography variant="h6">Hồ sơ thẩm định ưu tiên</Typography>
                   {dashboard.priorityRows.length === 0 && (
-                    <EmptyCard message="Hiện tại không có hồ sơ ưu tiên." />
+                    <EmptyCard message="Hiện tại không có hồ sơ ưu tiên trong queue thẩm định." />
                   )}
                   {dashboard.priorityRows.length > 0 && (
                     <Table size="small">
@@ -277,9 +331,9 @@ export default function StaffDashboardPage() {
             <Grid item xs={12} lg={6}>
               <Paper sx={{ p: 3 }}>
                 <Stack spacing={2}>
-                  <Typography variant="h6">Các hồ sơ có số tiền vay lớn nhất</Typography>
+                  <Typography variant="h6">Hồ sơ thẩm định có số tiền vay lớn nhất</Typography>
                   {dashboard.highValueRows.length === 0 && (
-                    <EmptyCard message="Không tìm thấy hồ sơ trong hàng đợi." />
+                    <EmptyCard message="Không tìm thấy hồ sơ trong queue thẩm định." />
                   )}
                   {dashboard.highValueRows.length > 0 && (
                     <Table size="small">

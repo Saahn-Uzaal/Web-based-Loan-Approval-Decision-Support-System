@@ -14,7 +14,6 @@ public record CustomerProfileResponse(
     BigDecimal debtToIncomeRatio,
     String employmentStatus,
     LocalDate employmentStartDate,
-    Integer creditHistoryScore,
     Integer paymentRating,
     String payslipFileName,
     Long payslipFileSize,

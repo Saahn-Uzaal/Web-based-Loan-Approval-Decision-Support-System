@@ -54,6 +54,36 @@ public class LoanContractRepository {
             LocalDate finalPaymentDate,
             BigDecimal monthlyPayment,
             BigDecimal totalInterest) {
+        return create(
+                loanRequestId,
+                customerId,
+                principalAmount,
+                annualInterestRate,
+                termMonths,
+                startDate,
+                endDate,
+                firstPaymentDate,
+                monthlyPaymentDay,
+                finalPaymentDate,
+                monthlyPayment,
+                totalInterest,
+                LoanContractStatus.ACTIVE);
+    }
+
+    public LoanContract create(
+            Long loanRequestId,
+            Long customerId,
+            BigDecimal principalAmount,
+            BigDecimal annualInterestRate,
+            Integer termMonths,
+            LocalDate startDate,
+            LocalDate endDate,
+            LocalDate firstPaymentDate,
+            String monthlyPaymentDay,
+            LocalDate finalPaymentDate,
+            BigDecimal monthlyPayment,
+            BigDecimal totalInterest,
+            LoanContractStatus status) {
         Map<String, Object> values = new HashMap<>();
         values.put("loan_request_id", loanRequestId);
         values.put("customer_id", customerId);
@@ -67,7 +97,7 @@ public class LoanContractRepository {
         values.put("final_payment_date", toSqlDate(finalPaymentDate));
         values.put("monthly_payment", monthlyPayment);
         values.put("total_interest", totalInterest);
-        values.put("status", LoanContractStatus.ACTIVE.name());
+        values.put("status", status != null ? status.name() : LoanContractStatus.ACTIVE.name());
 
         Number id = insertLoanContract.executeAndReturnKey(values);
         return findById(id.longValue())

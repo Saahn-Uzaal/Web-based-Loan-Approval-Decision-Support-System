@@ -38,7 +38,8 @@ public class SecurityConfig {
                     "/actuator/health",
                     "/actuator/info",
                     "/api/auth/register",
-                    "/api/auth/login"
+                    "/api/auth/login",
+                    "/api/auth/refresh"
                 ).permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .anyRequest().authenticated()

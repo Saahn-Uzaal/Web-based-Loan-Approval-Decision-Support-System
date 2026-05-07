@@ -2,9 +2,11 @@ package com.loanapproval.dss.auth;
 
 import com.loanapproval.dss.auth.dto.AuthRequest;
 import com.loanapproval.dss.auth.dto.AuthResponse;
+import com.loanapproval.dss.auth.dto.RefreshTokenRequest;
 import com.loanapproval.dss.auth.dto.RegisterRequest;
 import com.loanapproval.dss.auth.dto.UserResponse;
 import com.loanapproval.dss.security.AuthenticatedUser;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -33,8 +35,13 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public AuthResponse login(@Valid @RequestBody AuthRequest request) {
-        return authService.login(request);
+    public AuthResponse login(@Valid @RequestBody AuthRequest request, HttpServletRequest httpRequest) {
+        return authService.login(request, extractClientIp(httpRequest));
+    }
+
+    @PostMapping("/refresh")
+    public AuthResponse refresh(@Valid @RequestBody RefreshTokenRequest request) {
+        return authService.refresh(request.refreshToken());
     }
 
     @GetMapping("/me")
@@ -47,5 +54,17 @@ public class AuthController {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Chưa xác thực");
         }
         return user;
+    }
+
+    private String extractClientIp(HttpServletRequest request) {
+        String forwardedFor = request.getHeader("X-Forwarded-For");
+        if (forwardedFor != null && !forwardedFor.isBlank()) {
+            int separatorIndex = forwardedFor.indexOf(',');
+            String firstHop = separatorIndex >= 0 ? forwardedFor.substring(0, separatorIndex) : forwardedFor;
+            if (!firstHop.isBlank()) {
+                return firstHop.trim();
+            }
+        }
+        return request.getRemoteAddr();
     }
 }

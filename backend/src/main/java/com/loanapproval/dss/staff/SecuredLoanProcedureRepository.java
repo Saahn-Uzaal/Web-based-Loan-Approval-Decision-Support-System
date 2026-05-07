@@ -30,6 +30,9 @@ public class SecuredLoanProcedureRepository {
                             lr.id AS loan_request_id,
                             u.email AS customer_email,
                             cp.full_name AS customer_name,
+                            lr.assigned_staff_user_id,
+                            assigned_staff.email AS assigned_staff_email,
+                            lr.assigned_at,
                             lr.amount,
                             lr.status AS loan_status,
                             la.scheduled_at AS appointment_scheduled_at,
@@ -39,6 +42,7 @@ public class SecuredLoanProcedureRepository {
                         FROM loan_requests lr
                         INNER JOIN users u ON u.id = lr.customer_id
                         LEFT JOIN customer_profiles cp ON cp.user_id = lr.customer_id
+                        LEFT JOIN users assigned_staff ON assigned_staff.id = lr.assigned_staff_user_id
                         LEFT JOIN loan_appointments la ON la.id = (
                             SELECT la_latest.id
                             FROM loan_appointments la_latest
@@ -48,10 +52,10 @@ public class SecuredLoanProcedureRepository {
                         )
                         LEFT JOIN secured_loan_procedures sp ON sp.loan_request_id = lr.id
                         WHERE lr.loan_type = 'SECURED'
-                          AND lr.status IN ('APPOINTMENT_SCHEDULED', 'APPROVED')
+                          AND lr.status = 'APPOINTMENT_SCHEDULED'
+                          AND COALESCE(sp.status, 'DRAFT') <> 'COMPLETED'
                         ORDER BY
                             CASE COALESCE(sp.status, 'DRAFT')
-                                WHEN 'COMPLETED' THEN 3
                                 WHEN 'IN_PROGRESS' THEN 1
                                 ELSE 0
                             END,
@@ -62,6 +66,9 @@ public class SecuredLoanProcedureRepository {
                         rs.getLong("loan_request_id"),
                         rs.getString("customer_email"),
                         rs.getString("customer_name"),
+                        (Long) rs.getObject("assigned_staff_user_id"),
+                        rs.getString("assigned_staff_email"),
+                        toInstant(rs.getTimestamp("assigned_at")),
                         rs.getBigDecimal("amount"),
                         LoanStatus.valueOf(rs.getString("loan_status")),
                         toInstant(rs.getTimestamp("appointment_scheduled_at")),
@@ -83,7 +90,15 @@ public class SecuredLoanProcedureRepository {
                             cp.employment_status AS customer_employment_status,
                             lr.amount,
                             lr.term_months,
+                            lr.approved_amount,
+                            lr.approved_term_months,
+                            lr.approved_annual_rate,
+                            lr.approved_monthly_payment,
+                            lr.collateral_value AS declared_collateral_value,
                             lr.status AS loan_status,
+                            lr.assigned_staff_user_id,
+                            assigned_staff.email AS assigned_staff_email,
+                            lr.assigned_at,
                             la.id AS appointment_id,
                             la.staff_id AS appointment_staff_id,
                             appointment_staff.email AS appointment_staff_email,
@@ -141,6 +156,7 @@ public class SecuredLoanProcedureRepository {
                             sp.updated_at AS procedure_updated_at
                         FROM loan_requests lr
                         INNER JOIN users u ON u.id = lr.customer_id
+                        LEFT JOIN users assigned_staff ON assigned_staff.id = lr.assigned_staff_user_id
                         LEFT JOIN customer_profiles cp ON cp.user_id = lr.customer_id
                         LEFT JOIN loan_appointments la ON la.id = (
                             SELECT la_latest.id
@@ -321,7 +337,62 @@ public class SecuredLoanProcedureRepository {
                         SET status = 'COMPLETED',
                             updated_at = CURRENT_TIMESTAMP
                         WHERE loan_request_id = ?
-                          AND status <> 'CANCELLED'
+                          AND status NOT IN ('CANCELLED', 'NO_SHOW')
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT 1
+                        """,
+                loanRequestId);
+    }
+
+    public int rescheduleLatestAppointment(
+            Long loanRequestId,
+            Long staffUserId,
+            Instant scheduledAt,
+            String location,
+            String note) {
+        return jdbcTemplate.update(
+                """
+                        UPDATE loan_appointments
+                        SET staff_id = ?,
+                            scheduled_at = ?,
+                            location = ?,
+                            note = ?,
+                            status = 'SCHEDULED',
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE loan_request_id = ?
+                          AND status <> 'COMPLETED'
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT 1
+                        """,
+                staffUserId,
+                Timestamp.from(scheduledAt),
+                normalize(location),
+                normalize(note),
+                loanRequestId);
+    }
+
+    public int cancelLatestAppointment(Long loanRequestId) {
+        return jdbcTemplate.update(
+                """
+                        UPDATE loan_appointments
+                        SET status = 'CANCELLED',
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE loan_request_id = ?
+                          AND status = 'SCHEDULED'
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT 1
+                        """,
+                loanRequestId);
+    }
+
+    public int markLatestAppointmentNoShow(Long loanRequestId) {
+        return jdbcTemplate.update(
+                """
+                        UPDATE loan_appointments
+                        SET status = 'NO_SHOW',
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE loan_request_id = ?
+                          AND status = 'SCHEDULED'
                         ORDER BY created_at DESC, id DESC
                         LIMIT 1
                         """,
@@ -342,6 +413,14 @@ public class SecuredLoanProcedureRepository {
                     toInstant(rs.getTimestamp("appointment_created_at")));
         }
 
+        StaffRequestDetailResponse.AssignmentSummary assignment = null;
+        if (rs.getObject("assigned_staff_user_id") != null) {
+            assignment = new StaffRequestDetailResponse.AssignmentSummary(
+                    rs.getLong("assigned_staff_user_id"),
+                    rs.getString("assigned_staff_email"),
+                    toInstant(rs.getTimestamp("assigned_at")));
+        }
+
         return new StaffSecuredProcedureResponse(
                 rs.getLong("loan_request_id"),
                 rs.getLong("customer_id"),
@@ -352,7 +431,13 @@ public class SecuredLoanProcedureRepository {
                 rs.getString("customer_employment_status"),
                 rs.getBigDecimal("amount"),
                 rs.getInt("term_months"),
+                rs.getBigDecimal("approved_amount"),
+                (Integer) rs.getObject("approved_term_months"),
+                rs.getBigDecimal("approved_annual_rate"),
+                rs.getBigDecimal("approved_monthly_payment"),
+                rs.getBigDecimal("declared_collateral_value"),
                 LoanStatus.valueOf(rs.getString("loan_status")),
+                assignment,
                 appointment,
                 (Long) rs.getObject("procedure_id"),
                 (Long) rs.getObject("staff_user_id"),

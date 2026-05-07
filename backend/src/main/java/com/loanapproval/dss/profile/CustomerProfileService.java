@@ -62,8 +62,8 @@ public class CustomerProfileService {
             request.monthlyIncome() != null ? request.monthlyIncome() : existing != null ? existing.monthlyIncome() : null,
             existing != null ? existing.verifiedMonthlyIncome() : null,
             existing != null ? existing.debtToIncomeRatio() : null,
-            existing != null ? existing.employmentStatus() : null,
-            existing != null ? existing.employmentStartDate() : null,
+            normalizeEmploymentStatus(request.employmentStatus()),
+            request.employmentStartDate(),
             existing != null ? existing.creditHistoryScore() : null,
             existing != null ? existing.paymentRating() : null,
             storedPayslip != null ? storedPayslip.originalFileName() : existing != null ? existing.payslipOriginalFilename() : null,
@@ -118,11 +118,15 @@ public class CustomerProfileService {
             profile.debtToIncomeRatio(),
             profile.employmentStatus(),
             profile.employmentStartDate(),
-            profile.creditHistoryScore(),
             profile.paymentRating(),
             profile.payslipOriginalFilename(),
             profile.payslipFileSize(),
             profile.payslipUploadedAt()
         );
+    }
+
+    private String normalizeEmploymentStatus(String value) {
+        EmploymentStatus status = EmploymentStatus.fromInput(value);
+        return status != null ? status.name() : null;
     }
 }

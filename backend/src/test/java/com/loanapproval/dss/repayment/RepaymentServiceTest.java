@@ -1,14 +1,17 @@
 package com.loanapproval.dss.repayment;
 
 import com.loanapproval.dss.contract.LoanContract;
+import com.loanapproval.dss.contract.LoanInstallmentService;
 import com.loanapproval.dss.contract.LoanContractService;
 import com.loanapproval.dss.contract.LoanContractStatus;
 import com.loanapproval.dss.loan.LoanPurpose;
 import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
 import com.loanapproval.dss.loan.LoanStatus;
+import com.loanapproval.dss.loan.LoanStatusHistoryService;
 import com.loanapproval.dss.loan.LoanType;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
+import com.loanapproval.dss.repayment.dto.RepaymentHistoryResponse;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -24,7 +27,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -44,7 +49,19 @@ class RepaymentServiceTest {
     private LoanContractService loanContractService;
 
     @Mock
+    private LoanInstallmentService loanInstallmentService;
+
+    @Mock
     private RepaymentScheduleService repaymentScheduleService;
+
+    @Mock
+    private LoanDelinquencyRepository loanDelinquencyRepository;
+
+    @Mock
+    private LoanDelinquencyService loanDelinquencyService;
+
+    @Mock
+    private LoanStatusHistoryService loanStatusHistoryService;
 
     @InjectMocks
     private RepaymentService repaymentService;
@@ -63,7 +80,7 @@ class RepaymentServiceTest {
 
     @Test
     void shouldRejectPaymentWithoutActiveContract() {
-        when(loanRepository.findById(100L)).thenReturn(Optional.of(loan(LoanStatus.DISBURSED)));
+        when(loanRepository.findById(100L)).thenReturn(Optional.of(loan(LoanStatus.ACTIVE)));
         when(loanContractService.findByLoanRequestId(100L)).thenReturn(null);
 
         ResponseStatusException exception = Assertions.assertThrows(
@@ -75,11 +92,11 @@ class RepaymentServiceTest {
     }
 
     @Test
-    void shouldRewardConfirmedInstallmentWhenAmountMatchesCurrentDue() {
+    void shouldApplyModerateRewardForEarlyFullInstallment() {
         when(loanRepository.findById(100L)).thenReturn(Optional.of(loan(LoanStatus.ACTIVE)));
         when(loanContractService.findByLoanRequestId(100L)).thenReturn(contract());
         when(customerProfileRepository.findPaymentRatingByUserId(1L)).thenReturn(Optional.of(10));
-        when(repaymentScheduleService.snapshot(any(), any(), any(Long.class))).thenReturn(new LoanRepaymentSnapshot(
+        when(repaymentScheduleService.snapshot(any(), any(), any(Long.class), any(LocalDate.class))).thenReturn(new LoanRepaymentSnapshot(
                 100L,
                 BigDecimal.valueOf(54_000_000),
                 BigDecimal.valueOf(9_000_000),
@@ -102,7 +119,7 @@ class RepaymentServiceTest {
                         invocation.getArgument(7),
                         invocation.getArgument(8),
                         Instant.now()));
-        when(customerProfileRepository.adjustPaymentRating(1L, 5)).thenReturn(Optional.of(15));
+        when(customerProfileRepository.adjustPaymentRating(1L, 4)).thenReturn(Optional.of(14));
 
         var response = repaymentService.createByStaff(
                 100L,
@@ -112,17 +129,18 @@ class RepaymentServiceTest {
                 null);
 
         Assertions.assertEquals(BigDecimal.valueOf(4_500_000), response.repayment().amountDue());
-        Assertions.assertEquals(5, response.repayment().ratingDelta());
-        Assertions.assertEquals(15, response.currentRating());
+        Assertions.assertEquals(RepaymentStatus.EARLY, response.repayment().repaymentStatus());
+        Assertions.assertEquals(4, response.repayment().ratingDelta());
+        Assertions.assertEquals(14, response.currentRating());
     }
 
     @Test
-    void shouldUseEffectivePaidAtInsteadOfClientPaidAt() {
-        Instant simulatedPaidAt = Instant.parse("2026-05-21T03:00:00Z");
+    void shouldApplySmallRewardForOnTimeFullInstallment() {
+        Instant paidAt = Instant.parse("2026-05-20T03:00:00Z");
         when(loanRepository.findById(100L)).thenReturn(Optional.of(loan(LoanStatus.ACTIVE)));
         when(loanContractService.findByLoanRequestId(100L)).thenReturn(contract());
         when(customerProfileRepository.findPaymentRatingByUserId(1L)).thenReturn(Optional.of(10));
-        when(repaymentScheduleService.snapshot(any(), any(), any(Long.class))).thenReturn(new LoanRepaymentSnapshot(
+        when(repaymentScheduleService.snapshot(any(), any(), any(Long.class), any(LocalDate.class))).thenReturn(new LoanRepaymentSnapshot(
                 100L,
                 BigDecimal.valueOf(54_000_000),
                 BigDecimal.valueOf(9_000_000),
@@ -145,7 +163,55 @@ class RepaymentServiceTest {
                         invocation.getArgument(7),
                         invocation.getArgument(8),
                         Instant.now()));
-        when(customerProfileRepository.adjustPaymentRating(1L, -8)).thenReturn(Optional.of(2));
+        when(customerProfileRepository.adjustPaymentRating(1L, 2)).thenReturn(Optional.of(12));
+
+        var response = repaymentService.createByStaff(
+                100L,
+                1L,
+                BigDecimal.valueOf(4_500_000),
+                paidAt,
+                null);
+
+        Assertions.assertEquals(RepaymentStatus.ON_TIME, response.repayment().repaymentStatus());
+        Assertions.assertEquals(2, response.repayment().ratingDelta());
+        Assertions.assertEquals(12, response.currentRating());
+    }
+
+    @Test
+    void shouldUseEffectivePaidAtInsteadOfClientPaidAt() {
+        Instant simulatedPaidAt = Instant.parse("2026-05-21T03:00:00Z");
+        LoanDelinquencyRecord delinquencyRecord = delinquencyRecord(LocalDate.of(2026, 5, 20), -6);
+        when(loanRepository.findById(100L)).thenReturn(Optional.of(loan(LoanStatus.ACTIVE)));
+        when(loanContractService.findByLoanRequestId(100L)).thenReturn(contract());
+        when(customerProfileRepository.findPaymentRatingByUserId(1L)).thenReturn(Optional.of(10));
+        when(repaymentScheduleService.snapshot(any(), any(), any(Long.class), any(LocalDate.class))).thenReturn(new LoanRepaymentSnapshot(
+                100L,
+                BigDecimal.valueOf(54_000_000),
+                BigDecimal.valueOf(9_000_000),
+                BigDecimal.valueOf(45_000_000),
+                BigDecimal.valueOf(4_500_000),
+                BigDecimal.valueOf(4_500_000),
+                3,
+                LocalDate.of(2026, 5, 20),
+                false,
+                true,
+                1));
+        when(repaymentRepository.create(any(), any(), any(), any(), any(), any(), any(), anyInt(), any()))
+                .thenAnswer(invocation -> new RepaymentRecord(
+                        1L,
+                        100L,
+                        1L,
+                        invocation.getArgument(2),
+                        invocation.getArgument(3),
+                        invocation.getArgument(4),
+                        invocation.getArgument(5),
+                        invocation.getArgument(6),
+                        invocation.getArgument(7),
+                        invocation.getArgument(8),
+                        Instant.now()));
+        when(customerProfileRepository.adjustPaymentRating(1L, 0)).thenReturn(Optional.of(10));
+        when(loanDelinquencyRepository.findLatestByLoanAndDueDate(100L, LocalDate.of(2026, 5, 20)))
+                .thenReturn(Optional.of(delinquencyRecord));
 
         var response = repaymentService.createByStaff(
                 100L,
@@ -156,15 +222,16 @@ class RepaymentServiceTest {
 
         Assertions.assertEquals(simulatedPaidAt, response.repayment().paidAt());
         Assertions.assertEquals(RepaymentStatus.LATE, response.repayment().repaymentStatus());
-        Assertions.assertEquals(-8, response.repayment().ratingDelta());
+        Assertions.assertEquals(-6, response.repayment().ratingDelta());
+        verify(loanDelinquencyService, times(2)).assessLoan(eq(100L), eq(LocalDate.of(2026, 5, 21)));
     }
 
     @Test
-    void shouldRejectAmbiguousPrepaymentBetweenInstallmentAndOutstanding() {
+    void shouldAllowPrepaymentAboveCurrentInstallmentWithEarlyReward() {
         when(loanRepository.findById(100L)).thenReturn(Optional.of(loan(LoanStatus.ACTIVE)));
         when(loanContractService.findByLoanRequestId(100L)).thenReturn(contract());
         when(customerProfileRepository.findPaymentRatingByUserId(1L)).thenReturn(Optional.of(10));
-        when(repaymentScheduleService.snapshot(any(), any(), any(Long.class))).thenReturn(new LoanRepaymentSnapshot(
+        when(repaymentScheduleService.snapshot(any(), any(), any(Long.class), any(LocalDate.class))).thenReturn(new LoanRepaymentSnapshot(
                 100L,
                 BigDecimal.valueOf(54_000_000),
                 BigDecimal.valueOf(9_000_000),
@@ -175,17 +242,31 @@ class RepaymentServiceTest {
                 LocalDate.now().plusDays(2),
                 false));
 
-        ResponseStatusException exception = Assertions.assertThrows(
-                ResponseStatusException.class,
-                () -> repaymentService.createByStaff(
+        when(repaymentRepository.create(any(), any(), any(), any(), any(), any(), any(), anyInt(), any()))
+                .thenAnswer(invocation -> new RepaymentRecord(
+                        1L,
                         100L,
                         1L,
-                        BigDecimal.valueOf(5_000_000),
-                        Instant.now(),
-                        null));
+                        invocation.getArgument(2),
+                        invocation.getArgument(3),
+                        invocation.getArgument(4),
+                        invocation.getArgument(5),
+                        invocation.getArgument(6),
+                        invocation.getArgument(7),
+                        invocation.getArgument(8),
+                        Instant.now()));
+        when(customerProfileRepository.adjustPaymentRating(1L, 4)).thenReturn(Optional.of(14));
 
-        Assertions.assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
-        verify(repaymentRepository, never()).create(any(), any(), any(), any(), any(), any(), any(), anyInt(), any());
+        var response = repaymentService.createByStaff(
+                100L,
+                1L,
+                BigDecimal.valueOf(5_000_000),
+                Instant.now(),
+                null);
+
+        Assertions.assertEquals(BigDecimal.valueOf(5_000_000), response.repayment().amountPaid());
+        Assertions.assertEquals(RepaymentStatus.EARLY, response.repayment().repaymentStatus());
+        Assertions.assertEquals(4, response.repayment().ratingDelta());
     }
 
     @Test
@@ -193,7 +274,7 @@ class RepaymentServiceTest {
         when(loanRepository.findById(100L)).thenReturn(Optional.of(loan(LoanStatus.ACTIVE)));
         when(loanContractService.findByLoanRequestId(100L)).thenReturn(contract());
         when(customerProfileRepository.findPaymentRatingByUserId(1L)).thenReturn(Optional.of(10));
-        when(repaymentScheduleService.snapshot(any(), any(), any(Long.class))).thenReturn(new LoanRepaymentSnapshot(
+        when(repaymentScheduleService.snapshot(any(), any(), any(Long.class), any(LocalDate.class))).thenReturn(new LoanRepaymentSnapshot(
                 100L,
                 BigDecimal.valueOf(54_000_000),
                 BigDecimal.valueOf(53_000_000),
@@ -215,6 +296,54 @@ class RepaymentServiceTest {
 
         Assertions.assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
         verify(repaymentRepository, never()).create(any(), any(), any(), any(), any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void shouldExposeLatePenaltyInRepaymentHistoryWhenStoredRepaymentDeltaIsZero() {
+        RepaymentRecord record = new RepaymentRecord(
+                1L,
+                100L,
+                1L,
+                BigDecimal.valueOf(4_500_000),
+                BigDecimal.valueOf(4_500_000),
+                LocalDate.of(2026, 5, 20),
+                Instant.parse("2026-05-21T03:00:00Z"),
+                RepaymentStatus.LATE,
+                0,
+                "bill",
+                Instant.now());
+        LoanDelinquencyRecord delinquencyRecord = delinquencyRecord(LocalDate.of(2026, 5, 20), -6);
+
+        when(customerProfileRepository.findPaymentRatingByUserId(1L)).thenReturn(Optional.of(4));
+        when(repaymentRepository.findByCustomerId(1L)).thenReturn(java.util.List.of(record));
+        when(loanDelinquencyRepository.findLatestByLoanAndDueDate(100L, LocalDate.of(2026, 5, 20)))
+                .thenReturn(Optional.of(delinquencyRecord));
+
+        RepaymentHistoryResponse history = repaymentService.listMine(1L);
+
+        Assertions.assertEquals(1, history.items().size());
+        Assertions.assertEquals(-6, history.items().get(0).ratingDelta());
+    }
+
+    private LoanDelinquencyRecord delinquencyRecord(LocalDate dueDate, int totalRatingDelta) {
+        Instant now = Instant.now();
+        return new LoanDelinquencyRecord(
+                10L,
+                100L,
+                1L,
+                1,
+                dueDate,
+                BigDecimal.valueOf(4_500_000),
+                BigDecimal.ZERO,
+                1,
+                1,
+                totalRatingDelta,
+                LoanDelinquencyStatus.CURED,
+                now,
+                now,
+                now,
+                now,
+                now);
     }
 
     private LoanRecord loan(LoanStatus status) {

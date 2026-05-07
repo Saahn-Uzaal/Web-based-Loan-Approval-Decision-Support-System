@@ -17,6 +17,7 @@ public record PaymentConfirmationRequestRecord(
         String proofContentType,
         Long proofFileSize,
         String customerNote,
+        String idempotencyKey,
         PaymentConfirmationStatus status,
         Long reviewedBy,
         Instant reviewedAt,

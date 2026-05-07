@@ -39,6 +39,7 @@ public class PaymentConfirmationRepository {
                         "proof_content_type",
                         "proof_file_size",
                         "customer_note",
+                        "idempotency_key",
                         "status")
                 .usingGeneratedKeyColumns("id");
     }
@@ -51,7 +52,8 @@ public class PaymentConfirmationRepository {
             Integer expectedInstallmentNumber,
             LocalDate expectedDueDate,
             StoredPaymentProof proof,
-            String customerNote) {
+            String customerNote,
+            String idempotencyKey) {
         Map<String, Object> values = new HashMap<>();
         values.put("loan_request_id", loanRequestId);
         values.put("customer_id", customerId);
@@ -64,6 +66,7 @@ public class PaymentConfirmationRepository {
         values.put("proof_content_type", proof.contentType());
         values.put("proof_file_size", proof.fileSize());
         values.put("customer_note", customerNote);
+        values.put("idempotency_key", idempotencyKey);
         values.put("status", PaymentConfirmationStatus.PENDING_REVIEW.name());
 
         Number id = insertConfirmation.executeAndReturnKey(values);
@@ -86,71 +89,24 @@ public class PaymentConfirmationRepository {
         return count != null && count > 0;
     }
 
+    public Optional<PaymentConfirmationRequestRecord> findByCustomerIdAndIdempotencyKey(Long customerId, String idempotencyKey) {
+        return jdbcTemplate.query(
+                selectSql() + " WHERE customer_id = ? AND idempotency_key = ?",
+                this::mapRecord,
+                customerId,
+                idempotencyKey).stream().findFirst();
+    }
+
     public List<PaymentConfirmationRequestRecord> findByCustomerId(Long customerId) {
         return jdbcTemplate.query(
-                """
-                SELECT
-                    id,
-                    loan_request_id,
-                    customer_id,
-                    expected_amount_due,
-                    expected_outstanding_amount,
-                    expected_installment_number,
-                    expected_due_date,
-                    proof_original_filename,
-                    proof_storage_name,
-                    proof_content_type,
-                    proof_file_size,
-                    customer_note,
-                    status,
-                    reviewed_by,
-                    reviewed_at,
-                    confirmed_amount,
-                    confirmed_paid_at,
-                    bank_transaction_code,
-                    staff_note,
-                    rejection_reason,
-                    repayment_id,
-                    created_at,
-                    updated_at
-                FROM payment_confirmation_requests
-                WHERE customer_id = ?
-                ORDER BY created_at DESC, id DESC
-                """,
+                selectSql() + " WHERE customer_id = ? ORDER BY created_at DESC, id DESC",
                 this::mapRecord,
                 customerId);
     }
 
     public Optional<PaymentConfirmationRequestRecord> findByIdAndCustomerId(Long id, Long customerId) {
         return jdbcTemplate.query(
-                """
-                SELECT
-                    id,
-                    loan_request_id,
-                    customer_id,
-                    expected_amount_due,
-                    expected_outstanding_amount,
-                    expected_installment_number,
-                    expected_due_date,
-                    proof_original_filename,
-                    proof_storage_name,
-                    proof_content_type,
-                    proof_file_size,
-                    customer_note,
-                    status,
-                    reviewed_by,
-                    reviewed_at,
-                    confirmed_amount,
-                    confirmed_paid_at,
-                    bank_transaction_code,
-                    staff_note,
-                    rejection_reason,
-                    repayment_id,
-                    created_at,
-                    updated_at
-                FROM payment_confirmation_requests
-                WHERE id = ? AND customer_id = ?
-                """,
+                selectSql() + " WHERE id = ? AND customer_id = ?",
                 this::mapRecord,
                 id,
                 customerId).stream().findFirst();
@@ -158,34 +114,7 @@ public class PaymentConfirmationRepository {
 
     public Optional<PaymentConfirmationRequestRecord> findById(Long id) {
         return jdbcTemplate.query(
-                """
-                SELECT
-                    id,
-                    loan_request_id,
-                    customer_id,
-                    expected_amount_due,
-                    expected_outstanding_amount,
-                    expected_installment_number,
-                    expected_due_date,
-                    proof_original_filename,
-                    proof_storage_name,
-                    proof_content_type,
-                    proof_file_size,
-                    customer_note,
-                    status,
-                    reviewed_by,
-                    reviewed_at,
-                    confirmed_amount,
-                    confirmed_paid_at,
-                    bank_transaction_code,
-                    staff_note,
-                    rejection_reason,
-                    repayment_id,
-                    created_at,
-                    updated_at
-                FROM payment_confirmation_requests
-                WHERE id = ?
-                """,
+                selectSql() + " WHERE id = ?",
                 this::mapRecord,
                 id).stream().findFirst();
     }
@@ -214,7 +143,8 @@ public class PaymentConfirmationRepository {
                         CASE pcr.status
                             WHEN 'PENDING_REVIEW' THEN 0
                             WHEN 'REJECTED' THEN 1
-                            ELSE 2
+                            WHEN 'CANCELLED_BY_CUSTOMER' THEN 2
+                            ELSE 3
                         END,
                         pcr.created_at DESC,
                         pcr.id DESC
@@ -311,6 +241,59 @@ public class PaymentConfirmationRepository {
                 id);
     }
 
+    public int markCancelledByCustomer(Long id, Long customerId) {
+        return jdbcTemplate.update(
+                """
+                UPDATE payment_confirmation_requests
+                SET status = 'CANCELLED_BY_CUSTOMER',
+                    reviewed_by = NULL,
+                    reviewed_at = NULL,
+                    confirmed_amount = NULL,
+                    confirmed_paid_at = NULL,
+                    bank_transaction_code = NULL,
+                    staff_note = NULL,
+                    rejection_reason = NULL,
+                    repayment_id = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                  AND customer_id = ?
+                  AND status = 'PENDING_REVIEW'
+                """,
+                id,
+                customerId);
+    }
+
+    private String selectSql() {
+        return """
+                SELECT
+                    id,
+                    loan_request_id,
+                    customer_id,
+                    expected_amount_due,
+                    expected_outstanding_amount,
+                    expected_installment_number,
+                    expected_due_date,
+                    proof_original_filename,
+                    proof_storage_name,
+                    proof_content_type,
+                    proof_file_size,
+                    customer_note,
+                    idempotency_key,
+                    status,
+                    reviewed_by,
+                    reviewed_at,
+                    confirmed_amount,
+                    confirmed_paid_at,
+                    bank_transaction_code,
+                    staff_note,
+                    rejection_reason,
+                    repayment_id,
+                    created_at,
+                    updated_at
+                FROM payment_confirmation_requests
+                """;
+    }
+
     private PaymentConfirmationRequestRecord mapRecord(ResultSet rs, int rowNum) throws SQLException {
         return new PaymentConfirmationRequestRecord(
                 rs.getLong("id"),
@@ -325,6 +308,7 @@ public class PaymentConfirmationRepository {
                 rs.getString("proof_content_type"),
                 rs.getLong("proof_file_size"),
                 rs.getString("customer_note"),
+                rs.getString("idempotency_key"),
                 PaymentConfirmationStatus.valueOf(rs.getString("status")),
                 (Long) rs.getObject("reviewed_by"),
                 toInstant(rs.getTimestamp("reviewed_at")),

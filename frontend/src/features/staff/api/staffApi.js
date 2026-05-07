@@ -1,4 +1,5 @@
 import { apiRequest, downloadFile, getFileObjectUrl } from "@/shared/api/http";
+import { buildQueryString, fetchAllPageResponse } from "@/shared/api/paged";
 
 function buildDemoHeaders(demoNow) {
   if (!demoNow) {
@@ -10,15 +11,27 @@ function buildDemoHeaders(demoNow) {
 }
 
 export function getStaffRequestsApi(token, status) {
-  const query = status ? `?status=${encodeURIComponent(status)}` : "";
-  return apiRequest(`/api/staff/requests${query}`, {
+  return fetchAllPageResponse("/api/staff/requests/paged", {
+    token,
+    params: { status }
+  }).then((response) => (Array.isArray(response?.content) ? response.content : []));
+}
+
+export function getStaffRequestsPagedApi(token, { status, page = 0, size = 10 } = {}) {
+  return apiRequest(`/api/staff/requests/paged${buildQueryString({ status, page, size })}`, {
     token
   });
 }
 
 export function getStaffLoanOperationsApi(token, status) {
-  const query = status ? `?status=${encodeURIComponent(status)}` : "";
-  return apiRequest(`/api/staff/requests/operations${query}`, {
+  return fetchAllPageResponse("/api/staff/requests/operations/paged", {
+    token,
+    params: { status }
+  }).then((response) => (Array.isArray(response?.content) ? response.content : []));
+}
+
+export function getStaffLoanOperationsPagedApi(token, { status, page = 0, size = 10 } = {}) {
+  return apiRequest(`/api/staff/requests/operations/paged${buildQueryString({ status, page, size })}`, {
     token
   });
 }
@@ -51,6 +64,20 @@ export function disburseStaffLoanApi(token, id) {
   });
 }
 
+export function assignStaffCaseApi(token, id) {
+  return apiRequest(`/api/staff/requests/${id}/assign`, {
+    method: "POST",
+    token
+  });
+}
+
+export function releaseStaffCaseApi(token, id) {
+  return apiRequest(`/api/staff/requests/${id}/release`, {
+    method: "POST",
+    token
+  });
+}
+
 export function updateStaffCustomerVerificationApi(token, customerId, payload) {
   return apiRequest(`/api/staff/verifications/${customerId}`, {
     method: "PUT",
@@ -59,8 +86,16 @@ export function updateStaffCustomerVerificationApi(token, customerId, payload) {
   });
 }
 
-export function downloadStaffLoanDocumentApi(token, loanId, documentType, fileName) {
-  return downloadFile(`/api/staff/requests/${loanId}/documents/${documentType}`, {
+export function updateStaffRequestVerificationApi(token, loanId, payload) {
+  return apiRequest(`/api/staff/requests/${loanId}/verification`, {
+    method: "PUT",
+    token,
+    body: payload
+  });
+}
+
+export function downloadStaffLoanDocumentApi(token, loanId, documentId, fileName) {
+  return downloadFile(`/api/staff/requests/${loanId}/documents/${documentId}`, {
     token,
     fileName
   });
@@ -84,6 +119,28 @@ export function saveStaffSecuredProcedureApi(token, loanId, payload, demoNow) {
     token,
     body: payload,
     headers: buildDemoHeaders(demoNow)
+  });
+}
+
+export function rescheduleStaffSecuredAppointmentApi(token, loanId, payload) {
+  return apiRequest(`/api/staff/secured-procedures/${loanId}/appointments/reschedule`, {
+    method: "POST",
+    token,
+    body: payload
+  });
+}
+
+export function cancelStaffSecuredAppointmentApi(token, loanId) {
+  return apiRequest(`/api/staff/secured-procedures/${loanId}/appointments/cancel`, {
+    method: "POST",
+    token
+  });
+}
+
+export function noShowStaffSecuredAppointmentApi(token, loanId) {
+  return apiRequest(`/api/staff/secured-procedures/${loanId}/appointments/no-show`, {
+    method: "POST",
+    token
   });
 }
 

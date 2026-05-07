@@ -1,6 +1,7 @@
 package com.loanapproval.dss.loan.dto;
 
 import com.loanapproval.dss.loan.CollateralType;
+import com.loanapproval.dss.loan.LoanAppointmentSummary;
 import com.loanapproval.dss.loan.LoanPurpose;
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.loan.LoanType;
@@ -25,6 +26,7 @@ public record LoanDetailResponse(
         BigDecimal approvedMonthlyPayment,
         String decisionPolicyVersion,
         String intakeNote,
+        LoanAppointmentSummary appointment,
         List<LoanDocumentResponse> documents,
         Instant createdAt,
         Instant updatedAt) {

@@ -2,6 +2,7 @@ package com.loanapproval.dss.verification;
 
 import com.loanapproval.dss.compliance.ComplianceAuditService;
 import com.loanapproval.dss.compliance.ComplianceOutcome;
+import com.loanapproval.dss.customerinfo.CustomerInformationVerificationService;
 import com.loanapproval.dss.verification.dto.CustomerVerificationResponse;
 import com.loanapproval.dss.verification.dto.UpdateCustomerVerificationRequest;
 import java.time.Instant;
@@ -12,13 +13,16 @@ import org.springframework.transaction.annotation.Transactional;
 public class CustomerVerificationService {
 
     private final CustomerVerificationRepository customerVerificationRepository;
+    private final CustomerInformationVerificationService customerInformationVerificationService;
     private final ComplianceAuditService complianceAuditService;
 
     public CustomerVerificationService(
         CustomerVerificationRepository customerVerificationRepository,
+        CustomerInformationVerificationService customerInformationVerificationService,
         ComplianceAuditService complianceAuditService
     ) {
         this.customerVerificationRepository = customerVerificationRepository;
+        this.customerInformationVerificationService = customerInformationVerificationService;
         this.complianceAuditService = complianceAuditService;
     }
 
@@ -67,6 +71,7 @@ public class CustomerVerificationService {
             outcome,
             buildVerificationDetails(updated)
         );
+        customerInformationVerificationService.syncFromLoanApprovalVerification(customerId, staffUserId, updated);
 
         return toResponse(updated);
     }

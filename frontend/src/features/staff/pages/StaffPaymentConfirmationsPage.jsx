@@ -52,11 +52,30 @@ function confirmationColor(status) {
   if (status === "REJECTED") {
     return "error";
   }
+  if (status === "CANCELLED_BY_CUSTOMER") {
+    return "default";
+  }
   return "warning";
 }
 
 function repaymentColor(status) {
-  return status === "ON_TIME" ? "success" : "error";
+  if (status === "EARLY") {
+    return "success";
+  }
+  if (status === "ON_TIME") {
+    return "info";
+  }
+  return "error";
+}
+
+function repaymentAlertSeverity(status) {
+  if (status === "EARLY") {
+    return "success";
+  }
+  if (status === "ON_TIME") {
+    return "info";
+  }
+  return "warning";
 }
 
 function formatDateTime(value) {
@@ -134,6 +153,7 @@ function QueueList({ rows, loading, error, status, setStatus }) {
           >
             <MenuItem value="">Tất cả</MenuItem>
             <MenuItem value="PENDING_REVIEW">Chờ đối chiếu</MenuItem>
+            <MenuItem value="CANCELLED_BY_CUSTOMER">Đã hủy bởi khách hàng</MenuItem>
             <MenuItem value="CONFIRMED">Đã xác nhận</MenuItem>
             <MenuItem value="REJECTED">Bị từ chối</MenuItem>
           </Select>
@@ -215,7 +235,7 @@ function QueueList({ rows, loading, error, status, setStatus }) {
 export default function StaffPaymentConfirmationsPage() {
   const { confirmationId } = useParams();
   const { accessToken } = useAuth();
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState("PENDING_REVIEW");
   const [rows, setRows] = useState([]);
   const [detail, setDetail] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -316,6 +336,14 @@ export default function StaffPaymentConfirmationsPage() {
     setForm((prev) => ({
       ...prev,
       [field]: event.target.value
+    }));
+  };
+
+  const handleConfirmedAmountChange = (event) => {
+    setFieldErrors((prev) => clearFieldError(prev, "confirmedAmount"));
+    setForm((prev) => ({
+      ...prev,
+      confirmedAmount: formatVndInput(event.target.value)
     }));
   };
 
@@ -430,7 +458,7 @@ export default function StaffPaymentConfirmationsPage() {
         <Stack spacing={0.5}>
           <Typography variant="h4">Đối chiếu biên lai thanh toán #{confirmationId}</Typography>
           <Typography color="text.secondary">
-            Nhân viên xác nhận biên lai hợp lệ, nhập số tiền và thời điểm giao dịch; hệ thống sẽ tự quyết định thanh toán đúng hạn hay trễ hạn.
+            Nhân viên xác nhận biên lai hợp lệ, nhập số tiền và thời điểm giao dịch; hệ thống sẽ tự quyết định thanh toán trả sớm, đúng hạn hay trễ hạn.
           </Typography>
         </Stack>
         <Button component={RouterLink} to="/staff/payment-confirmations" variant="outlined">
@@ -514,7 +542,7 @@ export default function StaffPaymentConfirmationsPage() {
             <Paper sx={{ p: 3 }}>
               <Stack spacing={2}>
                 {detail.status === "CONFIRMED" && (
-                  <Alert severity={detail.repaymentStatus === "ON_TIME" ? "success" : "warning"}>
+                  <Alert severity={repaymentAlertSeverity(detail.repaymentStatus)}>
                     Đã xác nhận biên lai. Kết quả ghi nhận là {labelRepaymentStatus(detail.repaymentStatus)} với biến động điểm{" "}
                     {detail.ratingDelta > 0 ? `+${detail.ratingDelta}` : detail.ratingDelta}.
                   </Alert>
@@ -524,6 +552,11 @@ export default function StaffPaymentConfirmationsPage() {
                     Biên lai đã bị từ chối{detail.rejectionReason ? `: ${detail.rejectionReason}` : "."}
                   </Alert>
                 )}
+                {detail.status === "CANCELLED_BY_CUSTOMER" && (
+                  <Alert severity="info">
+                    Khách hàng đã hủy biên lai này trước khi nhân viên đối chiếu. Yêu cầu không còn cần xử lý.
+                  </Alert>
+                )}
                 {detail.customerNote && <Alert severity="info">Ghi chú từ khách hàng: {detail.customerNote}</Alert>}
 
                 <Grid container spacing={2}>
@@ -531,13 +564,14 @@ export default function StaffPaymentConfirmationsPage() {
                     <TextField
                       label="Số tiền xác nhận"
                       value={reviewLocked ? formatVnd(detail.confirmedAmount || detail.expectedAmountDue) : form.confirmedAmount}
-                      onChange={handleChange("confirmedAmount")}
+                      onChange={handleConfirmedAmountChange}
                       fullWidth
+                      inputProps={{ inputMode: "numeric" }}
                       disabled={reviewLocked || submitting}
                       {...fieldErrorProps(
                         fieldErrors,
                         "confirmedAmount",
-                        "Phải bằng số tiền đến hạn kỳ này hoặc bằng toàn bộ dư nợ để tất toán."
+                        "Có thể xác nhận thanh toán một phần, trả đủ kỳ, trả trước hoặc tất toán; không vượt dư nợ còn lại."
                       )}
                     />
                   </Grid>
