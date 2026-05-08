@@ -5,6 +5,7 @@ import com.loanapproval.dss.auth.UserRepository;
 import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
 import com.loanapproval.dss.loan.LoanStatus;
+import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.profile.CustomerProfile;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
 import com.loanapproval.dss.repayment.PaymentProofStorageService.StoredPaymentProof;
@@ -33,6 +34,7 @@ public class PaymentConfirmationService {
     private final RepaymentService repaymentService;
     private final RepaymentRepository repaymentRepository;
     private final LoanDelinquencyRepository loanDelinquencyRepository;
+    private final NotificationService notificationService;
 
     public PaymentConfirmationService(
             PaymentConfirmationRepository paymentConfirmationRepository,
@@ -42,7 +44,8 @@ public class PaymentConfirmationService {
             CustomerProfileRepository customerProfileRepository,
             RepaymentService repaymentService,
             RepaymentRepository repaymentRepository,
-            LoanDelinquencyRepository loanDelinquencyRepository) {
+            LoanDelinquencyRepository loanDelinquencyRepository,
+            NotificationService notificationService) {
         this.paymentConfirmationRepository = paymentConfirmationRepository;
         this.paymentProofStorageService = paymentProofStorageService;
         this.loanRepository = loanRepository;
@@ -51,6 +54,7 @@ public class PaymentConfirmationService {
         this.repaymentService = repaymentService;
         this.repaymentRepository = repaymentRepository;
         this.loanDelinquencyRepository = loanDelinquencyRepository;
+        this.notificationService = notificationService;
     }
 
     public List<PaymentConfirmationItemResponse> listMine(Long customerId) {
@@ -183,6 +187,12 @@ public class PaymentConfirmationService {
             if (updated == 0) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Yêu cầu này đã thay đổi trong lúc xử lý");
             }
+            notificationService.notifyCustomerPaymentRejected(
+                    confirmationId,
+                    record.loanRequestId(),
+                    record.customerId(),
+                    staffUserId,
+                    rejectionReason);
             return getForStaff(confirmationId);
         }
 
@@ -210,7 +220,8 @@ public class PaymentConfirmationService {
                 record.customerId(),
                 confirmedAmount,
                 confirmedPaidAt,
-                repaymentNote);
+                repaymentNote,
+                staffUserId);
 
         int updated = paymentConfirmationRepository.markConfirmed(
                 confirmationId,
@@ -224,6 +235,12 @@ public class PaymentConfirmationService {
         if (updated == 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Yêu cầu này đã thay đổi trong lúc xử lý");
         }
+        notificationService.notifyCustomerPaymentConfirmed(
+                confirmationId,
+                record.loanRequestId(),
+                record.customerId(),
+                staffUserId,
+                confirmedAmount);
 
         return getForStaff(confirmationId);
     }
@@ -245,6 +262,13 @@ public class PaymentConfirmationService {
                 storedProof,
                 sanitizeNote(note),
                 idempotencyKey);
+        notificationService.notifyStaffPaymentConfirmationSubmitted(
+                created.id(),
+                loanRequestId,
+                customerId,
+                loanRepository.findAssignedStaffUserId(loanRequestId).orElse(null),
+                snapshot.installmentNumber(),
+                snapshot.currentAmountDue());
         return toCustomerItemResponse(created);
     }
 

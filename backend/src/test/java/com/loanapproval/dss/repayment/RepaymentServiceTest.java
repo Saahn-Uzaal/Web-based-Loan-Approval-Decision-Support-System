@@ -10,6 +10,7 @@ import com.loanapproval.dss.loan.LoanRepository;
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.loan.LoanStatusHistoryService;
 import com.loanapproval.dss.loan.LoanType;
+import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
 import com.loanapproval.dss.repayment.dto.RepaymentHistoryResponse;
 import java.math.BigDecimal;
@@ -62,6 +63,9 @@ class RepaymentServiceTest {
 
     @Mock
     private LoanStatusHistoryService loanStatusHistoryService;
+
+    @Mock
+    private NotificationService notificationService;
 
     @InjectMocks
     private RepaymentService repaymentService;
@@ -323,6 +327,62 @@ class RepaymentServiceTest {
 
         Assertions.assertEquals(1, history.items().size());
         Assertions.assertEquals(-6, history.items().get(0).ratingDelta());
+    }
+
+    @Test
+    void shouldNotifyCustomerWhenRepaymentFullyClosesLoan() {
+        Instant paidAt = Instant.parse("2026-05-20T03:00:00Z");
+        when(loanRepository.findById(100L)).thenReturn(Optional.of(loan(LoanStatus.ACTIVE)));
+        when(loanContractService.findByLoanRequestId(100L)).thenReturn(contract());
+        when(customerProfileRepository.findPaymentRatingByUserId(1L)).thenReturn(Optional.of(10));
+        when(repaymentScheduleService.snapshot(any(), any(), any(Long.class), any(LocalDate.class)))
+                .thenReturn(
+                        new LoanRepaymentSnapshot(
+                                100L,
+                                BigDecimal.valueOf(4_500_000),
+                                BigDecimal.valueOf(4_500_000),
+                                BigDecimal.valueOf(4_500_000),
+                                BigDecimal.valueOf(4_500_000),
+                                BigDecimal.valueOf(4_500_000),
+                                12,
+                                LocalDate.of(2026, 5, 20),
+                                false),
+                        new LoanRepaymentSnapshot(
+                                100L,
+                                BigDecimal.valueOf(4_500_000),
+                                BigDecimal.ZERO,
+                                BigDecimal.ZERO,
+                                BigDecimal.ZERO,
+                                BigDecimal.valueOf(4_500_000),
+                                12,
+                                LocalDate.of(2026, 5, 20),
+                                true));
+        when(repaymentRepository.create(any(), any(), any(), any(), any(), any(), any(), anyInt(), any()))
+                .thenAnswer(invocation -> new RepaymentRecord(
+                        1L,
+                        100L,
+                        1L,
+                        invocation.getArgument(2),
+                        invocation.getArgument(3),
+                        invocation.getArgument(4),
+                        invocation.getArgument(5),
+                        invocation.getArgument(6),
+                        invocation.getArgument(7),
+                        invocation.getArgument(8),
+                        Instant.now()));
+        when(customerProfileRepository.adjustPaymentRating(1L, 2)).thenReturn(Optional.of(12));
+
+        var response = repaymentService.createByStaff(
+                100L,
+                1L,
+                BigDecimal.valueOf(4_500_000),
+                paidAt,
+                "tất toán",
+                8L);
+
+        Assertions.assertEquals(RepaymentStatus.ON_TIME, response.repayment().repaymentStatus());
+        verify(loanRepository).updateStatus(100L, LoanStatus.CLOSED);
+        verify(notificationService).notifyCustomerLoanClosed(100L, 1L, 8L);
     }
 
     private LoanDelinquencyRecord delinquencyRecord(LocalDate dueDate, int totalRatingDelta) {

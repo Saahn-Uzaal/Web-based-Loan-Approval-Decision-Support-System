@@ -206,6 +206,149 @@ public class NotificationService {
         );
     }
 
+    public void notifyCustomerLoanDisbursed(
+        Long loanRequestId,
+        Long customerId,
+        Long staffUserId,
+        BigDecimal disbursedAmount
+    ) {
+        String message = "Khoản vay #" + loanRequestId
+            + " đã được giải ngân thành công và chính thức có hiệu lực.";
+        if (disbursedAmount != null && disbursedAmount.compareTo(BigDecimal.ZERO) > 0) {
+            message = message + " Số tiền giải ngân: " + formatMoney(disbursedAmount) + ".";
+        }
+
+        createForRecipients(
+            List.of(customerId),
+            staffUserId,
+            NotificationCategory.LOAN_DISBURSED,
+            "Khoản vay đã được giải ngân",
+            message,
+            "/customer/loans/" + loanRequestId
+        );
+    }
+
+    public void notifyStaffLoanContractAccepted(
+        Long loanRequestId,
+        Long customerId,
+        Long assignedStaffUserId,
+        LoanType loanType
+    ) {
+        if (assignedStaffUserId == null) {
+            return;
+        }
+
+        String loanLabel = loanType == LoanType.SECURED ? "vay thế chấp" : "vay tín chấp";
+        createForRecipient(
+            assignedStaffUserId,
+            customerId,
+            NotificationCategory.LOAN_CONTRACT_ACCEPTED,
+            "Khách hàng đã chấp nhận hợp đồng vay",
+            "Khách hàng vừa chấp nhận điều khoản cho hồ sơ " + loanLabel + " #" + loanRequestId
+                + ". Bạn có thể vào hệ thống để thực hiện bước giải ngân tiếp theo.",
+            "/staff/requests/" + loanRequestId
+        );
+    }
+
+    public void notifyStaffLoanWithdrawn(
+        Long loanRequestId,
+        Long customerId,
+        Long assignedStaffUserId,
+        LoanType loanType
+    ) {
+        if (assignedStaffUserId == null) {
+            return;
+        }
+
+        String loanLabel = loanType == LoanType.SECURED ? "vay thế chấp" : "vay tín chấp";
+        createForRecipient(
+            assignedStaffUserId,
+            customerId,
+            NotificationCategory.LOAN_WITHDRAWN,
+            "Khách hàng đã rút hồ sơ vay",
+            "Khách hàng vừa rút hồ sơ " + loanLabel + " #" + loanRequestId
+                + ". Bạn nên dừng các bước thẩm định hoặc chuẩn bị hồ sơ liên quan.",
+            "/staff/requests/" + loanRequestId
+        );
+    }
+
+    public void notifyStaffPaymentConfirmationSubmitted(
+        Long confirmationId,
+        Long loanRequestId,
+        Long customerId,
+        Long assignedStaffUserId,
+        Integer installmentNumber,
+        BigDecimal expectedAmountDue
+    ) {
+        StringBuilder message = new StringBuilder("Khách hàng vừa gửi bill xác nhận thanh toán cho khoản vay #")
+            .append(loanRequestId);
+        if (installmentNumber != null) {
+            message.append(", kỳ #").append(installmentNumber);
+        }
+        if (expectedAmountDue != null && expectedAmountDue.compareTo(BigDecimal.ZERO) > 0) {
+            message.append(". Số tiền kỳ vọng: ").append(formatMoney(expectedAmountDue));
+        }
+        message.append(". Vui lòng vào hệ thống để đối soát.");
+
+        createForAssignedStaffOrStaffRole(
+            assignedStaffUserId,
+            customerId,
+            NotificationCategory.PAYMENT_CONFIRMATION_SUBMITTED,
+            "Có yêu cầu xác nhận thanh toán mới",
+            message.toString(),
+            "/staff/payment-confirmations/" + confirmationId
+        );
+    }
+
+    public void notifyCustomerPaymentConfirmed(
+        Long confirmationId,
+        Long loanRequestId,
+        Long customerId,
+        Long staffUserId,
+        BigDecimal confirmedAmount
+    ) {
+        String message = "Yêu cầu xác nhận thanh toán #" + confirmationId
+            + " cho khoản vay #" + loanRequestId
+            + " đã được duyệt thành công.";
+        if (confirmedAmount != null && confirmedAmount.compareTo(BigDecimal.ZERO) > 0) {
+            message = message + " Số tiền đã ghi nhận: " + formatMoney(confirmedAmount) + ".";
+        }
+
+        createForRecipients(
+            List.of(customerId),
+            staffUserId,
+            NotificationCategory.PAYMENT_CONFIRMED,
+            "Thanh toán đã được ghi nhận",
+            message,
+            "/customer/payments"
+        );
+    }
+
+    public void notifyCustomerPaymentRejected(
+        Long confirmationId,
+        Long loanRequestId,
+        Long customerId,
+        Long staffUserId,
+        String rejectionReason
+    ) {
+        String message = "Yêu cầu xác nhận thanh toán #" + confirmationId
+            + " cho khoản vay #" + loanRequestId
+            + " đã bị từ chối.";
+        if (rejectionReason != null && !rejectionReason.isBlank()) {
+            message = message + " Lý do: " + rejectionReason.trim();
+        }
+        message = message + " Vui lòng kiểm tra lại biên lai và gửi lại nếu cần.";
+
+        createForRecipients(
+            List.of(customerId),
+            staffUserId,
+            NotificationCategory.PAYMENT_REJECTED,
+            "Thanh toán chưa được chấp nhận",
+            message,
+            "/customer/payments"
+        );
+    }
+
     public void notifyCustomerPaymentDueSoon(
         Long loanRequestId,
         Long customerId,
@@ -230,6 +373,66 @@ public class NotificationService {
         );
     }
 
+    public void notifyCustomerLoanOverdue(
+        Long loanRequestId,
+        Long customerId,
+        Integer installmentNumber,
+        LocalDate dueDate,
+        BigDecimal currentAmountDue,
+        long overdueDays
+    ) {
+        StringBuilder message = new StringBuilder("Khoản vay #")
+            .append(loanRequestId)
+            .append(" đã quá hạn thanh toán");
+        if (installmentNumber != null) {
+            message.append(" ở kỳ #").append(installmentNumber);
+        }
+        if (dueDate != null) {
+            message.append(" từ ngày ").append(formatDate(dueDate));
+        }
+        message.append(".");
+        if (currentAmountDue != null && currentAmountDue.compareTo(BigDecimal.ZERO) > 0) {
+            message.append(" Số tiền đang đến hạn: ").append(formatMoney(currentAmountDue)).append(".");
+        }
+        if (overdueDays > 0) {
+            message.append(" Bạn đang chậm ").append(overdueDays).append(" ngày.");
+        }
+        message.append(" Vui lòng thanh toán sớm để tránh ảnh hưởng điểm thanh toán và phát sinh xử lý nợ quá hạn theo chính sách.");
+
+        createForRecipients(
+            List.of(customerId),
+            null,
+            NotificationCategory.LOAN_OVERDUE,
+            "Khoản vay đã quá hạn thanh toán",
+            message.toString(),
+            "/customer/payments"
+        );
+    }
+
+    public void notifyCustomerLoanClosed(Long loanRequestId, Long customerId, Long actorUserId) {
+        createForRecipients(
+            List.of(customerId),
+            actorUserId,
+            NotificationCategory.LOAN_CLOSED,
+            "Khoản vay đã được tất toán",
+            "Khoản vay #" + loanRequestId
+                + " đã được tất toán hoàn toàn. Bạn không còn dư nợ trên hợp đồng này.",
+            "/customer/loans/" + loanRequestId
+        );
+    }
+
+    public void notifyCustomerAppointmentNoShow(Long loanRequestId, Long customerId, Long staffUserId) {
+        createForRecipients(
+            List.of(customerId),
+            staffUserId,
+            NotificationCategory.APPOINTMENT_NO_SHOW,
+            "Bạn đã bỏ lỡ lịch hẹn gặp mặt",
+            "Nhân viên đã ghi nhận bạn vắng mặt ở lịch hẹn của hồ sơ vay #" + loanRequestId
+                + ". Vui lòng liên hệ lại để đặt lịch mới, nếu không hồ sơ có thể bị dừng hoặc hủy.",
+            "/customer/loans/" + loanRequestId
+        );
+    }
+
     private void createForStaff(
         Long actorUserId,
         NotificationCategory type,
@@ -238,6 +441,35 @@ public class NotificationService {
         String link
     ) {
         createForRecipients(userRepository.findIdsByRole(Role.STAFF), actorUserId, type, title, message, link);
+    }
+
+    private void createForRecipient(
+        Long recipientUserId,
+        Long actorUserId,
+        NotificationCategory type,
+        String title,
+        String message,
+        String link
+    ) {
+        if (recipientUserId == null) {
+            return;
+        }
+        createForRecipients(List.of(recipientUserId), actorUserId, type, title, message, link);
+    }
+
+    private void createForAssignedStaffOrStaffRole(
+        Long assignedStaffUserId,
+        Long actorUserId,
+        NotificationCategory type,
+        String title,
+        String message,
+        String link
+    ) {
+        if (assignedStaffUserId != null) {
+            createForRecipient(assignedStaffUserId, actorUserId, type, title, message, link);
+            return;
+        }
+        createForStaff(actorUserId, type, title, message, link);
     }
 
     private void createForRecipients(

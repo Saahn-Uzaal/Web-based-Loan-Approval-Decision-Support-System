@@ -355,6 +355,11 @@ public class StaffReviewService {
                 "STAFF_DISBURSE_LOAN",
                 ComplianceOutcome.PASSED,
                 "loan activated immediately after staff confirmed disbursement");
+        notificationService.notifyCustomerLoanDisbursed(
+                loanRequestId,
+                loan.customerId(),
+                staffUserId,
+                loan.approvedAmount() != null ? loan.approvedAmount() : loan.amount());
         return getRequestDetail(loanRequestId);
     }
 

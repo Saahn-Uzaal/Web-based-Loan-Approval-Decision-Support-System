@@ -287,6 +287,7 @@ public class CustomerLoanService {
     public LoanDetailResponse acceptApprovedLoan(Long customerId, Long id) {
         LoanRecord loan = loanRepository.findOwnedById(id, customerId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
+        Long assignedStaffUserId = loanRepository.findAssignedStaffUserId(id).orElse(null);
         if (loan.status() != LoanStatus.APPROVED) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
@@ -314,6 +315,7 @@ public class CustomerLoanService {
                 "CUSTOMER_ACCEPT_LOAN_TERMS",
                 ComplianceOutcome.PASSED,
                 "customer reviewed and accepted loan contract #" + contract.id());
+        notificationService.notifyStaffLoanContractAccepted(id, customerId, assignedStaffUserId, loan.loanType());
         return toDetailResponse(loanRepository.findOwnedById(id, customerId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay")));
     }
@@ -322,6 +324,7 @@ public class CustomerLoanService {
     public LoanDetailResponse withdrawLoan(Long customerId, Long id) {
         LoanRecord loan = loanRepository.findOwnedById(id, customerId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
+        Long assignedStaffUserId = loanRepository.findAssignedStaffUserId(id).orElse(null);
         if (loan.status() == LoanStatus.CONTRACTED
                 || loan.status() == LoanStatus.ACTIVE
                 || loan.status() == LoanStatus.OVERDUE
@@ -353,6 +356,7 @@ public class CustomerLoanService {
                 "CUSTOMER_WITHDRAW_LOAN_APPLICATION",
                 ComplianceOutcome.INFO,
                 "customer withdrew application before contract");
+        notificationService.notifyStaffLoanWithdrawn(id, customerId, assignedStaffUserId, loan.loanType());
         return toDetailResponse(loanRepository.findOwnedById(id, customerId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay")));
     }

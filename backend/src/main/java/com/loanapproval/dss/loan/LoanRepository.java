@@ -363,6 +363,17 @@ public class LoanRepository {
                                 staffUserId);
         }
 
+        public Optional<Long> findAssignedStaffUserId(Long id) {
+                List<Long> values = jdbcTemplate.query(
+                                "SELECT assigned_staff_user_id FROM loan_requests WHERE id = ?",
+                                (rs, rowNum) -> (Long) rs.getObject("assigned_staff_user_id"),
+                                id);
+                if (values.isEmpty()) {
+                        return Optional.empty();
+                }
+                return Optional.ofNullable(values.get(0));
+        }
+
         private static java.time.Instant toInstant(Timestamp timestamp) {
                 return timestamp != null ? timestamp.toInstant() : null;
         }

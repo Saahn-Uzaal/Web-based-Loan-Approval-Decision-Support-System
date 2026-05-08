@@ -315,6 +315,11 @@ class StaffReviewServiceTest {
 
         assertThat(response.status()).isEqualTo(LoanStatus.ACTIVE);
         verify(loanRepository).updateStatus(loanRequestId, LoanStatus.ACTIVE);
+        verify(notificationService).notifyCustomerLoanDisbursed(
+                loanRequestId,
+                customerId,
+                staffUserId,
+                BigDecimal.valueOf(250_000_000));
     }
 
     @Test

@@ -248,6 +248,29 @@ class SecuredLoanProcedureServiceTest {
     }
 
     @Test
+    void shouldNotifyCustomerWhenMarkedAppointmentNoShow() {
+        Long loanRequestId = 18L;
+        Long customerId = 22L;
+        Long staffUserId = 8L;
+        Instant scheduledAt = Instant.parse("2026-05-01T02:00:00Z");
+        LoanRecord appointmentScheduledLoan =
+                loanRecord(loanRequestId, customerId, LoanStatus.APPOINTMENT_SCHEDULED);
+        StaffSecuredProcedureResponse noShowDetail =
+                detailResponse(loanRequestId, customerId, LoanStatus.APPOINTMENT_SCHEDULED, SecuredProcedureStatus.IN_PROGRESS, scheduledAt);
+
+        when(loanRepository.findById(loanRequestId)).thenReturn(Optional.of(appointmentScheduledLoan));
+        when(loanRepository.assignCaseIfUnassignedOrOwned(loanRequestId, staffUserId)).thenReturn(1);
+        when(securedLoanProcedureRepository.markLatestAppointmentNoShow(loanRequestId)).thenReturn(1);
+        when(securedLoanProcedureRepository.findByLoanRequestId(loanRequestId)).thenReturn(Optional.of(noShowDetail));
+
+        StaffSecuredProcedureResponse response =
+                securedLoanProcedureService.markAppointmentNoShow(staffUserId, loanRequestId);
+
+        assertThat(response.loanRequestId()).isEqualTo(loanRequestId);
+        verify(notificationService).notifyCustomerAppointmentNoShow(loanRequestId, customerId, staffUserId);
+    }
+
+    @Test
     void shouldReportSpecificMissingFieldsForCompletion() {
         Long loanRequestId = 17L;
         Long customerId = 21L;

@@ -4,6 +4,7 @@ import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.loan.LoanStatusHistoryService;
+import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -23,18 +24,21 @@ public class LoanDelinquencyService {
     private final CustomerProfileRepository customerProfileRepository;
     private final LoanRepository loanRepository;
     private final LoanStatusHistoryService loanStatusHistoryService;
+    private final NotificationService notificationService;
 
     public LoanDelinquencyService(
             LoanDelinquencyRepository loanDelinquencyRepository,
             RepaymentScheduleService repaymentScheduleService,
             CustomerProfileRepository customerProfileRepository,
             LoanRepository loanRepository,
-            LoanStatusHistoryService loanStatusHistoryService) {
+            LoanStatusHistoryService loanStatusHistoryService,
+            NotificationService notificationService) {
         this.loanDelinquencyRepository = loanDelinquencyRepository;
         this.repaymentScheduleService = repaymentScheduleService;
         this.customerProfileRepository = customerProfileRepository;
         this.loanRepository = loanRepository;
         this.loanStatusHistoryService = loanStatusHistoryService;
+        this.notificationService = notificationService;
     }
 
     @Transactional
@@ -123,6 +127,13 @@ public class LoanDelinquencyService {
                     null,
                     "DELINQUENCY_ASSESSMENT",
                     "Loan moved to overdue after installment delinquency assessment");
+            notificationService.notifyCustomerLoanOverdue(
+                    loan.id(),
+                    loan.customerId(),
+                    snapshot.installmentNumber(),
+                    snapshot.dueDate(),
+                    snapshot.currentAmountDue(),
+                    snapshot.overdueDays());
         }
 
         int currentMilestone = RepaymentRatingPolicy.currentLateMilestone(daysPastDue);

@@ -152,6 +152,7 @@ public class SecuredLoanProcedureService {
                 "SECURED_APPOINTMENT_NO_SHOW",
                 ComplianceOutcome.INFO,
                 "appointment marked as no-show by staff");
+        notificationService.notifyCustomerAppointmentNoShow(loanRequestId, loan.customerId(), staffUserId);
         return getSecuredProcedure(loanRequestId);
     }
 

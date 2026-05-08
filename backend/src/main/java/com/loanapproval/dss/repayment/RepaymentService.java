@@ -8,6 +8,7 @@ import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.loan.LoanStatusHistoryService;
+import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
 import com.loanapproval.dss.repayment.dto.RepaymentCreateResponse;
 import com.loanapproval.dss.repayment.dto.RepaymentHistoryResponse;
@@ -40,6 +41,7 @@ public class RepaymentService {
     private final LoanDelinquencyRepository loanDelinquencyRepository;
     private final LoanDelinquencyService loanDelinquencyService;
     private final LoanStatusHistoryService loanStatusHistoryService;
+    private final NotificationService notificationService;
 
     public RepaymentService(
             RepaymentRepository repaymentRepository,
@@ -50,7 +52,8 @@ public class RepaymentService {
             RepaymentScheduleService repaymentScheduleService,
             LoanDelinquencyRepository loanDelinquencyRepository,
             LoanDelinquencyService loanDelinquencyService,
-            LoanStatusHistoryService loanStatusHistoryService) {
+            LoanStatusHistoryService loanStatusHistoryService,
+            NotificationService notificationService) {
         this.repaymentRepository = repaymentRepository;
         this.loanRepository = loanRepository;
         this.customerProfileRepository = customerProfileRepository;
@@ -60,6 +63,7 @@ public class RepaymentService {
         this.loanDelinquencyRepository = loanDelinquencyRepository;
         this.loanDelinquencyService = loanDelinquencyService;
         this.loanStatusHistoryService = loanStatusHistoryService;
+        this.notificationService = notificationService;
     }
 
     public RepaymentHistoryResponse listMine(Long customerId) {
@@ -103,12 +107,23 @@ public class RepaymentService {
             BigDecimal amountPaid,
             Instant effectivePaidAt,
             String note) {
+        return createByStaff(loanRequestId, customerId, amountPaid, effectivePaidAt, note, null);
+    }
+
+    @Transactional
+    public RepaymentCreateResponse createByStaff(
+            Long loanRequestId,
+            Long customerId,
+            BigDecimal amountPaid,
+            Instant effectivePaidAt,
+            String note,
+            Long actorUserId) {
         LoanRecord loan = loanRepository.findById(loanRequestId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Loan application not found"));
         if (!loan.customerId().equals(customerId)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Loan does not belong to the confirmed customer");
         }
-        return createForLoan(loan, customerId, amountPaid, effectivePaidAt, sanitizeNote(note));
+        return createForLoan(loan, customerId, amountPaid, effectivePaidAt, sanitizeNote(note), actorUserId);
     }
 
     public LoanRepaymentSnapshot snapshotForLoan(LoanRecord loan, Long customerId) {
@@ -132,7 +147,8 @@ public class RepaymentService {
             Long customerId,
             BigDecimal rawAmountPaid,
             Instant effectivePaidAt,
-            String note) {
+            String note,
+            Long actorUserId) {
         if (rawAmountPaid == null || rawAmountPaid.compareTo(BigDecimal.ZERO) <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be greater than 0");
         }
@@ -207,10 +223,11 @@ public class RepaymentService {
             loanStatusHistoryService.recordTransition(
                     loan,
                     LoanStatus.CLOSED,
-                    null,
+                    actorUserId,
                     "REPAYMENT",
                     "Loan fully settled by recorded repayment");
             loanContractService.closeContract(contract.id());
+            notificationService.notifyCustomerLoanClosed(loan.id(), customerId, actorUserId);
         } else if (snapshot.overdue() || loan.status() == LoanStatus.OVERDUE) {
             loanDelinquencyService.assessLoan(loan.id(), paidDate);
         }

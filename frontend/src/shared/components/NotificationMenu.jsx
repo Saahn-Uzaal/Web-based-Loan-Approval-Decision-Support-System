@@ -107,20 +107,65 @@ function typeConfig(type) {
         icon: <TaskAltRoundedIcon sx={{ fontSize: 14 }} />,
         color: "#1565c0"
       };
+    case "LOAN_DISBURSED":
+      return {
+        icon: <AssignmentTurnedInRoundedIcon sx={{ fontSize: 14 }} />,
+        color: "#00897b"
+      };
     case "APPOINTMENT_SCHEDULED":
       return {
         icon: <EventAvailableRoundedIcon sx={{ fontSize: 14 }} />,
         color: "#ef6c00"
+      };
+    case "APPOINTMENT_NO_SHOW":
+      return {
+        icon: <EventAvailableRoundedIcon sx={{ fontSize: 14 }} />,
+        color: "#c62828"
       };
     case "CONTRACT_CREATED":
       return {
         icon: <AssignmentTurnedInRoundedIcon sx={{ fontSize: 14 }} />,
         color: "#00897b"
       };
+    case "LOAN_CONTRACT_ACCEPTED":
+      return {
+        icon: <AssignmentTurnedInRoundedIcon sx={{ fontSize: 14 }} />,
+        color: "#1565c0"
+      };
+    case "LOAN_WITHDRAWN":
+      return {
+        icon: <DescriptionRoundedIcon sx={{ fontSize: 14 }} />,
+        color: "#6d4c41"
+      };
+    case "PAYMENT_CONFIRMATION_SUBMITTED":
+      return {
+        icon: <PaymentRoundedIcon sx={{ fontSize: 14 }} />,
+        color: "#8e24aa"
+      };
+    case "PAYMENT_CONFIRMED":
+      return {
+        icon: <TaskAltRoundedIcon sx={{ fontSize: 14 }} />,
+        color: "#2e7d32"
+      };
+    case "PAYMENT_REJECTED":
+      return {
+        icon: <PaymentRoundedIcon sx={{ fontSize: 14 }} />,
+        color: "#d32f2f"
+      };
     case "PAYMENT_DUE_SOON":
       return {
         icon: <PaymentRoundedIcon sx={{ fontSize: 14 }} />,
         color: "#d32f2f"
+      };
+    case "LOAN_OVERDUE":
+      return {
+        icon: <PaymentRoundedIcon sx={{ fontSize: 14 }} />,
+        color: "#b71c1c"
+      };
+    case "LOAN_CLOSED":
+      return {
+        icon: <TaskAltRoundedIcon sx={{ fontSize: 14 }} />,
+        color: "#2e7d32"
       };
     default:
       return {

@@ -15,6 +15,7 @@ import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.loan.LoanType;
+import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -45,6 +46,9 @@ class LoanDelinquencyServiceTest {
     @Mock
     private LoanStatusHistoryService loanStatusHistoryService;
 
+    @Mock
+    private NotificationService notificationService;
+
     @InjectMocks
     private LoanDelinquencyService loanDelinquencyService;
 
@@ -69,6 +73,13 @@ class LoanDelinquencyServiceTest {
         assertThat(summary.ratingAdjustments()).isEqualTo(1);
         verify(loanRepository).updateStatus(100L, LoanStatus.OVERDUE);
         verify(loanDelinquencyRepository).updateMilestoneAndDelta(10L, 1, -6);
+        verify(notificationService).notifyCustomerLoanOverdue(
+                100L,
+                1L,
+                1,
+                LocalDate.of(2026, 5, 20),
+                BigDecimal.valueOf(4_500_000),
+                1);
     }
 
     @Test

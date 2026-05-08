@@ -12,6 +12,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.loanapproval.dss.compliance.ComplianceAuditService;
+import com.loanapproval.dss.contract.LoanContract;
+import com.loanapproval.dss.contract.LoanContractStatus;
 import com.loanapproval.dss.contract.LoanContractService;
 import com.loanapproval.dss.customerinfo.CustomerInformationVerificationService;
 import com.loanapproval.dss.debt.CustomerDebtService;
@@ -347,6 +349,61 @@ class CustomerLoanServiceTest {
         assertThat(exception.getReason()).contains("ít nhất một giấy tờ bổ sung");
     }
 
+    @Test
+    void shouldNotifyAssignedStaffWhenCustomerAcceptsContract() {
+        Long customerId = 60L;
+        Long loanRequestId = 600L;
+        Long assignedStaffUserId = 9L;
+        LoanRecord approvedLoan = loanRecord(loanRequestId, customerId, LoanType.UNSECURED, LoanStatus.APPROVED);
+        LoanRecord contractedLoan = loanRecord(loanRequestId, customerId, LoanType.UNSECURED, LoanStatus.CONTRACTED);
+
+        when(loanRepository.findOwnedById(loanRequestId, customerId))
+                .thenReturn(Optional.of(approvedLoan), Optional.of(contractedLoan));
+        when(loanRepository.findAssignedStaffUserId(loanRequestId)).thenReturn(Optional.of(assignedStaffUserId));
+        when(loanContractService.activateForCustomer(customerId, loanRequestId)).thenReturn(activeContract(loanRequestId, customerId));
+        when(loanRepository.markAcceptedAndContracted(eq(loanRequestId), eq(customerId), org.mockito.ArgumentMatchers.isNull()))
+                .thenReturn(1);
+        when(loanDocumentRepository.findByLoanRequestId(loanRequestId)).thenReturn(List.of());
+
+        LoanDetailResponse response = customerLoanService.acceptApprovedLoan(customerId, loanRequestId);
+
+        assertThat(response.status()).isEqualTo(LoanStatus.CONTRACTED);
+        verify(notificationService).notifyStaffLoanContractAccepted(
+                loanRequestId,
+                customerId,
+                assignedStaffUserId,
+                LoanType.UNSECURED);
+    }
+
+    @Test
+    void shouldNotifyAssignedStaffWhenCustomerWithdrawsLoan() {
+        Long customerId = 70L;
+        Long loanRequestId = 700L;
+        Long assignedStaffUserId = 11L;
+        LoanRecord pendingLoan = loanRecord(loanRequestId, customerId, LoanType.SECURED, LoanStatus.PENDING);
+        LoanRecord withdrawnLoan = loanRecord(loanRequestId, customerId, LoanType.SECURED, LoanStatus.WITHDRAWN);
+
+        when(loanRepository.findOwnedById(loanRequestId, customerId))
+                .thenReturn(Optional.of(pendingLoan), Optional.of(withdrawnLoan));
+        when(loanRepository.findAssignedStaffUserId(loanRequestId)).thenReturn(Optional.of(assignedStaffUserId));
+        when(loanRepository.updateOwnedStatusAndReason(
+                        loanRequestId,
+                        customerId,
+                        LoanStatus.WITHDRAWN,
+                        "Khách hàng đã rút hồ sơ trước khi ký hợp đồng"))
+                .thenReturn(1);
+        when(loanDocumentRepository.findByLoanRequestId(loanRequestId)).thenReturn(List.of());
+
+        LoanDetailResponse response = customerLoanService.withdrawLoan(customerId, loanRequestId);
+
+        assertThat(response.status()).isEqualTo(LoanStatus.WITHDRAWN);
+        verify(notificationService).notifyStaffLoanWithdrawn(
+                loanRequestId,
+                customerId,
+                assignedStaffUserId,
+                LoanType.SECURED);
+    }
+
     private CustomerProfile profile(BigDecimal monthlyIncome, BigDecimal verifiedMonthlyIncome) {
         return new CustomerProfile(
                 1L,
@@ -404,6 +461,27 @@ class CustomerLoanServiceTest {
                 null,
                 null,
                 "intake",
+                now,
+                now);
+    }
+
+    private LoanContract activeContract(Long loanRequestId, Long customerId) {
+        Instant now = Instant.now();
+        return new LoanContract(
+                77L,
+                loanRequestId,
+                customerId,
+                BigDecimal.valueOf(100_000_000),
+                BigDecimal.valueOf(0.12).setScale(6),
+                24,
+                LocalDate.now(),
+                LocalDate.now().plusMonths(24),
+                LocalDate.now().plusMonths(1),
+                "15",
+                LocalDate.now().plusMonths(24),
+                BigDecimal.valueOf(4_800_000),
+                BigDecimal.valueOf(15_200_000),
+                LoanContractStatus.ACTIVE,
                 now,
                 now);
     }
