@@ -105,7 +105,7 @@ export default function CustomerLoansPage() {
     <Stack spacing={2}>
       <Typography variant="h4">Hồ sơ vay của tôi</Typography>
       <Typography color="text.secondary">
-        Theo dõi trạng thái, lịch đến hạn và xem quyết định cuối cùng kèm lý do.
+        Theo dõi trạng thái, lịch đến hạn, tiếp tục bản nháp đang lưu và xem quyết định cuối cùng kèm lý do.
       </Typography>
       {error && <Alert severity="error">{error}</Alert>}
       {loading && (
@@ -156,11 +156,11 @@ export default function CustomerLoansPage() {
                 <TableCell align="right">
                   <Button
                     component={RouterLink}
-                    to={`/customer/loans/${row.id}`}
+                    to={row.status === "DRAFT" ? `/customer/loans/${row.id}/edit` : `/customer/loans/${row.id}`}
                     variant="outlined"
                     size="small"
                   >
-                    Xem
+                    {row.status === "DRAFT" ? "Tiếp tục" : "Xem"}
                   </Button>
                 </TableCell>
               </TableRow>

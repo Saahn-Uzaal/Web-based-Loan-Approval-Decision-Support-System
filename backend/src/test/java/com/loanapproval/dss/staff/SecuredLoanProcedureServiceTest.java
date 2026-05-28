@@ -14,9 +14,9 @@ import com.loanapproval.dss.compliance.ComplianceAuditService;
 import com.loanapproval.dss.contract.LoanContractStatus;
 import com.loanapproval.dss.contract.LoanContractScheduleTerms;
 import com.loanapproval.dss.contract.LoanContractService;
-import com.loanapproval.dss.customerinfo.CustomerInformationVerificationService;
 import com.loanapproval.dss.loan.CollateralType;
 import com.loanapproval.dss.loan.LoanApprovalReassessmentService;
+import com.loanapproval.dss.loan.LoanApplicationVerificationService;
 import com.loanapproval.dss.loan.LoanStatusHistoryService;
 import com.loanapproval.dss.loan.LoanPurpose;
 import com.loanapproval.dss.loan.LoanRecord;
@@ -28,7 +28,6 @@ import com.loanapproval.dss.staff.dto.StaffRequestDetailResponse;
 import com.loanapproval.dss.staff.dto.StaffSecuredProcedureRequest;
 import com.loanapproval.dss.staff.dto.StaffSecuredProcedureResponse;
 import com.loanapproval.dss.verification.CustomerVerification;
-import com.loanapproval.dss.verification.CustomerVerificationService;
 import com.loanapproval.dss.verification.VerificationStatus;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -59,10 +58,7 @@ class SecuredLoanProcedureServiceTest {
     private ComplianceAuditService complianceAuditService;
 
     @Mock
-    private CustomerInformationVerificationService customerInformationVerificationService;
-
-    @Mock
-    private CustomerVerificationService customerVerificationService;
+    private LoanApplicationVerificationService loanApplicationVerificationService;
 
     @Mock
     private LoanApprovalReassessmentService loanApprovalReassessmentService;
@@ -87,7 +83,9 @@ class SecuredLoanProcedureServiceTest {
         LoanRecord appointmentScheduledLoan =
                 loanRecord(loanRequestId, customerId, LoanStatus.APPOINTMENT_SCHEDULED);
         LoanRecord approvedLoan = loanRecord(loanRequestId, customerId, LoanStatus.APPROVED);
-        StaffSecuredProcedureRequest request = completedRequest();
+        StaffSecuredProcedureRequest request = requestWithMonthlyPayment(
+                completedRequest(),
+                BigDecimal.valueOf(12_300_000));
         StaffSecuredProcedureResponse currentDetail =
                 detailResponse(loanRequestId, customerId, LoanStatus.APPOINTMENT_SCHEDULED, SecuredProcedureStatus.IN_PROGRESS, scheduledAt);
         StaffSecuredProcedureResponse completedDetail =
@@ -113,7 +111,8 @@ class SecuredLoanProcedureServiceTest {
         when(loanRepository.assignCaseIfUnassignedOrOwned(loanRequestId, staffUserId)).thenReturn(1);
         when(securedLoanProcedureRepository.findByLoanRequestId(loanRequestId))
                 .thenReturn(Optional.of(currentDetail), Optional.of(completedDetail));
-        when(customerVerificationService.getOrDefault(customerId)).thenReturn(verification);
+        when(loanApplicationVerificationService.getOrDefault(loanRequestId, customerId)).thenReturn(verification);
+        when(loanApplicationVerificationService.isFullyVerified(LoanType.SECURED, verification)).thenReturn(true);
         when(loanApprovalReassessmentService.reassessAndPersist(
                         appointmentScheduledLoan,
                         verification,
@@ -129,7 +128,11 @@ class SecuredLoanProcedureServiceTest {
 
         assertThat(response.status()).isEqualTo(SecuredProcedureStatus.COMPLETED);
         assertThat(response.loanStatus()).isEqualTo(LoanStatus.APPROVED);
-        verify(securedLoanProcedureRepository).upsert(loanRequestId, staffUserId, request);
+        ArgumentCaptor<StaffSecuredProcedureRequest> requestCaptor =
+                ArgumentCaptor.forClass(StaffSecuredProcedureRequest.class);
+        verify(securedLoanProcedureRepository).upsert(eq(loanRequestId), eq(staffUserId), requestCaptor.capture());
+        assertThat(requestCaptor.getValue().monthlyPaymentAmount())
+                .isEqualByComparingTo(reassessment.approvedMonthlyPayment());
         verify(loanApprovalReassessmentService)
                 .reassessAndPersist(
                         appointmentScheduledLoan,
@@ -354,6 +357,7 @@ class SecuredLoanProcedureServiceTest {
                 24,
                 LoanPurpose.BUSINESS,
                 CollateralType.VEHICLE_REGISTRATION,
+                BigDecimal.valueOf(400_000_000),
                 status,
                 null,
                 BigDecimal.valueOf(280_000_000),
@@ -411,6 +415,54 @@ class SecuredLoanProcedureServiceTest {
                 true,
                 SecuredProcedureStatus.COMPLETED,
                 "Hoàn tất cho buổi demo");
+    }
+
+    private StaffSecuredProcedureRequest requestWithMonthlyPayment(
+            StaffSecuredProcedureRequest request,
+            BigDecimal monthlyPaymentAmount) {
+        return new StaffSecuredProcedureRequest(
+                request.mortgageeName(),
+                request.mortgageeAddress(),
+                request.mortgageeBusinessCode(),
+                request.mortgageePhone(),
+                request.contractNumber(),
+                request.contractSignedDate(),
+                request.nationality(),
+                request.identityDocumentNumber(),
+                request.permanentAddress(),
+                request.currentAddress(),
+                request.occupation(),
+                request.jobTitle(),
+                request.assetType(),
+                request.assetManufacturer(),
+                request.engineNumber(),
+                request.frameNumber(),
+                request.collateralOwnerName(),
+                request.collateralIdentifier(),
+                request.registrationNumber(),
+                request.salePrice(),
+                request.downPayment(),
+                request.appraisalValue(),
+                request.monthlyInterestRate(),
+                monthlyPaymentAmount,
+                request.firstPaymentDate(),
+                request.monthlyPaymentDay(),
+                request.finalPaymentDate(),
+                request.appraisalReportCode(),
+                request.insurancePolicyNumber(),
+                request.originalCertificateReceived(),
+                request.certifiedCopyDelivered(),
+                request.collateralRegistrationCompleted(),
+                request.disputeChecked(),
+                request.seizureNoticeAcknowledged(),
+                request.documentsChecked(),
+                request.assetInspected(),
+                request.valuationApproved(),
+                request.contractSigned(),
+                request.collateralHandoverConfirmed(),
+                request.disbursementReady(),
+                request.status(),
+                request.note());
     }
 
     private StaffSecuredProcedureResponse detailResponse(

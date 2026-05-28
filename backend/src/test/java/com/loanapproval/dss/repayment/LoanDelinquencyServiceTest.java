@@ -3,10 +3,14 @@ package com.loanapproval.dss.repayment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.loanapproval.dss.contract.LoanInstallment;
+import com.loanapproval.dss.contract.LoanInstallmentService;
+import com.loanapproval.dss.contract.LoanInstallmentStatus;
 import com.loanapproval.dss.contract.LoanContract;
 import com.loanapproval.dss.contract.LoanContractStatus;
 import com.loanapproval.dss.loan.LoanStatusHistoryService;
@@ -38,6 +42,9 @@ class LoanDelinquencyServiceTest {
     private RepaymentScheduleService repaymentScheduleService;
 
     @Mock
+    private LoanInstallmentService loanInstallmentService;
+
+    @Mock
     private CustomerProfileRepository customerProfileRepository;
 
     @Mock
@@ -61,6 +68,7 @@ class LoanDelinquencyServiceTest {
         LoanDelinquencyRecord delinquency = delinquency(0);
 
         when(loanDelinquencyRepository.findActiveCandidates()).thenReturn(List.of(new LoanDelinquencyCandidate(loan, contract)));
+        when(loanInstallmentService.listByLoanRequestId(100L)).thenReturn(List.of(overdueInstallment(1)));
         when(repaymentScheduleService.snapshot(loan, contract, 1L, assessmentDate)).thenReturn(snapshot);
         when(loanDelinquencyRepository.upsertOpen(any(), any(), any(), any(), any(), any(), anyInt()))
                 .thenReturn(delinquency);
@@ -72,13 +80,19 @@ class LoanDelinquencyServiceTest {
         assertThat(summary.openedOrUpdated()).isEqualTo(1);
         assertThat(summary.ratingAdjustments()).isEqualTo(1);
         verify(loanRepository).updateStatus(100L, LoanStatus.OVERDUE);
-        verify(loanDelinquencyRepository).updateMilestoneAndDelta(10L, 1, -6);
+        verify(loanInstallmentService).addLateFee(100L, 1, new BigDecimal("45000.00"));
+        verify(loanDelinquencyRepository).updateMilestoneProgress(
+                10L,
+                1,
+                -6,
+                new BigDecimal("45000.00"),
+                new BigDecimal("4545000.00"));
         verify(notificationService).notifyCustomerLoanOverdue(
                 100L,
                 1L,
                 1,
                 LocalDate.of(2026, 5, 20),
-                BigDecimal.valueOf(4_500_000),
+                new BigDecimal("4545000.00"),
                 1);
     }
 
@@ -92,6 +106,7 @@ class LoanDelinquencyServiceTest {
 
         when(loanDelinquencyRepository.findActiveCandidates())
                 .thenReturn(java.util.List.of(new LoanDelinquencyCandidate(loan, contract)));
+        when(loanInstallmentService.listByLoanRequestId(100L)).thenReturn(List.of(overdueInstallment(1)));
         when(repaymentScheduleService.snapshot(loan, contract, 1L, assessmentDate)).thenReturn(snapshot);
         when(loanDelinquencyRepository.upsertOpen(any(), any(), any(), any(), any(), any(), anyInt()))
                 .thenReturn(delinquency);
@@ -100,7 +115,12 @@ class LoanDelinquencyServiceTest {
         LoanDelinquencyRunSummary summary = loanDelinquencyService.assessAll(assessmentDate);
 
         assertThat(summary.ratingAdjustments()).isEqualTo(1);
-        verify(loanDelinquencyRepository).updateMilestoneAndDelta(10L, 30, -20);
+        verify(loanDelinquencyRepository).updateMilestoneProgress(
+                10L,
+                30,
+                -20,
+                new BigDecimal("135000.00"),
+                new BigDecimal("4635000.00"));
     }
 
     @Test
@@ -113,6 +133,7 @@ class LoanDelinquencyServiceTest {
 
         when(loanDelinquencyRepository.findActiveCandidates())
                 .thenReturn(java.util.List.of(new LoanDelinquencyCandidate(loan, contract)));
+        when(loanInstallmentService.listByLoanRequestId(100L)).thenReturn(List.of(overdueInstallment(1)));
         when(repaymentScheduleService.snapshot(loan, contract, 1L, assessmentDate)).thenReturn(snapshot);
         when(loanDelinquencyRepository.upsertOpen(any(), any(), any(), any(), any(), any(), anyInt()))
                 .thenReturn(delinquency);
@@ -121,7 +142,12 @@ class LoanDelinquencyServiceTest {
         LoanDelinquencyRunSummary summary = loanDelinquencyService.assessAll(assessmentDate);
 
         assertThat(summary.ratingAdjustments()).isEqualTo(1);
-        verify(loanDelinquencyRepository).updateMilestoneAndDelta(10L, 90, -30);
+        verify(loanDelinquencyRepository).updateMilestoneProgress(
+                10L,
+                90,
+                -30,
+                new BigDecimal("180000.00"),
+                new BigDecimal("4680000.00"));
     }
 
     @Test
@@ -133,6 +159,7 @@ class LoanDelinquencyServiceTest {
         LoanDelinquencyRecord delinquency = delinquency(7);
 
         when(loanDelinquencyRepository.findActiveCandidates()).thenReturn(List.of(new LoanDelinquencyCandidate(loan, contract)));
+        when(loanInstallmentService.listByLoanRequestId(100L)).thenReturn(List.of(overdueInstallment(1)));
         when(repaymentScheduleService.snapshot(loan, contract, 1L, assessmentDate)).thenReturn(snapshot);
         when(loanDelinquencyRepository.upsertOpen(any(), any(), any(), any(), any(), any(), anyInt()))
                 .thenReturn(delinquency);
@@ -141,7 +168,7 @@ class LoanDelinquencyServiceTest {
 
         assertThat(summary.ratingAdjustments()).isZero();
         verify(customerProfileRepository, never()).adjustPaymentRating(any(), anyInt());
-        verify(loanDelinquencyRepository, never()).updateMilestoneAndDelta(any(), anyInt(), anyInt());
+        verify(loanDelinquencyRepository, never()).updateMilestoneProgress(any(), anyInt(), anyInt(), any(), any());
     }
 
     @Test
@@ -153,6 +180,7 @@ class LoanDelinquencyServiceTest {
 
         when(loanDelinquencyRepository.findCandidateByLoanRequestId(100L))
                 .thenReturn(Optional.of(new LoanDelinquencyCandidate(loan, contract)));
+        when(loanInstallmentService.listByLoanRequestId(100L)).thenReturn(List.of(paidInstallment(1), nextInstallment(2)));
         when(repaymentScheduleService.snapshot(loan, contract, 1L, assessmentDate)).thenReturn(snapshot);
         when(loanDelinquencyRepository.markAllOpenCured(100L)).thenReturn(1);
 
@@ -191,12 +219,77 @@ class LoanDelinquencyServiceTest {
                 1,
                 highestMilestone,
                 0,
+                BigDecimal.ZERO,
                 LoanDelinquencyStatus.OPEN,
                 now,
                 now,
                 null,
                 now,
                 now);
+    }
+
+    private LoanInstallment overdueInstallment(int installmentNumber) {
+        return installment(
+                installmentNumber,
+                LocalDate.of(2026, 5, 20),
+                BigDecimal.valueOf(4_000_000),
+                BigDecimal.valueOf(500_000),
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                LoanInstallmentStatus.OVERDUE);
+    }
+
+    private LoanInstallment paidInstallment(int installmentNumber) {
+        return installment(
+                installmentNumber,
+                LocalDate.of(2026, 5, 20),
+                BigDecimal.valueOf(4_000_000),
+                BigDecimal.valueOf(500_000),
+                BigDecimal.valueOf(4_500_000),
+                BigDecimal.valueOf(4_500_000),
+                LoanInstallmentStatus.PAID);
+    }
+
+    private LoanInstallment nextInstallment(int installmentNumber) {
+        return installment(
+                installmentNumber,
+                LocalDate.of(2026, 6, 20),
+                BigDecimal.valueOf(4_000_000),
+                BigDecimal.valueOf(500_000),
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                LoanInstallmentStatus.PENDING);
+    }
+
+    private LoanInstallment installment(
+            int installmentNumber,
+            LocalDate dueDate,
+            BigDecimal scheduledPrincipal,
+            BigDecimal scheduledInterest,
+            BigDecimal paidPrincipal,
+            BigDecimal paidAmount,
+            LoanInstallmentStatus status) {
+        return new LoanInstallment(
+                (long) installmentNumber,
+                99L,
+                100L,
+                1L,
+                installmentNumber,
+                dueDate,
+                BigDecimal.valueOf(50_000_000),
+                scheduledPrincipal,
+                scheduledInterest,
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                scheduledPrincipal.add(scheduledInterest),
+                paidPrincipal,
+                paidAmount.subtract(paidPrincipal).max(BigDecimal.ZERO),
+                BigDecimal.ZERO,
+                paidAmount,
+                null,
+                status,
+                Instant.now(),
+                Instant.now());
     }
 
     private LoanRecord loan(LoanStatus status) {
@@ -208,6 +301,7 @@ class LoanDelinquencyServiceTest {
                 BigDecimal.valueOf(50_000_000),
                 12,
                 LoanPurpose.PERSONAL,
+                null,
                 null,
                 status,
                 null,

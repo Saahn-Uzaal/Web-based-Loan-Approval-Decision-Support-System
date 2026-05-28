@@ -60,7 +60,7 @@ public class CustomerProfileController {
         @Valid @RequestBody CustomerProfileRequest request
     ) {
         AuthenticatedUser user = extractUser(authentication);
-        return customerProfileService.upsert(user.id(), request, null);
+        return customerProfileService.upsert(user.id(), request, CustomerProfileFiles.empty());
     }
 
     @PutMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -68,17 +68,35 @@ public class CustomerProfileController {
     public CustomerProfileResponse upsertProfileMultipart(
         Authentication authentication,
         @RequestPart("profile") String profileJson,
-        @RequestPart(value = "payslip", required = false) MultipartFile payslip
+        @RequestPart(value = "payslip", required = false) MultipartFile payslip,
+        @RequestPart(value = "idCardFront", required = false) MultipartFile idCardFront,
+        @RequestPart(value = "idCardBack", required = false) MultipartFile idCardBack
     ) {
         AuthenticatedUser user = extractUser(authentication);
         CustomerProfileRequest request = parseAndValidateProfile(profileJson);
-        return customerProfileService.upsert(user.id(), request, payslip);
+        return customerProfileService.upsert(
+            user.id(),
+            request,
+            new CustomerProfileFiles(payslip, idCardFront, idCardBack)
+        );
     }
 
     @GetMapping("/payslip")
     public ResponseEntity<Resource> downloadCurrentPayslip(Authentication authentication) {
         AuthenticatedUser user = extractUser(authentication);
         return toDownloadResponse(customerProfileService.downloadPayslip(user.id()));
+    }
+
+    @GetMapping("/id-card/front")
+    public ResponseEntity<Resource> downloadCurrentIdentityCardFront(Authentication authentication) {
+        AuthenticatedUser user = extractUser(authentication);
+        return toDownloadResponse(customerProfileService.downloadIdentityCard(user.id(), CustomerIdentityCardSide.FRONT));
+    }
+
+    @GetMapping("/id-card/back")
+    public ResponseEntity<Resource> downloadCurrentIdentityCardBack(Authentication authentication) {
+        AuthenticatedUser user = extractUser(authentication);
+        return toDownloadResponse(customerProfileService.downloadIdentityCard(user.id(), CustomerIdentityCardSide.BACK));
     }
 
     private CustomerProfileRequest parseAndValidateProfile(String profileJson) {
@@ -102,6 +120,25 @@ public class CustomerProfileController {
     }
 
     private ResponseEntity<Resource> toDownloadResponse(CustomerPayslipDownload download) {
+        MediaType mediaType = MediaType.APPLICATION_OCTET_STREAM;
+        if (download.contentType() != null && !download.contentType().isBlank()) {
+            mediaType = MediaType.parseMediaType(download.contentType());
+        }
+
+        return ResponseEntity.ok()
+            .contentType(mediaType)
+            .contentLength(download.fileSize())
+            .header(
+                HttpHeaders.CONTENT_DISPOSITION,
+                ContentDisposition.attachment()
+                    .filename(download.fileName(), StandardCharsets.UTF_8)
+                    .build()
+                    .toString()
+            )
+            .body(download.resource());
+    }
+
+    private ResponseEntity<Resource> toDownloadResponse(CustomerIdentityCardDownload download) {
         MediaType mediaType = MediaType.APPLICATION_OCTET_STREAM;
         if (download.contentType() != null && !download.contentType().isBlank()) {
             mediaType = MediaType.parseMediaType(download.contentType());

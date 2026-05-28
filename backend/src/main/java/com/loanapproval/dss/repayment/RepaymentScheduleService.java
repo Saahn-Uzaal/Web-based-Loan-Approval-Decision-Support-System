@@ -46,13 +46,13 @@ public class RepaymentScheduleService {
             LoanContract contract,
             List<LoanInstallment> installments,
             LocalDate today) {
+        LocalDate effectiveToday = today != null ? today : LocalDate.now();
         BigDecimal totalRepayable = installments.stream()
-                .map(LoanInstallment::scheduledAmount)
+                .map(LoanInstallment::payableAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal totalPaid = installments.stream()
                 .map(LoanInstallment::paidAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal outstandingAmount = totalRepayable.subtract(totalPaid).max(BigDecimal.ZERO);
         LoanInstallment currentInstallment = installments.stream()
                 .filter(installment -> installment.remainingAmount().compareTo(BigDecimal.ZERO) > 0)
                 .findFirst()
@@ -71,7 +71,10 @@ public class RepaymentScheduleService {
                     true);
         }
 
-        LocalDate effectiveToday = today != null ? today : LocalDate.now();
+        BigDecimal outstandingAmount = installments.stream()
+                .filter(installment -> installment.remainingAmount().compareTo(BigDecimal.ZERO) > 0)
+                .map(installment -> settlementAmountFor(installment, effectiveToday))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
         boolean overdue = currentInstallment.dueDate() != null
                 && currentInstallment.remainingAmount().compareTo(BigDecimal.ZERO) > 0
                 && currentInstallment.dueDate().isBefore(effectiveToday);
@@ -83,11 +86,18 @@ public class RepaymentScheduleService {
                 totalPaid,
                 outstandingAmount,
                 currentInstallment.remainingAmount(),
-                currentInstallment.scheduledAmount(),
+                currentInstallment.payableAmount(),
                 currentInstallment.installmentNumber(),
                 currentInstallment.dueDate(),
                 false,
                 overdue,
                 overdueDays);
+    }
+
+    private BigDecimal settlementAmountFor(LoanInstallment installment, LocalDate settlementDate) {
+        if (installment.dueDate() == null || !installment.dueDate().isAfter(settlementDate)) {
+            return installment.remainingAmount();
+        }
+        return installment.remainingPrincipal().add(installment.remainingFee());
     }
 }

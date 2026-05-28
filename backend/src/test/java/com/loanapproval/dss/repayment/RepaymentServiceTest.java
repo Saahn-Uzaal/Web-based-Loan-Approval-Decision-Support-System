@@ -231,7 +231,7 @@ class RepaymentServiceTest {
     }
 
     @Test
-    void shouldAllowPrepaymentAboveCurrentInstallmentWithEarlyReward() {
+    void shouldRejectPartialPrepaymentAboveCurrentInstallmentWhenNotFullSettlement() {
         when(loanRepository.findById(100L)).thenReturn(Optional.of(loan(LoanStatus.ACTIVE)));
         when(loanContractService.findByLoanRequestId(100L)).thenReturn(contract());
         when(customerProfileRepository.findPaymentRatingByUserId(1L)).thenReturn(Optional.of(10));
@@ -246,31 +246,17 @@ class RepaymentServiceTest {
                 LocalDate.now().plusDays(2),
                 false));
 
-        when(repaymentRepository.create(any(), any(), any(), any(), any(), any(), any(), anyInt(), any()))
-                .thenAnswer(invocation -> new RepaymentRecord(
-                        1L,
+        ResponseStatusException exception = Assertions.assertThrows(
+                ResponseStatusException.class,
+                () -> repaymentService.createByStaff(
                         100L,
                         1L,
-                        invocation.getArgument(2),
-                        invocation.getArgument(3),
-                        invocation.getArgument(4),
-                        invocation.getArgument(5),
-                        invocation.getArgument(6),
-                        invocation.getArgument(7),
-                        invocation.getArgument(8),
-                        Instant.now()));
-        when(customerProfileRepository.adjustPaymentRating(1L, 4)).thenReturn(Optional.of(14));
+                        BigDecimal.valueOf(5_000_000),
+                        Instant.now(),
+                        null));
 
-        var response = repaymentService.createByStaff(
-                100L,
-                1L,
-                BigDecimal.valueOf(5_000_000),
-                Instant.now(),
-                null);
-
-        Assertions.assertEquals(BigDecimal.valueOf(5_000_000), response.repayment().amountPaid());
-        Assertions.assertEquals(RepaymentStatus.EARLY, response.repayment().repaymentStatus());
-        Assertions.assertEquals(4, response.repayment().ratingDelta());
+        Assertions.assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
+        verify(repaymentRepository, never()).create(any(), any(), any(), any(), any(), any(), any(), anyInt(), any());
     }
 
     @Test
@@ -398,6 +384,7 @@ class RepaymentServiceTest {
                 1,
                 1,
                 totalRatingDelta,
+                BigDecimal.ZERO,
                 LoanDelinquencyStatus.CURED,
                 now,
                 now,
@@ -414,6 +401,7 @@ class RepaymentServiceTest {
                 BigDecimal.valueOf(50_000_000),
                 12,
                 LoanPurpose.PERSONAL,
+                null,
                 null,
                 status,
                 null,

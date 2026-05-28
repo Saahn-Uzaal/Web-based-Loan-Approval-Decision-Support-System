@@ -139,6 +139,7 @@ class PaymentDueReminderServiceTest {
                 12,
                 LoanPurpose.PERSONAL,
                 null,
+                null,
                 status,
                 null,
                 BigDecimal.valueOf(50_000_000),

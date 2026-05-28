@@ -126,18 +126,27 @@ public class LoanDelinquencyRepository {
                 loanRequestId);
     }
 
-    public int updateMilestoneAndDelta(Long id, int highestMilestone, int ratingDelta) {
+    public int updateMilestoneProgress(
+            Long id,
+            int highestMilestone,
+            int ratingDelta,
+            BigDecimal feeAssessed,
+            BigDecimal currentAmountDue) {
         return jdbcTemplate.update(
                 """
                         UPDATE loan_delinquencies
                         SET highest_milestone = ?,
                             total_rating_delta = total_rating_delta + ?,
+                            total_fee_assessed = total_fee_assessed + ?,
+                            current_amount_due = ?,
                             last_assessed_at = CURRENT_TIMESTAMP,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id = ?
                         """,
                 highestMilestone,
                 ratingDelta,
+                feeAssessed,
+                currentAmountDue,
                 id);
     }
 
@@ -200,6 +209,7 @@ public class LoanDelinquencyRepository {
                     lr.term_months AS loan_term_months,
                     lr.purpose,
                     lr.collateral_type,
+                    lr.collateral_value,
                     lr.status AS loan_status,
                     lr.final_reason,
                     lr.eligible_limit,
@@ -246,6 +256,7 @@ public class LoanDelinquencyRepository {
                     days_past_due,
                     highest_milestone,
                     total_rating_delta,
+                    total_fee_assessed,
                     status,
                     opened_at,
                     last_assessed_at,
@@ -265,6 +276,7 @@ public class LoanDelinquencyRepository {
                 rs.getInt("loan_term_months"),
                 LoanPurpose.valueOf(rs.getString("purpose")),
                 parseEnum(CollateralType.class, rs.getString("collateral_type")),
+                rs.getBigDecimal("collateral_value"),
                 LoanStatus.valueOf(rs.getString("loan_status")),
                 rs.getString("final_reason"),
                 rs.getBigDecimal("eligible_limit"),
@@ -308,6 +320,7 @@ public class LoanDelinquencyRepository {
                 rs.getInt("days_past_due"),
                 rs.getInt("highest_milestone"),
                 rs.getInt("total_rating_delta"),
+                rs.getBigDecimal("total_fee_assessed"),
                 LoanDelinquencyStatus.valueOf(rs.getString("status")),
                 toInstant(rs.getTimestamp("opened_at")),
                 toInstant(rs.getTimestamp("last_assessed_at")),

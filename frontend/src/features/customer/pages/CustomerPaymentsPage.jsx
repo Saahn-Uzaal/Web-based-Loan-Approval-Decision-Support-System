@@ -1,5 +1,6 @@
 import {
   Alert,
+  Box,
   Button,
   Chip,
   CircularProgress,
@@ -92,6 +93,55 @@ const paymentFieldKeywords = {
   proof: ["biên lai", "chứng từ", "proof", "file"],
   note: ["ghi chú", "note"]
 };
+
+const PAYMENT_RECIPIENT = Object.freeze({
+  bankName: (import.meta.env.VITE_PAYMENT_BANK_NAME || "").trim(),
+  bankId: (import.meta.env.VITE_PAYMENT_BANK_ID || "").trim(),
+  accountNo: (import.meta.env.VITE_PAYMENT_ACCOUNT_NO || "").trim(),
+  accountName: (import.meta.env.VITE_PAYMENT_ACCOUNT_NAME || "").trim(),
+  qrTemplate: (import.meta.env.VITE_PAYMENT_QR_TEMPLATE || "compact2").trim() || "compact2",
+  transferPrefix: (import.meta.env.VITE_PAYMENT_TRANSFER_PREFIX || "THANHTOAN").trim() || "THANHTOAN"
+});
+
+function normalizeAccountNumber(value) {
+  return String(value || "").replace(/\s+/g, "");
+}
+
+function formatAccountNumber(value) {
+  const normalized = normalizeAccountNumber(value);
+  if (!normalized) {
+    return "";
+  }
+  return normalized.replace(/(.{4})/g, "$1 ").trim();
+}
+
+function buildTransferReference(loan) {
+  if (!loan) {
+    return "";
+  }
+  const dueMonth = loan.nextDueDate ? String(loan.nextDueDate).slice(0, 7) : new Date().toISOString().slice(0, 7);
+  const loanToken = loan.id != null ? `KH${loan.id}` : "KH";
+  const installmentToken = loan.nextInstallmentNumber != null ? `KY${loan.nextInstallmentNumber}` : "KY";
+  return [PAYMENT_RECIPIENT.transferPrefix, loanToken, installmentToken, dueMonth].join(" ");
+}
+
+function buildVietQrUrl({ bankId, accountNo, accountName, amount, addInfo, template }) {
+  const normalizedAccountNumber = normalizeAccountNumber(accountNo);
+  if (!bankId || !normalizedAccountNumber || !accountName) {
+    return "";
+  }
+
+  const query = new URLSearchParams();
+  if (Number(amount) > 0) {
+    query.set("amount", String(Math.round(Number(amount))));
+  }
+  if (addInfo) {
+    query.set("addInfo", addInfo);
+  }
+  query.set("accountName", accountName);
+
+  return `https://img.vietqr.io/image/${encodeURIComponent(bankId)}-${encodeURIComponent(normalizedAccountNumber)}-${encodeURIComponent(template)}.png?${query.toString()}`;
+}
 
 export default function CustomerPaymentsPage() {
   const { accessToken } = useAuth();
@@ -208,6 +258,33 @@ export default function CustomerPaymentsPage() {
   const selectedPendingConfirmation = useMemo(
     () => (selectedLoan ? pendingConfirmationMap.get(String(selectedLoan.id)) || null : null),
     [pendingConfirmationMap, selectedLoan]
+  );
+
+  const transferReference = useMemo(
+    () => buildTransferReference(selectedLoan),
+    [selectedLoan]
+  );
+
+  const paymentQrUrl = useMemo(
+    () =>
+      selectedLoan
+        ? buildVietQrUrl({
+            bankId: PAYMENT_RECIPIENT.bankId,
+            accountNo: PAYMENT_RECIPIENT.accountNo,
+            accountName: PAYMENT_RECIPIENT.accountName,
+            amount: selectedLoan.nextAmountDue,
+            addInfo: transferReference,
+            template: PAYMENT_RECIPIENT.qrTemplate
+          })
+        : "",
+    [selectedLoan, transferReference]
+  );
+
+  const paymentRecipientConfigured = Boolean(
+    PAYMENT_RECIPIENT.bankName
+    && PAYMENT_RECIPIENT.bankId
+    && PAYMENT_RECIPIENT.accountNo
+    && PAYMENT_RECIPIENT.accountName
   );
 
   const selectedLoanHasPendingConfirmation = useMemo(
@@ -389,7 +466,8 @@ export default function CustomerPaymentsPage() {
           <Paper component="form" onSubmit={handleSubmit} sx={{ p: 3 }}>
             <Stack spacing={2}>
               <Alert severity="info">
-                Có thể gửi biên lai thanh toán một phần, trả đủ kỳ hiện tại, trả trước hoặc tất toán, miễn là số tiền không vượt dư nợ còn lại.
+                Có thể gửi biên lai thanh toán một phần hoặc trả đủ cho kỳ hiện tại, hoặc tất toán toàn bộ dư nợ còn lại.
+                Hệ thống chưa hỗ trợ trả trước một phần cho nhiều kỳ tương lai trong một lần đối chiếu.
               </Alert>
               {selectedLoanHasPendingConfirmation && (
                 <Alert severity="warning">
@@ -402,6 +480,115 @@ export default function CustomerPaymentsPage() {
               {selectedLoan?.nextPaymentOverdue && (
                 <Alert severity="warning">
                   Kỳ thanh toán hiện tại đã quá hạn {Number(selectedLoan.nextPaymentOverdueDays || 0)} ngày. Hệ thống chỉ clear quá hạn khi biên lai được xác nhận đủ phần còn thiếu của kỳ.
+                </Alert>
+              )}
+
+              {paymentRecipientConfigured ? (
+                <Paper
+                  variant="outlined"
+                  sx={{
+                    p: 2,
+                    bgcolor: "#f8fbff",
+                    borderColor: "primary.light"
+                  }}
+                >
+                  <Grid container spacing={2} alignItems="stretch">
+                    <Grid item xs={12} lg={7}>
+                      <Stack spacing={1.5}>
+                        <Stack spacing={0.5}>
+                          <Typography variant="h6">Thông tin chuyển khoản</Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            Quét QR để điền sẵn tài khoản nhận tiền, nội dung chuyển khoản và số tiền kỳ hiện tại.
+                          </Typography>
+                        </Stack>
+                        <Grid container spacing={1.5}>
+                          <Grid item xs={12} md={6}>
+                            <TextField
+                              label="Tên ngân hàng"
+                              value={PAYMENT_RECIPIENT.bankName}
+                              fullWidth
+                              InputProps={{ readOnly: true }}
+                            />
+                          </Grid>
+                          <Grid item xs={12} md={6}>
+                            <TextField
+                              label="Số tài khoản"
+                              value={formatAccountNumber(PAYMENT_RECIPIENT.accountNo)}
+                              fullWidth
+                              InputProps={{ readOnly: true }}
+                            />
+                          </Grid>
+                          <Grid item xs={12}>
+                            <TextField
+                              label="Tên người thụ hưởng / tên công ty"
+                              value={PAYMENT_RECIPIENT.accountName}
+                              fullWidth
+                              InputProps={{ readOnly: true }}
+                            />
+                          </Grid>
+                          <Grid item xs={12}>
+                            <TextField
+                              label="Nội dung chuyển khoản mẫu"
+                              value={transferReference}
+                              fullWidth
+                              InputProps={{ readOnly: true }}
+                              placeholder="Chọn khoản vay để hệ thống tạo nội dung chuyển khoản"
+                            />
+                          </Grid>
+                          <Grid item xs={12}>
+                            <TextField
+                              label="Số tiền cần trả kỳ này"
+                              value={selectedLoan ? formatVnd(selectedLoan.nextAmountDue) : ""}
+                              fullWidth
+                              InputProps={{ readOnly: true }}
+                              placeholder="Chọn khoản vay để hiển thị số tiền"
+                            />
+                          </Grid>
+                        </Grid>
+                        <Alert severity="info">
+                          QR đang điền sẵn số tiền đến hạn của kỳ hiện tại. Nếu bạn muốn trả số tiền khác như trả một phần hoặc tất toán,
+                          hãy chuyển khoản thủ công nhưng vẫn giữ nguyên nội dung chuyển khoản mẫu để nhân viên đối chiếu nhanh.
+                        </Alert>
+                      </Stack>
+                    </Grid>
+                    <Grid item xs={12} lg={5}>
+                      <Stack
+                        spacing={1}
+                        alignItems="center"
+                        justifyContent="center"
+                        sx={{ height: "100%" }}
+                      >
+                        {paymentQrUrl ? (
+                          <Box
+                            component="img"
+                            src={paymentQrUrl}
+                            alt={`QR thanh toán cho khoản vay #${selectedLoan?.id || ""}`}
+                            sx={{
+                              width: "100%",
+                              maxWidth: 320,
+                              borderRadius: 3,
+                              border: "1px solid",
+                              borderColor: "divider",
+                              bgcolor: "#fff",
+                              boxShadow: 1
+                            }}
+                          />
+                        ) : (
+                          <Alert severity="info" sx={{ width: "100%" }}>
+                            Chọn khoản vay cần thanh toán để hiện mã QR chuyển khoản.
+                          </Alert>
+                        )}
+                        <Typography variant="caption" color="text.secondary" textAlign="center">
+                          QR được tạo theo chuẩn VietQR với tài khoản nhận tiền, số tiền kỳ này và nội dung chuyển khoản mẫu.
+                        </Typography>
+                      </Stack>
+                    </Grid>
+                  </Grid>
+                </Paper>
+              ) : (
+                <Alert severity="warning">
+                  Chưa cấu hình thông tin tài khoản nhận tiền cho màn thanh toán. Hãy bổ sung các biến môi trường `VITE_PAYMENT_*`
+                  trước khi dùng tính năng này.
                 </Alert>
               )}
 

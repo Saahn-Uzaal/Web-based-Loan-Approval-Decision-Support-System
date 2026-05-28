@@ -30,6 +30,8 @@ class DecisionEngineServiceTest {
                 false,
                 false,
                 true,
+                false,
+                false,
                 BigDecimal.valueOf(6_000_000));
 
         DssResult result = decisionEngineService.evaluate(input);
@@ -55,6 +57,8 @@ class DecisionEngineServiceTest {
                 36,
                 LoanPurpose.BUSINESS,
                 null,
+                false,
+                false,
                 false,
                 false,
                 false,
@@ -88,6 +92,8 @@ class DecisionEngineServiceTest {
                 false,
                 false,
                 true,
+                false,
+                false,
                 BigDecimal.valueOf(9_000_000));
 
         DssResult result = decisionEngineService.evaluate(input);
@@ -116,6 +122,8 @@ class DecisionEngineServiceTest {
                 false,
                 false,
                 true,
+                false,
+                false,
                 BigDecimal.valueOf(7_000_000));
 
         DssResult result = decisionEngineService.evaluate(input);
@@ -144,6 +152,8 @@ class DecisionEngineServiceTest {
                 false,
                 false,
                 true,
+                false,
+                false,
                 BigDecimal.valueOf(5_500_000));
         DecisionInput goodPayerInput = new DecisionInput(
                 4L,
@@ -163,6 +173,8 @@ class DecisionEngineServiceTest {
                 false,
                 false,
                 true,
+                false,
+                false,
                 BigDecimal.valueOf(5_500_000));
 
         DssResult base = decisionEngineService.evaluate(baseInput);
@@ -192,6 +204,8 @@ class DecisionEngineServiceTest {
                 false,
                 false,
                 true,
+                false,
+                false,
                 BigDecimal.valueOf(5_500_000));
         DecisionInput badPayerInput = new DecisionInput(
                 5L,
@@ -211,6 +225,8 @@ class DecisionEngineServiceTest {
                 false,
                 false,
                 true,
+                false,
+                false,
                 BigDecimal.valueOf(5_500_000));
 
         DssResult base = decisionEngineService.evaluate(baseInput);

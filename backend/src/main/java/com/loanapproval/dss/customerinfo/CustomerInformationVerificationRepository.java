@@ -118,8 +118,14 @@ public class CustomerInformationVerificationRepository {
                 LEFT JOIN customer_information_verifications civ ON civ.customer_id = u.id
                 WHERE u.role = 'CUSTOMER'
                   AND cp.user_id IS NOT NULL
+                  AND cp.identity_number IS NOT NULL
+                  AND TRIM(cp.identity_number) <> ''
                   AND cp.payslip_original_filename IS NOT NULL
                   AND TRIM(cp.payslip_original_filename) <> ''
+                  AND cp.identity_card_front_original_filename IS NOT NULL
+                  AND TRIM(cp.identity_card_front_original_filename) <> ''
+                  AND cp.identity_card_back_original_filename IS NOT NULL
+                  AND TRIM(cp.identity_card_back_original_filename) <> ''
                 ORDER BY
                     CASE COALESCE(civ.status, 'PENDING')
                         WHEN 'PENDING' THEN 0
@@ -162,8 +168,14 @@ public class CustomerInformationVerificationRepository {
             LEFT JOIN customer_information_verifications civ ON civ.customer_id = u.id
             WHERE u.role = 'CUSTOMER'
               AND cp.user_id IS NOT NULL
+              AND cp.identity_number IS NOT NULL
+              AND TRIM(cp.identity_number) <> ''
               AND cp.payslip_original_filename IS NOT NULL
               AND TRIM(cp.payslip_original_filename) <> ''
+              AND cp.identity_card_front_original_filename IS NOT NULL
+              AND TRIM(cp.identity_card_front_original_filename) <> ''
+              AND cp.identity_card_back_original_filename IS NOT NULL
+              AND TRIM(cp.identity_card_back_original_filename) <> ''
               AND COALESCE(civ.status, 'PENDING') = ?
             ORDER BY u.created_at DESC, u.id DESC
             """,
@@ -193,14 +205,24 @@ public class CustomerInformationVerificationRepository {
                 cp.user_id AS profile_user_id,
                 cp.full_name,
                 cp.phone,
+                cp.identity_number,
                 cp.date_of_birth,
                 cp.monthly_income,
                 cp.verified_monthly_income,
                 cp.debt_to_income_ratio,
+                cp.bank_account_number,
+                cp.bank_name,
+                cp.credit_history_score,
                 cp.payment_rating,
                 cp.payslip_original_filename,
                 cp.payslip_file_size,
                 cp.payslip_uploaded_at,
+                cp.identity_card_front_original_filename,
+                cp.identity_card_front_file_size,
+                cp.identity_card_front_uploaded_at,
+                cp.identity_card_back_original_filename,
+                cp.identity_card_back_file_size,
+                cp.identity_card_back_uploaded_at,
                 COALESCE(civ.status, 'PENDING') AS verification_status,
                 civ.rejection_reason,
                 civ.reviewed_at,
@@ -218,14 +240,25 @@ public class CustomerInformationVerificationRepository {
                     profile = new StaffCustomerInformationDetailResponse.ProfileSummary(
                         rs.getString("full_name"),
                         rs.getString("phone"),
+                        rs.getString("identity_number"),
                         rs.getObject("date_of_birth", java.time.LocalDate.class),
                         rs.getBigDecimal("monthly_income"),
                         rs.getBigDecimal("verified_monthly_income"),
                         rs.getBigDecimal("debt_to_income_ratio"),
+                        rs.getString("bank_account_number"),
+                        rs.getString("bank_name"),
+                        (Integer) rs.getObject("credit_history_score"),
                         (Integer) rs.getObject("payment_rating"),
+                        null,
                         rs.getString("payslip_original_filename"),
                         (Long) rs.getObject("payslip_file_size"),
-                        toInstant(rs.getTimestamp("payslip_uploaded_at"))
+                        toInstant(rs.getTimestamp("payslip_uploaded_at")),
+                        rs.getString("identity_card_front_original_filename"),
+                        (Long) rs.getObject("identity_card_front_file_size"),
+                        toInstant(rs.getTimestamp("identity_card_front_uploaded_at")),
+                        rs.getString("identity_card_back_original_filename"),
+                        (Long) rs.getObject("identity_card_back_file_size"),
+                        toInstant(rs.getTimestamp("identity_card_back_uploaded_at"))
                     );
                 }
 
@@ -237,8 +270,7 @@ public class CustomerInformationVerificationRepository {
                     rs.getString("rejection_reason"),
                     rs.getString("reviewed_by_email"),
                     toInstant(rs.getTimestamp("reviewed_at")),
-                    profile,
-                    List.of()
+                    profile
                 );
             },
             customerId

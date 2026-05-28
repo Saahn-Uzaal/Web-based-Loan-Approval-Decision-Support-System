@@ -187,57 +187,62 @@ public class StaffReviewRepository {
                             lr.assigned_staff_user_id,
                             assigned_staff.email AS assigned_staff_email,
                             lr.assigned_at,
-                            cp.full_name,
-                            cp.phone,
-                            cp.monthly_income,
-                            cp.debt_to_income_ratio,
-                            cp.employment_status,
-                            cp.employment_start_date,
-                            cp.credit_history_score,
+                            COALESCE(las.full_name, cp.full_name) AS full_name,
+                            COALESCE(las.phone, cp.phone) AS phone,
+                            cp.identity_number,
+                            COALESCE(las.declared_monthly_income, cp.monthly_income) AS monthly_income,
+                            COALESCE(las.verified_monthly_income, cp.verified_monthly_income) AS profile_verified_monthly_income,
+                            COALESCE(las.debt_to_income_ratio, cp.debt_to_income_ratio) AS debt_to_income_ratio,
+                            COALESCE(las.employment_status, cp.employment_status) AS employment_status,
+                            COALESCE(las.employment_start_date, cp.employment_start_date) AS employment_start_date,
+                            cp.bank_account_number,
+                            cp.bank_name,
+                            COALESCE(las.credit_history_score, cp.credit_history_score) AS credit_history_score,
                             cp.payslip_original_filename,
                             cp.payslip_file_size,
                             cp.payslip_uploaded_at,
+                            cp.identity_card_front_original_filename,
+                            cp.identity_card_front_file_size,
+                            cp.identity_card_front_uploaded_at,
+                            cp.identity_card_back_original_filename,
+                            cp.identity_card_back_file_size,
+                            cp.identity_card_back_uploaded_at,
                             CASE
-                                WHEN cv.customer_id IS NOT NULL THEN cv.document_status
+                                WHEN las.loan_request_id IS NOT NULL THEN las.document_status
                                 ELSE 'PENDING'
                             END AS document_status,
                             CASE
-                                WHEN cv.customer_id IS NOT NULL THEN cv.identity_status
+                                WHEN las.loan_request_id IS NOT NULL THEN las.identity_status
                                 ELSE 'PENDING'
                             END AS identity_status,
                             CASE
-                                WHEN cv.customer_id IS NOT NULL THEN cv.face_match_status
+                                WHEN las.loan_request_id IS NOT NULL THEN las.face_match_status
                                 ELSE 'PENDING'
                             END AS face_match_status,
                             CASE
-                                WHEN cv.customer_id IS NOT NULL THEN cv.income_status
-                                ELSE civ.status
+                                WHEN las.loan_request_id IS NOT NULL THEN las.income_status
+                                ELSE 'PENDING'
                             END AS income_status,
+                            las.verified_monthly_income,
                             CASE
-                                WHEN cv.customer_id IS NOT NULL THEN cv.kyc_status
+                                WHEN las.loan_request_id IS NOT NULL THEN las.kyc_status
                                 ELSE 'PENDING'
                             END AS kyc_status,
                             CASE
-                                WHEN cv.customer_id IS NOT NULL THEN cv.aml_status
+                                WHEN las.loan_request_id IS NOT NULL THEN las.aml_status
                                 ELSE 'PENDING'
                             END AS aml_status,
                             CASE
-                                WHEN cv.customer_id IS NOT NULL THEN cv.fraud_flag
-                                WHEN civ.status IS NOT NULL THEN FALSE
+                                WHEN las.loan_request_id IS NOT NULL THEN las.fraud_flag
                                 ELSE NULL
                             END AS fraud_flag,
                             CASE
-                                WHEN cv.customer_id IS NOT NULL THEN cv.note
-                                WHEN civ.status = 'PASSED' THEN 'Đồng bộ từ bước xác minh thông tin'
-                                WHEN civ.status = 'FAILED' AND civ.rejection_reason IS NOT NULL
-                                    THEN CONCAT('Từ chối ở bước xác minh thông tin: ', civ.rejection_reason)
-                                WHEN civ.status = 'FAILED' THEN 'Từ chối ở bước xác minh thông tin'
-                                WHEN civ.status = 'PENDING' THEN 'Đang chờ xác minh thông tin'
+                                WHEN las.loan_request_id IS NOT NULL THEN las.verification_note
                                 ELSE NULL
                             END AS verification_note,
                             CASE
-                                WHEN cv.customer_id IS NOT NULL THEN cv.verified_at
-                                ELSE civ.reviewed_at
+                                WHEN las.loan_request_id IS NOT NULL THEN las.verified_at
+                                ELSE NULL
                             END AS verified_at,
                             dr.credit_score,
                             dr.risk_rank,
@@ -269,8 +274,7 @@ public class StaffReviewRepository {
                         INNER JOIN users u ON u.id = lr.customer_id
                         LEFT JOIN users assigned_staff ON assigned_staff.id = lr.assigned_staff_user_id
                         LEFT JOIN customer_profiles cp ON cp.user_id = lr.customer_id
-                        LEFT JOIN customer_verifications cv ON cv.customer_id = lr.customer_id
-                        LEFT JOIN customer_information_verifications civ ON civ.customer_id = lr.customer_id
+                        LEFT JOIN loan_application_snapshots las ON las.loan_request_id = lr.id
                         LEFT JOIN dss_results dr ON dr.loan_request_id = lr.id
                         LEFT JOIN risk_assessments ra ON ra.loan_request_id = lr.id
                         LEFT JOIN loan_contracts lc ON lc.loan_request_id = lr.id
@@ -300,14 +304,25 @@ public class StaffReviewRepository {
                     StaffRequestDetailResponse.CustomerProfileSummary customerProfileSummary = new StaffRequestDetailResponse.CustomerProfileSummary(
                             rs.getString("full_name"),
                             rs.getString("phone"),
+                            rs.getString("identity_number"),
                             rs.getBigDecimal("monthly_income"),
+                            rs.getBigDecimal("profile_verified_monthly_income"),
                             rs.getBigDecimal("debt_to_income_ratio"),
                             rs.getString("employment_status"),
                             rs.getObject("employment_start_date", java.time.LocalDate.class),
+                            rs.getString("bank_account_number"),
+                            rs.getString("bank_name"),
                             (Integer) rs.getObject("credit_history_score"),
+                            null,
                             rs.getString("payslip_original_filename"),
                             (Long) rs.getObject("payslip_file_size"),
-                            toInstant(rs.getTimestamp("payslip_uploaded_at")));
+                            toInstant(rs.getTimestamp("payslip_uploaded_at")),
+                            rs.getString("identity_card_front_original_filename"),
+                            (Long) rs.getObject("identity_card_front_file_size"),
+                            toInstant(rs.getTimestamp("identity_card_front_uploaded_at")),
+                            rs.getString("identity_card_back_original_filename"),
+                            (Long) rs.getObject("identity_card_back_file_size"),
+                            toInstant(rs.getTimestamp("identity_card_back_uploaded_at")));
 
                     StaffRequestDetailResponse.DssSummary dssSummary = null;
                     if (rs.getObject("credit_score") != null) {
@@ -327,6 +342,7 @@ public class StaffReviewRepository {
                                 rs.getString("identity_status"),
                                 rs.getString("face_match_status"),
                                 rs.getString("income_status"),
+                                rs.getBigDecimal("verified_monthly_income"),
                                 rs.getString("kyc_status"),
                                 rs.getString("aml_status"),
                                 rs.getBoolean("fraud_flag"),

@@ -74,6 +74,9 @@ public class RiskAssessmentService {
     }
 
     private int calculateCreditRiskScore(DecisionInput input, DssResult dssResult) {
+        if (Boolean.TRUE.equals(input.creditCheckHardReject())) {
+            return 95;
+        }
         int score = switch (dssResult.riskRank()) {
             case A -> 20;
             case B -> 40;
@@ -91,6 +94,9 @@ public class RiskAssessmentService {
 
         if (input.creditHistoryScore() != null && input.creditHistoryScore() < 40) {
             score += 10;
+        }
+        if (Boolean.TRUE.equals(input.creditCheckManualReview())) {
+            score += 12;
         }
 
         return clamp(score);

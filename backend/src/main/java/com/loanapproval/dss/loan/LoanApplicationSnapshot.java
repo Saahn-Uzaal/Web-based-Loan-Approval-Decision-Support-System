@@ -28,5 +28,8 @@ public record LoanApplicationSnapshot(
         VerificationStatus kycStatus,
         VerificationStatus amlStatus,
         boolean fraudFlag,
+        String verificationNote,
+        Long verifiedBy,
+        Instant verifiedAt,
         Instant snapshotAt) {
 }

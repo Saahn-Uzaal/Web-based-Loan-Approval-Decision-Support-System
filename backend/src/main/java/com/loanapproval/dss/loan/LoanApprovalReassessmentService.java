@@ -1,6 +1,8 @@
 package com.loanapproval.dss.loan;
 
 import com.loanapproval.dss.debt.CustomerDebtService;
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckService;
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckSummary;
 import com.loanapproval.dss.dss.DecisionEngineService;
 import com.loanapproval.dss.dss.DecisionInput;
 import com.loanapproval.dss.dss.DssRecommendation;
@@ -31,6 +33,7 @@ public class LoanApprovalReassessmentService {
     private final RiskAssessmentService riskAssessmentService;
     private final LoanEligibilityService loanEligibilityService;
     private final LoanApplicationSnapshotRepository loanApplicationSnapshotRepository;
+    private final CustomerCreditCheckService customerCreditCheckService;
 
     public LoanApprovalReassessmentService(
             CustomerProfileRepository customerProfileRepository,
@@ -39,7 +42,8 @@ public class LoanApprovalReassessmentService {
             DssResultRepository dssResultRepository,
             RiskAssessmentService riskAssessmentService,
             LoanEligibilityService loanEligibilityService,
-            LoanApplicationSnapshotRepository loanApplicationSnapshotRepository) {
+            LoanApplicationSnapshotRepository loanApplicationSnapshotRepository,
+            CustomerCreditCheckService customerCreditCheckService) {
         this.customerProfileRepository = customerProfileRepository;
         this.customerDebtService = customerDebtService;
         this.decisionEngineService = decisionEngineService;
@@ -47,6 +51,7 @@ public class LoanApprovalReassessmentService {
         this.riskAssessmentService = riskAssessmentService;
         this.loanEligibilityService = loanEligibilityService;
         this.loanApplicationSnapshotRepository = loanApplicationSnapshotRepository;
+        this.customerCreditCheckService = customerCreditCheckService;
     }
 
     public ReassessmentResult reassessAndPersist(
@@ -61,6 +66,8 @@ public class LoanApprovalReassessmentService {
         CustomerProfile profile = snapshot != null
                 ? profileFromSnapshot(snapshot)
                 : customerProfileRepository.findByUserId(loan.customerId()).orElse(null);
+        CustomerCreditCheckSummary creditCheck = customerCreditCheckService.findLatestByCustomerId(loan.customerId())
+                .orElseGet(() -> customerCreditCheckService.refreshForCustomer(loan.customerId(), profile));
         BigDecimal existingMonthlyDebt = customerDebtService.sumActiveMonthlyDebt(loan.customerId());
         CandidateTerms candidate = resolveCandidateTerms(
                 loan,
@@ -74,6 +81,7 @@ public class LoanApprovalReassessmentService {
             AssessmentPass currentPass = assess(
                     loan,
                     profile,
+                    creditCheck,
                     existingMonthlyDebt,
                     verification,
                     candidate,
@@ -130,6 +138,7 @@ public class LoanApprovalReassessmentService {
     private AssessmentPass assess(
             LoanRecord loan,
             CustomerProfile profile,
+            CustomerCreditCheckSummary creditCheck,
             BigDecimal existingMonthlyDebt,
             CustomerVerification verification,
             CandidateTerms candidate,
@@ -142,6 +151,7 @@ public class LoanApprovalReassessmentService {
         DecisionInput decisionInput = buildDecisionInput(
                 loan,
                 profile,
+                creditCheck,
                 verification,
                 existingMonthlyDebt,
                 collateralValue,
@@ -218,6 +228,7 @@ public class LoanApprovalReassessmentService {
     private DecisionInput buildDecisionInput(
             LoanRecord loan,
             CustomerProfile profile,
+            CustomerCreditCheckSummary creditCheck,
             CustomerVerification verification,
             BigDecimal existingMonthlyDebt,
             BigDecimal collateralValue,
@@ -232,7 +243,7 @@ public class LoanApprovalReassessmentService {
                 profile != null ? profile.employmentStatus() : null,
                 profile != null ? profile.dateOfBirth() : null,
                 profile != null ? profile.employmentStartDate() : null,
-                null,
+                resolveCreditHistoryScore(profile, creditCheck),
                 collateralValue,
                 existingMonthlyDebt,
                 approvedAmount,
@@ -243,6 +254,8 @@ public class LoanApprovalReassessmentService {
                 isFailed(verification.amlStatus()),
                 verification.fraudFlag(),
                 asIncomeVerified(verification.incomeStatus()),
+                creditCheck != null ? creditCheck.manualReviewRequired() : null,
+                creditCheck != null ? creditCheck.hardReject() : null,
                 projectedMonthlyPayment);
     }
 
@@ -323,14 +336,27 @@ public class LoanApprovalReassessmentService {
                 snapshot.customerId(),
                 snapshot.fullName(),
                 snapshot.phone(),
+                null,
                 snapshot.dateOfBirth(),
                 snapshot.declaredMonthlyIncome(),
                 snapshot.verifiedMonthlyIncome(),
                 snapshot.debtToIncomeRatio(),
                 snapshot.employmentStatus(),
                 snapshot.employmentStartDate(),
+                null,
+                null,
                 snapshot.creditHistoryScore(),
                 snapshot.paymentRating(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 null,
                 null,
                 null,
@@ -346,6 +372,13 @@ public class LoanApprovalReassessmentService {
             return false;
         }
         return null;
+    }
+
+    private Integer resolveCreditHistoryScore(CustomerProfile profile, CustomerCreditCheckSummary creditCheck) {
+        if (creditCheck != null && creditCheck.creditScore() != null) {
+            return creditCheck.creditScore();
+        }
+        return profile != null ? profile.creditHistoryScore() : null;
     }
 
     private record CandidateTerms(

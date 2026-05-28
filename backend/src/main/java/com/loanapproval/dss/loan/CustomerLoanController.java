@@ -24,6 +24,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -58,6 +59,39 @@ public class CustomerLoanController {
             @Valid @RequestBody CreateLoanRequest request) {
         AuthenticatedUser user = extractUser(authentication);
         return customerLoanService.createDraft(user.id(), request);
+    }
+
+    @PostMapping(value = "/drafts", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseStatus(HttpStatus.CREATED)
+    public LoanDetailResponse createLoanDraft(
+            Authentication authentication,
+            @Valid @RequestBody CreateLoanRequest request) {
+        AuthenticatedUser user = extractUser(authentication);
+        return customerLoanService.createDraft(user.id(), request);
+    }
+
+    @PostMapping(value = "/drafts", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.CREATED)
+    public LoanDetailResponse createLoanDraftMultipart(
+            Authentication authentication,
+            @RequestPart("loan") String loanJson,
+            @RequestPart(value = "vehicleRegistration", required = false) MultipartFile vehicleRegistration,
+            @RequestPart(value = "licensePlateImage", required = false) MultipartFile licensePlateImage,
+            @RequestPart(value = "idCardFront", required = false) MultipartFile idCardFront,
+            @RequestPart(value = "idCardBack", required = false) MultipartFile idCardBack,
+            @RequestPart(value = "faceCapture", required = false) MultipartFile faceCapture) {
+        AuthenticatedUser user = extractUser(authentication);
+        CreateLoanRequest request = parseAndValidateLoan(loanJson);
+        return customerLoanService.createDraft(
+                user.id(),
+                request,
+                new LoanApplicationFiles(
+                        vehicleRegistration,
+                        licensePlateImage,
+                        idCardFront,
+                        idCardBack,
+                        faceCapture,
+                        List.of()));
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -105,6 +139,74 @@ public class CustomerLoanController {
             @PathVariable("id") Long id) {
         AuthenticatedUser user = extractUser(authentication);
         return customerLoanService.getMineById(user.id(), id);
+    }
+
+    @PutMapping(value = "/{id}/draft", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public LoanDetailResponse updateLoanDraft(
+            Authentication authentication,
+            @PathVariable("id") Long id,
+            @Valid @RequestBody CreateLoanRequest request) {
+        AuthenticatedUser user = extractUser(authentication);
+        return customerLoanService.updateDraft(user.id(), id, request);
+    }
+
+    @PutMapping(value = "/{id}/draft", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public LoanDetailResponse updateLoanDraftMultipart(
+            Authentication authentication,
+            @PathVariable("id") Long id,
+            @RequestPart("loan") String loanJson,
+            @RequestPart(value = "vehicleRegistration", required = false) MultipartFile vehicleRegistration,
+            @RequestPart(value = "licensePlateImage", required = false) MultipartFile licensePlateImage,
+            @RequestPart(value = "idCardFront", required = false) MultipartFile idCardFront,
+            @RequestPart(value = "idCardBack", required = false) MultipartFile idCardBack,
+            @RequestPart(value = "faceCapture", required = false) MultipartFile faceCapture) {
+        AuthenticatedUser user = extractUser(authentication);
+        CreateLoanRequest request = parseAndValidateLoan(loanJson);
+        return customerLoanService.updateDraft(
+                user.id(),
+                id,
+                request,
+                new LoanApplicationFiles(
+                        vehicleRegistration,
+                        licensePlateImage,
+                        idCardFront,
+                        idCardBack,
+                        faceCapture,
+                        List.of()));
+    }
+
+    @PostMapping(value = "/{id}/submit", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public LoanDetailResponse submitLoanDraft(
+            Authentication authentication,
+            @PathVariable("id") Long id,
+            @Valid @RequestBody CreateLoanRequest request) {
+        AuthenticatedUser user = extractUser(authentication);
+        return customerLoanService.submitDraft(user.id(), id, request);
+    }
+
+    @PostMapping(value = "/{id}/submit", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public LoanDetailResponse submitLoanDraftMultipart(
+            Authentication authentication,
+            @PathVariable("id") Long id,
+            @RequestPart("loan") String loanJson,
+            @RequestPart(value = "vehicleRegistration", required = false) MultipartFile vehicleRegistration,
+            @RequestPart(value = "licensePlateImage", required = false) MultipartFile licensePlateImage,
+            @RequestPart(value = "idCardFront", required = false) MultipartFile idCardFront,
+            @RequestPart(value = "idCardBack", required = false) MultipartFile idCardBack,
+            @RequestPart(value = "faceCapture", required = false) MultipartFile faceCapture) {
+        AuthenticatedUser user = extractUser(authentication);
+        CreateLoanRequest request = parseAndValidateLoan(loanJson);
+        return customerLoanService.submitDraft(
+                user.id(),
+                id,
+                request,
+                new LoanApplicationFiles(
+                        vehicleRegistration,
+                        licensePlateImage,
+                        idCardFront,
+                        idCardBack,
+                        faceCapture,
+                        List.of()));
     }
 
     @PostMapping("/{id}/accept")

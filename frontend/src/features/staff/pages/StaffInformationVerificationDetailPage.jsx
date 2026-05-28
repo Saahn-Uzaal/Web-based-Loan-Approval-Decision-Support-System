@@ -6,17 +6,13 @@ import {
   Divider,
   Paper,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
   TextField,
   Typography
 } from "@mui/material";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
+  downloadInformationVerificationIdentityCardApi,
   downloadInformationVerificationPayslipApi,
   getInformationVerificationDetailApi,
   reviewInformationVerificationApi
@@ -25,7 +21,7 @@ import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
 import { clearFieldError, fieldErrorProps, mapFieldErrors } from "@/shared/utils/formErrors";
 import { formatFileSize } from "@/shared/utils/files";
-import { labelVerificationStatus } from "@/shared/utils/labels";
+import { labelCreditBureauStatus, labelVerificationStatus } from "@/shared/utils/labels";
 
 const verificationFieldKeywords = {
   verifiedMonthlyIncome: ["thu nhập", "lương", "verifiedMonthlyIncome"],
@@ -53,6 +49,7 @@ export default function StaffInformationVerificationDetailPage() {
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [downloadingPayslip, setDownloadingPayslip] = useState(false);
+  const [downloadingIdentityCard, setDownloadingIdentityCard] = useState("");
   const [verifiedMonthlyIncome, setVerifiedMonthlyIncome] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
 
@@ -165,13 +162,35 @@ export default function StaffInformationVerificationDetailPage() {
     }
   };
 
-  const hasSubmittedProfile = Boolean(detail?.profile?.payslipFileName);
+  const handleDownloadIdentityCard = async (side) => {
+    const fileName = side === "front" ? detail?.profile?.identityCardFrontFileName : detail?.profile?.identityCardBackFileName;
+    if (!fileName) {
+      return;
+    }
+    setDownloadingIdentityCard(side);
+    setError("");
+    try {
+      await downloadInformationVerificationIdentityCardApi(accessToken, detail.customerId, side, fileName);
+    } catch (err) {
+      setError(err.message || "Không tải được ảnh CCCD");
+    } finally {
+      setDownloadingIdentityCard("");
+    }
+  };
+
+  const hasSubmittedProfile = Boolean(
+    detail?.profile?.identityNumber
+      && detail?.profile?.payslipFileName
+      && detail?.profile?.identityCardFrontFileName
+      && detail?.profile?.identityCardBackFileName
+  );
+  const hasRetainedVerifiedIncome = detail?.status === "PENDING" && detail?.profile?.verifiedMonthlyIncome != null;
 
   return (
     <Stack spacing={2}>
       <Typography variant="h4">Xác minh thông tin khách hàng #{customerId}</Typography>
       <Typography color="text.secondary">
-        Nhân viên đối chiếu thông tin hồ sơ, phiếu lương, các khoản nợ và quyết định xem khách hàng có được tạo hồ sơ vay mới trong tương lai hay không.
+        Nhân viên đối chiếu thông tin hồ sơ, phiếu lương và quyết định xem khách hàng có được tạo hồ sơ vay mới trong tương lai hay không.
       </Typography>
 
       {error && <Alert severity="error">{error}</Alert>}
@@ -215,15 +234,27 @@ export default function StaffInformationVerificationDetailPage() {
                   Khách hàng chưa hoàn thành hồ sơ. Không thể chấp thuận nếu chưa có dữ liệu để đối chiếu.
                 </Alert>
               )}
-              {detail.profile && !detail.profile.payslipFileName && (
+              {detail.profile && !hasSubmittedProfile && (
                 <Alert severity="warning">
-                  Khách hàng chưa nộp phiếu lương. Chưa thể chấp thuận hoặc từ chối cho tới khi có đủ hồ sơ đối chiếu.
+                  Khách hàng chưa nộp đủ số CCCD, ảnh CCCD hai mặt và phiếu lương. Chưa thể chấp thuận hoặc từ chối cho tới khi có đủ hồ sơ đối chiếu.
                 </Alert>
               )}
               {detail.profile && (
                 <>
                   <Typography variant="body2">Họ tên: {detail.profile.fullName || "-"}</Typography>
                   <Typography variant="body2">Số điện thoại: {detail.profile.phone || "-"}</Typography>
+                  <Typography variant="body2">Số CCCD: {detail.profile.identityNumber || "-"}</Typography>
+                  <Typography variant="body2">
+                    Số tài khoản nhận giải ngân: {detail.profile.bankAccountNumber || "-"}
+                  </Typography>
+                  <Typography variant="body2">
+                    Ngân hàng nhận giải ngân: {detail.profile.bankName || "-"}
+                  </Typography>
+                  {!(detail.profile.bankAccountNumber && detail.profile.bankName) && (
+                    <Alert severity="info">
+                      Hồ sơ gốc hiện chưa có đủ thông tin tài khoản nhận giải ngân. Khách hàng vẫn có thể được xác minh thông tin, nhưng sẽ phải bổ sung trước bước giải ngân.
+                    </Alert>
+                  )}
                   <Typography variant="body2">Ngày sinh: {detail.profile.dateOfBirth || "-"}</Typography>
                   <Typography variant="body2">
                     Thu nhập kê khai: {detail.profile.monthlyIncome != null ? formatVnd(detail.profile.monthlyIncome) : "-"}
@@ -237,7 +268,17 @@ export default function StaffInformationVerificationDetailPage() {
                   <Typography variant="body2">
                     DTI: {detail.profile.debtToIncomeRatio != null ? `${detail.profile.debtToIncomeRatio}%` : "-"}
                   </Typography>
+                  <Typography variant="body2">Điểm tín dụng nội bộ: {detail.profile.creditHistoryScore ?? "-"}</Typography>
                   <Typography variant="body2">Điểm thanh toán: {detail.profile.paymentRating ?? "-"}</Typography>
+                  {detail.profile.creditCheck && (
+                    <Alert severity={detail.profile.creditCheck.hardReject ? "error" : detail.profile.creditCheck.manualReviewRequired ? "warning" : "info"}>
+                      Tra cứu tín dụng nội bộ theo CCCD: {labelCreditBureauStatus(detail.profile.creditCheck.bureauStatus)}.
+                      {detail.profile.creditCheck.creditScore != null ? ` Điểm: ${detail.profile.creditCheck.creditScore}.` : ""}
+                      {detail.profile.creditCheck.manualReviewRequired ? " Cần thẩm định thủ công." : ""}
+                      {detail.profile.creditCheck.hardReject ? " Có cờ từ chối cứng." : ""}
+                      {detail.profile.creditCheck.riskNote ? ` Ghi chú: ${detail.profile.creditCheck.riskNote}` : ""}
+                    </Alert>
+                  )}
                   <Typography variant="body2">
                     Phiếu lương: {detail.profile.payslipFileName || "-"}
                     {detail.profile.payslipFileSize != null ? ` (${formatFileSize(detail.profile.payslipFileSize)})` : ""}
@@ -256,40 +297,43 @@ export default function StaffInformationVerificationDetailPage() {
                       {downloadingPayslip ? "Đang tải..." : "Tải phiếu lương"}
                     </Button>
                   )}
+                  <Typography variant="body2">
+                    CCCD mặt trước: {detail.profile.identityCardFrontFileName || "-"}
+                    {detail.profile.identityCardFrontFileSize != null ? ` (${formatFileSize(detail.profile.identityCardFrontFileSize)})` : ""}
+                  </Typography>
+                  <Typography variant="body2">
+                    Tải lên lúc: {detail.profile.identityCardFrontUploadedAt ? new Date(detail.profile.identityCardFrontUploadedAt).toLocaleString() : "-"}
+                  </Typography>
+                  {detail.profile.identityCardFrontFileName && (
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      sx={{ alignSelf: "flex-start" }}
+                      onClick={() => handleDownloadIdentityCard("front")}
+                      disabled={downloadingIdentityCard === "front"}
+                    >
+                      {downloadingIdentityCard === "front" ? "Đang tải..." : "Tải CCCD mặt trước"}
+                    </Button>
+                  )}
+                  <Typography variant="body2">
+                    CCCD mặt sau: {detail.profile.identityCardBackFileName || "-"}
+                    {detail.profile.identityCardBackFileSize != null ? ` (${formatFileSize(detail.profile.identityCardBackFileSize)})` : ""}
+                  </Typography>
+                  <Typography variant="body2">
+                    Tải lên lúc: {detail.profile.identityCardBackUploadedAt ? new Date(detail.profile.identityCardBackUploadedAt).toLocaleString() : "-"}
+                  </Typography>
+                  {detail.profile.identityCardBackFileName && (
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      sx={{ alignSelf: "flex-start" }}
+                      onClick={() => handleDownloadIdentityCard("back")}
+                      disabled={downloadingIdentityCard === "back"}
+                    >
+                      {downloadingIdentityCard === "back" ? "Đang tải..." : "Tải CCCD mặt sau"}
+                    </Button>
+                  )}
                 </>
-              )}
-            </Stack>
-          </Paper>
-
-          <Paper sx={{ p: 3 }}>
-            <Stack spacing={2}>
-              <Typography variant="h6">Khoản nợ hiện tại</Typography>
-              {detail.debts.length === 0 && (
-                <Typography variant="body2" color="text.secondary">
-                  Khách hàng chưa khai báo khoản nợ nào.
-                </Typography>
-              )}
-              {detail.debts.length > 0 && (
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Khoản nợ</TableCell>
-                      <TableCell>Trả hàng tháng</TableCell>
-                      <TableCell>Dư nợ</TableCell>
-                      <TableCell>Đơn vị cho vay</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {detail.debts.map((debt) => (
-                      <TableRow key={debt.id}>
-                        <TableCell>{debt.debtType}</TableCell>
-                        <TableCell>{formatVnd(debt.monthlyPayment)}</TableCell>
-                        <TableCell>{formatVnd(debt.remainingBalance)}</TableCell>
-                        <TableCell>{debt.lenderName || "-"}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
               )}
             </Stack>
           </Paper>
@@ -298,8 +342,13 @@ export default function StaffInformationVerificationDetailPage() {
             <Stack spacing={2}>
               <Typography variant="h6">Quyết định xác minh thông tin</Typography>
               <Alert severity="info">
-                Mọi thay đổi ở hồ sơ hoặc danh sách khoản nợ của khách hàng sẽ đưa trạng thái này quay về Chờ xác minh.
+                Các thay đổi liên quan đến CCCD, phiếu lương hoặc thu nhập sẽ đưa trạng thái này quay về Chờ xác minh.
               </Alert>
+              {hasRetainedVerifiedIncome && (
+                <Alert severity="info">
+                  Mức thu nhập đã duyệt trước đó vẫn được giữ lại vì khách hàng chưa thay đổi lương kê khai hoặc phiếu lương.
+                </Alert>
+              )}
               {submitError && <Alert severity="error">{submitError}</Alert>}
               {submitSuccess && <Alert severity="success">{submitSuccess}</Alert>}
               <TextField

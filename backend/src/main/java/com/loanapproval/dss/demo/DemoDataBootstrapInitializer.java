@@ -73,6 +73,11 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
     private static final String CUSTOMER_DEMO_EMAIL = "customer.demo@loan.local";
     private static final String CUSTOMER_PENDING_EMAIL = "customer.pending@loan.local";
     private static final String CUSTOMER_FAILED_EMAIL = "customer.failed@loan.local";
+    private static final List<String> SAMPLE_CUSTOMER_EMAILS = List.of(
+        CUSTOMER_DEMO_EMAIL,
+        CUSTOMER_PENDING_EMAIL,
+        CUSTOMER_FAILED_EMAIL
+    );
     private static final List<String> SAMPLE_EMAILS = List.of(
         STAFF_EMAIL,
         CUSTOMER_DEMO_EMAIL,
@@ -191,12 +196,13 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
 
     private void cleanupExistingDemoData() {
         List<Long> userIds = findSampleUserIds();
+        List<Long> customerUserIds = findSampleCustomerIds();
         if (userIds.isEmpty()) {
             return;
         }
 
-        List<Long> loanIds = findSampleLoanIds(userIds);
-        deleteStorageDirectories(payslipStorageRoot, userIds);
+        List<Long> loanIds = findSampleLoanIds(customerUserIds);
+        deleteStorageDirectories(payslipStorageRoot, customerUserIds);
         deleteStorageDirectories(loanDocumentStorageRoot, loanIds);
         deleteStorageDirectories(paymentProofStorageRoot, userIds);
 
@@ -217,32 +223,40 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
         deleteByIds("DELETE FROM loan_request_documents WHERE loan_request_id IN (%s)", loanIds);
         deleteByIds("DELETE FROM loan_requests WHERE id IN (%s)", loanIds);
 
-        deleteByIds("DELETE FROM customer_verifications WHERE customer_id IN (%s)", userIds);
-        deleteByIds("DELETE FROM customer_information_verifications WHERE customer_id IN (%s)", userIds);
-        deleteByIds("DELETE FROM customer_debts WHERE customer_id IN (%s)", userIds);
-        deleteByIds("DELETE FROM customer_profiles WHERE user_id IN (%s)", userIds);
-        deleteByIds("DELETE FROM compliance_audit_logs WHERE customer_id IN (%s)", userIds);
+        deleteByIds("DELETE FROM customer_verifications WHERE customer_id IN (%s)", customerUserIds);
+        deleteByIds("DELETE FROM customer_information_verifications WHERE customer_id IN (%s)", customerUserIds);
+        deleteByIds("DELETE FROM customer_credit_checks WHERE customer_id IN (%s)", customerUserIds);
+        deleteByIds("DELETE FROM customer_debts WHERE customer_id IN (%s)", customerUserIds);
+        deleteByIds("DELETE FROM customer_profiles WHERE user_id IN (%s)", customerUserIds);
+        deleteByIds("DELETE FROM compliance_audit_logs WHERE customer_id IN (%s)", customerUserIds);
         deleteByIds("DELETE FROM compliance_audit_logs WHERE actor_user_id IN (%s)", userIds);
         deleteByIds("DELETE FROM notifications WHERE recipient_user_id IN (%s)", userIds);
         deleteByIds("DELETE FROM notifications WHERE actor_user_id IN (%s)", userIds);
-        deleteByIds("DELETE FROM users WHERE id IN (%s)", userIds);
+        deleteByIds("DELETE FROM users WHERE id IN (%s)", customerUserIds);
     }
 
     private void seedApprovedCustomer(UserAccount staff, UserAccount customer) {
         StoredDemoFile payslip = writePayslip(customer.id(), "demo-payslip.pdf");
+        StoredDemoFile identityCardFront = writeIdentityCard(customer.id(), "front", "demo-id-front.png");
+        StoredDemoFile identityCardBack = writeIdentityCard(customer.id(), "back", "demo-id-back.png");
         upsertProfile(
             customer.id(),
             "Nguyễn Minh An",
             "0901234567",
+            "079094001234",
             LocalDate.of(1994, 5, 12),
             money("32000000"),
             money("30000000"),
             money("13.50"),
             "Nhân viên kỹ thuật",
             LocalDate.of(2018, 3, 1),
+            "19036866889922",
+            "Vietcombank",
             745,
             72,
-            payslip
+            payslip,
+            identityCardFront,
+            identityCardBack
         );
 
         customerDebtRepository.create(customer.id(), "Vay mua xe", money("2600000"), money("68000000"), "Techcombank");
@@ -280,19 +294,27 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
     }
 
     private void seedPendingCustomer(UserAccount customer) {
+        StoredDemoFile payslip = writePayslip(customer.id(), "pending-customer-payslip.pdf");
+        StoredDemoFile identityCardFront = writeIdentityCard(customer.id(), "front", "pending-id-front.png");
+        StoredDemoFile identityCardBack = writeIdentityCard(customer.id(), "back", "pending-id-back.png");
         upsertProfile(
             customer.id(),
             "Trần Thu Hà",
             "0912345678",
+            "079097001235",
             LocalDate.of(1997, 9, 21),
             money("22000000"),
             null,
             money("9.55"),
             "Chuyên viên vận hành",
             LocalDate.of(2022, 6, 10),
+            "9704220012345678",
+            "MBBank",
             690,
             55,
-            null
+            payslip,
+            identityCardFront,
+            identityCardBack
         );
         customerDebtRepository.create(customer.id(), "Vay tiêu dùng", money("2100000"), money("32000000"), "MBBank");
         customerInformationVerificationRepository.markPending(customer.id());
@@ -315,19 +337,26 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
 
     private void seedFailedCustomer(UserAccount staff, UserAccount customer) {
         StoredDemoFile payslip = writePayslip(customer.id(), "failed-customer-payslip.pdf");
+        StoredDemoFile identityCardFront = writeIdentityCard(customer.id(), "front", "failed-id-front.png");
+        StoredDemoFile identityCardBack = writeIdentityCard(customer.id(), "back", "failed-id-back.png");
         upsertProfile(
             customer.id(),
             "Lê Quốc Bảo",
             "0987654321",
+            "079091001236",
             LocalDate.of(1991, 2, 8),
             money("18000000"),
             null,
             money("24.17"),
             "Nhân viên kinh doanh",
             LocalDate.of(2023, 1, 15),
+            "12010022334455",
+            "BIDV",
             630,
             38,
-            payslip
+            payslip,
+            identityCardFront,
+            identityCardBack
         );
         customerDebtRepository.create(customer.id(), "Trả góp điện máy", money("4350000"), money("26000000"), "Home Credit");
         customerInformationVerificationRepository.upsertDecision(
@@ -837,33 +866,51 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
         Long userId,
         String fullName,
         String phone,
+        String identityNumber,
         LocalDate dateOfBirth,
         BigDecimal monthlyIncome,
         BigDecimal verifiedMonthlyIncome,
         BigDecimal debtToIncomeRatio,
         String employmentStatus,
         LocalDate employmentStartDate,
+        String bankAccountNumber,
+        String bankName,
         Integer creditHistoryScore,
         Integer paymentRating,
-        StoredDemoFile payslip
+        StoredDemoFile payslip,
+        StoredDemoFile identityCardFront,
+        StoredDemoFile identityCardBack
     ) {
         customerProfileRepository.upsert(new CustomerProfile(
             userId,
             fullName,
             phone,
+            identityNumber,
             dateOfBirth,
             monthlyIncome,
             verifiedMonthlyIncome,
             debtToIncomeRatio,
             normalizeEmploymentStatus(employmentStatus),
             employmentStartDate,
+            bankAccountNumber,
+            bankName,
             creditHistoryScore,
             paymentRating,
             payslip != null ? payslip.originalFileName() : null,
             payslip != null ? payslip.storageName() : null,
             payslip != null ? payslip.contentType() : null,
             payslip != null ? payslip.fileSize() : null,
-            payslip != null ? payslip.uploadedAt() : null
+            payslip != null ? payslip.uploadedAt() : null,
+            identityCardFront != null ? identityCardFront.originalFileName() : null,
+            identityCardFront != null ? identityCardFront.storageName() : null,
+            identityCardFront != null ? identityCardFront.contentType() : null,
+            identityCardFront != null ? identityCardFront.fileSize() : null,
+            identityCardFront != null ? identityCardFront.uploadedAt() : null,
+            identityCardBack != null ? identityCardBack.originalFileName() : null,
+            identityCardBack != null ? identityCardBack.storageName() : null,
+            identityCardBack != null ? identityCardBack.contentType() : null,
+            identityCardBack != null ? identityCardBack.fileSize() : null,
+            identityCardBack != null ? identityCardBack.uploadedAt() : null
         ));
 
         jdbcTemplate.update(
@@ -906,6 +953,15 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
             "SELECT id FROM users WHERE email IN (" + placeholders + ")",
             Long.class,
             SAMPLE_EMAILS.toArray()
+        );
+    }
+
+    private List<Long> findSampleCustomerIds() {
+        String placeholders = placeholders(SAMPLE_CUSTOMER_EMAILS.size());
+        return jdbcTemplate.queryForList(
+            "SELECT id FROM users WHERE email IN (" + placeholders + ")",
+            Long.class,
+            SAMPLE_CUSTOMER_EMAILS.toArray()
         );
     }
 
@@ -959,6 +1015,16 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
             originalFileName,
             "application/pdf",
             SAMPLE_PDF_BYTES
+        );
+    }
+
+    private StoredDemoFile writeIdentityCard(Long userId, String side, String originalFileName) {
+        return writeFile(
+            payslipStorageRoot.resolve(String.valueOf(userId)),
+            "demo-id-card-" + side + "-" + userId + ".png",
+            originalFileName,
+            "image/png",
+            SAMPLE_PNG_BYTES
         );
     }
 

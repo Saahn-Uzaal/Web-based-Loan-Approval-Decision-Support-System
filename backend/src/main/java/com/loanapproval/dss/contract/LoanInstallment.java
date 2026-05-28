@@ -14,6 +14,7 @@ public record LoanInstallment(
         BigDecimal openingPrincipal,
         BigDecimal scheduledPrincipal,
         BigDecimal scheduledInterest,
+        BigDecimal waivedInterest,
         BigDecimal scheduledFee,
         BigDecimal scheduledAmount,
         BigDecimal paidPrincipal,
@@ -25,8 +26,16 @@ public record LoanInstallment(
         Instant createdAt,
         Instant updatedAt) {
 
+    public BigDecimal payableInterest() {
+        return scheduledInterest.subtract(waivedInterest).max(BigDecimal.ZERO);
+    }
+
+    public BigDecimal payableAmount() {
+        return scheduledPrincipal.add(payableInterest()).add(scheduledFee).max(BigDecimal.ZERO);
+    }
+
     public BigDecimal remainingAmount() {
-        return scheduledAmount.subtract(paidAmount).max(BigDecimal.ZERO);
+        return payableAmount().subtract(paidAmount).max(BigDecimal.ZERO);
     }
 
     public BigDecimal remainingPrincipal() {
@@ -34,7 +43,7 @@ public record LoanInstallment(
     }
 
     public BigDecimal remainingInterest() {
-        return scheduledInterest.subtract(paidInterest).max(BigDecimal.ZERO);
+        return payableInterest().subtract(paidInterest).max(BigDecimal.ZERO);
     }
 
     public BigDecimal remainingFee() {

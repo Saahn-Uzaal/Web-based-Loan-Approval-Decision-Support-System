@@ -55,6 +55,7 @@ class CustomerVerificationServiceTest {
             VerificationStatus.PASSED,
             VerificationStatus.PASSED,
             VerificationStatus.PASSED,
+            null,
             VerificationStatus.PASSED,
             VerificationStatus.PASSED,
             false,

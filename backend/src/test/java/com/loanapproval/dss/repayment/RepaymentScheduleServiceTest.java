@@ -51,6 +51,37 @@ class RepaymentScheduleServiceTest {
         assertThat(snapshot.overdueDays()).isGreaterThan(0);
     }
 
+    @Test
+    void shouldIncludeScheduledFeesInTotalRepayable() {
+        RepaymentScheduleService service = new RepaymentScheduleService(loanInstallmentService);
+        when(loanInstallmentService.listByLoanRequestId(100L)).thenReturn(List.of(
+                installment(
+                        1L,
+                        1,
+                        LocalDate.of(2026, 5, 15),
+                        BigDecimal.valueOf(4_500_000),
+                        BigDecimal.valueOf(4_500_000),
+                        BigDecimal.ZERO,
+                        Instant.now()),
+                installment(
+                        2L,
+                        2,
+                        LocalDate.of(2026, 6, 15),
+                        BigDecimal.valueOf(4_500_000),
+                        BigDecimal.ZERO,
+                        BigDecimal.valueOf(250_000),
+                        null)));
+
+        LoanRepaymentSnapshot snapshot = service.snapshot(
+                loan(),
+                contract(),
+                1L,
+                LocalDate.of(2026, 5, 20));
+
+        assertThat(snapshot.totalRepayable()).isEqualByComparingTo(BigDecimal.valueOf(9_250_000));
+        assertThat(snapshot.currentAmountDue()).isEqualByComparingTo(BigDecimal.valueOf(4_750_000));
+    }
+
     private List<LoanInstallment> installments(boolean overdue) {
         Instant now = Instant.now();
         LocalDate dueDate = overdue ? LocalDate.now().minusDays(10) : LocalDate.of(2026, 7, 15);
@@ -67,6 +98,17 @@ class RepaymentScheduleServiceTest {
             BigDecimal scheduledAmount,
             BigDecimal paidAmount,
             Instant paidAt) {
+        return installment(id, installmentNumber, dueDate, scheduledAmount, paidAmount, BigDecimal.ZERO, paidAt);
+    }
+
+    private LoanInstallment installment(
+            Long id,
+            int installmentNumber,
+            LocalDate dueDate,
+            BigDecimal scheduledAmount,
+            BigDecimal paidAmount,
+            BigDecimal scheduledFee,
+            Instant paidAt) {
         BigDecimal scheduledPrincipal = BigDecimal.valueOf(4_000_000);
         BigDecimal scheduledInterest = scheduledAmount.subtract(scheduledPrincipal);
         return new LoanInstallment(
@@ -80,6 +122,7 @@ class RepaymentScheduleServiceTest {
                 scheduledPrincipal,
                 scheduledInterest,
                 BigDecimal.ZERO.setScale(2),
+                scheduledFee,
                 scheduledAmount,
                 paidAmount.min(scheduledPrincipal),
                 paidAmount.compareTo(scheduledPrincipal) > 0
@@ -106,6 +149,7 @@ class RepaymentScheduleServiceTest {
                 BigDecimal.valueOf(50_000_000),
                 12,
                 LoanPurpose.PERSONAL,
+                null,
                 null,
                 LoanStatus.ACTIVE,
                 null,

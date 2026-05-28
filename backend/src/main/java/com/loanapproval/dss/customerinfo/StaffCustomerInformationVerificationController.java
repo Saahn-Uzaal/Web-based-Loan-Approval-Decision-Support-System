@@ -4,6 +4,8 @@ import com.loanapproval.dss.customerinfo.dto.CustomerInformationVerificationResp
 import com.loanapproval.dss.customerinfo.dto.ReviewCustomerInformationRequest;
 import com.loanapproval.dss.customerinfo.dto.StaffCustomerInformationDetailResponse;
 import com.loanapproval.dss.customerinfo.dto.StaffCustomerInformationSummaryResponse;
+import com.loanapproval.dss.profile.CustomerIdentityCardDownload;
+import com.loanapproval.dss.profile.CustomerIdentityCardSide;
 import com.loanapproval.dss.profile.CustomerPayslipDownload;
 import com.loanapproval.dss.profile.CustomerProfileService;
 import com.loanapproval.dss.security.AuthenticatedUser;
@@ -62,6 +64,16 @@ public class StaffCustomerInformationVerificationController {
         return toDownloadResponse(customerProfileService.downloadPayslip(customerId));
     }
 
+    @GetMapping("/{customerId}/id-card/front")
+    public ResponseEntity<Resource> downloadIdentityCardFront(@PathVariable("customerId") Long customerId) {
+        return toDownloadResponse(customerProfileService.downloadIdentityCard(customerId, CustomerIdentityCardSide.FRONT));
+    }
+
+    @GetMapping("/{customerId}/id-card/back")
+    public ResponseEntity<Resource> downloadIdentityCardBack(@PathVariable("customerId") Long customerId) {
+        return toDownloadResponse(customerProfileService.downloadIdentityCard(customerId, CustomerIdentityCardSide.BACK));
+    }
+
     @PostMapping("/{customerId}/decision")
     @ResponseStatus(HttpStatus.OK)
     public CustomerInformationVerificationResponse review(
@@ -81,6 +93,25 @@ public class StaffCustomerInformationVerificationController {
     }
 
     private ResponseEntity<Resource> toDownloadResponse(CustomerPayslipDownload download) {
+        MediaType mediaType = MediaType.APPLICATION_OCTET_STREAM;
+        if (download.contentType() != null && !download.contentType().isBlank()) {
+            mediaType = MediaType.parseMediaType(download.contentType());
+        }
+
+        return ResponseEntity.ok()
+            .contentType(mediaType)
+            .contentLength(download.fileSize())
+            .header(
+                HttpHeaders.CONTENT_DISPOSITION,
+                ContentDisposition.attachment()
+                    .filename(download.fileName(), StandardCharsets.UTF_8)
+                    .build()
+                    .toString()
+            )
+            .body(download.resource());
+    }
+
+    private ResponseEntity<Resource> toDownloadResponse(CustomerIdentityCardDownload download) {
         MediaType mediaType = MediaType.APPLICATION_OCTET_STREAM;
         if (download.contentType() != null && !download.contentType().isBlank()) {
             mediaType = MediaType.parseMediaType(download.contentType());

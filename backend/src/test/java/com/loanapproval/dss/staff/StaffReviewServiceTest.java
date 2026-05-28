@@ -3,8 +3,8 @@ package com.loanapproval.dss.staff;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -15,25 +15,27 @@ import com.loanapproval.dss.compliance.ComplianceAuditService;
 import com.loanapproval.dss.contract.LoanContract;
 import com.loanapproval.dss.contract.LoanContractService;
 import com.loanapproval.dss.contract.LoanContractStatus;
-import com.loanapproval.dss.customerinfo.CustomerInformationVerificationService;
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckService;
 import com.loanapproval.dss.loan.CollateralType;
+import com.loanapproval.dss.loan.LoanApplicationVerificationService;
 import com.loanapproval.dss.loan.LoanApprovalReassessmentService;
 import com.loanapproval.dss.loan.LoanDocumentRepository;
 import com.loanapproval.dss.loan.LoanDocumentStorageService;
-import com.loanapproval.dss.loan.LoanStatusHistoryService;
 import com.loanapproval.dss.loan.LoanPurpose;
 import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
 import com.loanapproval.dss.loan.LoanStatus;
+import com.loanapproval.dss.loan.LoanStatusHistoryService;
 import com.loanapproval.dss.loan.LoanType;
 import com.loanapproval.dss.notification.NotificationService;
+import com.loanapproval.dss.profile.CustomerProfile;
+import com.loanapproval.dss.profile.CustomerProfileRepository;
 import com.loanapproval.dss.staff.dto.StaffDecisionRequest;
 import com.loanapproval.dss.staff.dto.StaffDecisionResponse;
 import com.loanapproval.dss.staff.dto.StaffRequestDetailResponse;
-import com.loanapproval.dss.verification.dto.UpdateCustomerVerificationRequest;
 import com.loanapproval.dss.verification.CustomerVerification;
-import com.loanapproval.dss.verification.CustomerVerificationService;
 import com.loanapproval.dss.verification.VerificationStatus;
+import com.loanapproval.dss.verification.dto.UpdateCustomerVerificationRequest;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -65,10 +67,13 @@ class StaffReviewServiceTest {
     private LoanContractService loanContractService;
 
     @Mock
-    private CustomerInformationVerificationService customerInformationVerificationService;
+    private LoanApplicationVerificationService loanApplicationVerificationService;
 
     @Mock
-    private CustomerVerificationService customerVerificationService;
+    private CustomerCreditCheckService customerCreditCheckService;
+
+    @Mock
+    private CustomerProfileRepository customerProfileRepository;
 
     @Mock
     private ComplianceAuditService complianceAuditService;
@@ -123,7 +128,7 @@ class StaffReviewServiceTest {
         Long loanRequestId = 99L;
         Long customerId = 44L;
         Long staffUserId = 8L;
-        Instant scheduledAt = Instant.parse("2026-05-10T09:00:00Z");
+        Instant scheduledAt = Instant.parse("2026-06-10T09:00:00Z");
         LoanRecord pendingLoan = loanRecord(loanRequestId, customerId, LoanType.SECURED, LoanStatus.PENDING);
         LoanRecord updatedLoan = loanRecord(loanRequestId, customerId, LoanType.SECURED, LoanStatus.APPOINTMENT_SCHEDULED);
         CustomerVerification verification = fullyVerified(customerId);
@@ -149,7 +154,8 @@ class StaffReviewServiceTest {
 
         when(loanRepository.findById(loanRequestId)).thenReturn(Optional.of(pendingLoan), Optional.of(updatedLoan));
         when(staffReviewRepository.findAssignedStaffUserId(loanRequestId)).thenReturn(Optional.of(staffUserId));
-        when(customerVerificationService.getOrDefault(customerId)).thenReturn(verification);
+        when(loanApplicationVerificationService.getOrDefault(loanRequestId, customerId)).thenReturn(verification);
+        when(loanApplicationVerificationService.isFullyVerified(LoanType.SECURED, verification)).thenReturn(true);
         when(loanApprovalReassessmentService.reassessAndPersist(
                         pendingLoan,
                         verification,
@@ -174,6 +180,7 @@ class StaffReviewServiceTest {
                 .thenReturn(Optional.of(detail(updatedLoan, scheduledAt)));
         when(staffReviewRepository.findDecisionAuditsByLoanRequestId(loanRequestId)).thenReturn(List.of());
         when(loanDocumentRepository.findByLoanRequestId(loanRequestId)).thenReturn(List.of());
+        when(customerCreditCheckService.findLatestByCustomerId(customerId)).thenReturn(Optional.empty());
 
         StaffDecisionResponse response = staffReviewService.submitDecision(staffUserId, loanRequestId, request);
 
@@ -245,7 +252,8 @@ class StaffReviewServiceTest {
 
         when(loanRepository.findById(loanRequestId)).thenReturn(Optional.of(pendingLoan), Optional.of(updatedLoan));
         when(staffReviewRepository.findAssignedStaffUserId(loanRequestId)).thenReturn(Optional.of(staffUserId));
-        when(customerVerificationService.getOrDefault(customerId)).thenReturn(verification);
+        when(loanApplicationVerificationService.getOrDefault(loanRequestId, customerId)).thenReturn(verification);
+        when(loanApplicationVerificationService.isFullyVerified(LoanType.UNSECURED, verification)).thenReturn(true);
         when(loanApprovalReassessmentService.reassessAndPersist(
                         pendingLoan,
                         verification,
@@ -270,6 +278,7 @@ class StaffReviewServiceTest {
                 .thenReturn(Optional.of(detail(updatedLoan, null)));
         when(staffReviewRepository.findDecisionAuditsByLoanRequestId(loanRequestId)).thenReturn(List.of());
         when(loanDocumentRepository.findByLoanRequestId(loanRequestId)).thenReturn(List.of());
+        when(customerCreditCheckService.findLatestByCustomerId(customerId)).thenReturn(Optional.empty());
 
         StaffDecisionResponse response = staffReviewService.submitDecision(staffUserId, loanRequestId, request);
 
@@ -307,9 +316,11 @@ class StaffReviewServiceTest {
         when(loanRepository.findById(loanRequestId)).thenReturn(Optional.of(contractedLoan), Optional.of(activeLoan));
         when(staffReviewRepository.assignCase(loanRequestId, staffUserId)).thenReturn(1);
         when(loanContractService.findByLoanRequestId(loanRequestId)).thenReturn(activeContract());
+        when(customerProfileRepository.findByUserId(customerId)).thenReturn(Optional.of(disbursementProfile(customerId)));
         when(staffReviewRepository.findRequestDetailById(loanRequestId)).thenReturn(Optional.of(detail(activeLoan, null)));
         when(staffReviewRepository.findDecisionAuditsByLoanRequestId(loanRequestId)).thenReturn(List.of());
         when(loanDocumentRepository.findByLoanRequestId(loanRequestId)).thenReturn(List.of());
+        when(customerCreditCheckService.findLatestByCustomerId(customerId)).thenReturn(Optional.empty());
 
         StaffRequestDetailResponse response = staffReviewService.disburseLoan(staffUserId, loanRequestId);
 
@@ -323,6 +334,30 @@ class StaffReviewServiceTest {
     }
 
     @Test
+    void shouldBlockDisbursementWhenCustomerHasNoBankAccount() {
+        Long loanRequestId = 121L;
+        Long customerId = 67L;
+        Long staffUserId = 9L;
+        LoanRecord contractedLoan = loanRecord(loanRequestId, customerId, LoanType.UNSECURED, LoanStatus.CONTRACTED);
+
+        when(loanRepository.findById(loanRequestId)).thenReturn(Optional.of(contractedLoan));
+        when(staffReviewRepository.assignCase(loanRequestId, staffUserId)).thenReturn(1);
+        when(loanContractService.findByLoanRequestId(loanRequestId)).thenReturn(activeContract());
+        when(customerProfileRepository.findByUserId(customerId)).thenReturn(Optional.of(profileWithoutDisbursementAccount(customerId)));
+
+        assertThatThrownBy(() -> staffReviewService.disburseLoan(staffUserId, loanRequestId))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> {
+                    ResponseStatusException exception = (ResponseStatusException) error;
+                    assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(exception.getReason()).contains("tài khoản");
+                });
+
+        verify(loanRepository, never()).updateStatus(loanRequestId, LoanStatus.ACTIVE);
+        verify(notificationService, never()).notifyCustomerLoanDisbursed(anyLong(), anyLong(), anyLong(), any());
+    }
+
+    @Test
     void shouldBlockVerificationUpdateAfterLoanHasBeenApproved() {
         Long loanRequestId = 130L;
         Long customerId = 70L;
@@ -333,6 +368,7 @@ class StaffReviewServiceTest {
                 VerificationStatus.PASSED,
                 VerificationStatus.PASSED,
                 VerificationStatus.PASSED,
+                BigDecimal.valueOf(45_000_000),
                 VerificationStatus.PASSED,
                 VerificationStatus.PASSED,
                 false,
@@ -349,7 +385,7 @@ class StaffReviewServiceTest {
                     assertThat(exception.getReason()).contains("Chỉ được cập nhật xác minh");
                 });
 
-        verify(customerVerificationService, never()).upsert(anyLong(), anyLong(), any());
+        verify(loanApplicationVerificationService, never()).update(anyLong(), anyLong(), anyLong(), any());
     }
 
     private LoanRecord loanRecord(Long id, Long customerId, LoanType loanType, LoanStatus status) {
@@ -362,6 +398,7 @@ class StaffReviewServiceTest {
                 36,
                 LoanPurpose.BUSINESS,
                 loanType == LoanType.SECURED ? CollateralType.VEHICLE_REGISTRATION : null,
+                loanType == LoanType.SECURED ? BigDecimal.valueOf(450_000_000) : null,
                 status,
                 null,
                 BigDecimal.valueOf(320_000_000),
@@ -452,5 +489,71 @@ class StaffReviewServiceTest {
                 LoanContractStatus.ACTIVE,
                 now,
                 now);
+    }
+
+    private CustomerProfile disbursementProfile(Long customerId) {
+        return new CustomerProfile(
+                customerId,
+                "Nguyễn Minh An",
+                "0901234567",
+                "012345678901",
+                java.time.LocalDate.of(1994, 5, 12),
+                BigDecimal.valueOf(30_000_000),
+                BigDecimal.valueOf(28_000_000),
+                BigDecimal.valueOf(15),
+                "EMPLOYED",
+                java.time.LocalDate.of(2020, 1, 1),
+                "19036866889922",
+                "Vietcombank",
+                740,
+                25,
+                "payslip.pdf",
+                "stored-payslip.pdf",
+                "application/pdf",
+                1024L,
+                Instant.now(),
+                "id-front.jpg",
+                "stored-front.jpg",
+                "image/jpeg",
+                2048L,
+                Instant.now(),
+                "id-back.jpg",
+                "stored-back.jpg",
+                "image/jpeg",
+                2048L,
+                Instant.now());
+    }
+
+    private CustomerProfile profileWithoutDisbursementAccount(Long customerId) {
+        return new CustomerProfile(
+                customerId,
+                "Nguyễn Minh An",
+                "0901234567",
+                "012345678901",
+                java.time.LocalDate.of(1994, 5, 12),
+                BigDecimal.valueOf(30_000_000),
+                BigDecimal.valueOf(28_000_000),
+                BigDecimal.valueOf(15),
+                "EMPLOYED",
+                java.time.LocalDate.of(2020, 1, 1),
+                null,
+                null,
+                740,
+                25,
+                "payslip.pdf",
+                "stored-payslip.pdf",
+                "application/pdf",
+                1024L,
+                Instant.now(),
+                "id-front.jpg",
+                "stored-front.jpg",
+                "image/jpeg",
+                2048L,
+                Instant.now(),
+                "id-back.jpg",
+                "stored-back.jpg",
+                "image/jpeg",
+                2048L,
+                Instant.now());
     }
 }

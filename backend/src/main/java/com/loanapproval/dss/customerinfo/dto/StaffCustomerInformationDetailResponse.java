@@ -1,10 +1,10 @@
 package com.loanapproval.dss.customerinfo.dto;
 
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckSummary;
 import com.loanapproval.dss.verification.VerificationStatus;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.util.List;
 
 public record StaffCustomerInformationDetailResponse(
     Long customerId,
@@ -14,30 +14,30 @@ public record StaffCustomerInformationDetailResponse(
     String rejectionReason,
     String reviewedByEmail,
     Instant reviewedAt,
-    ProfileSummary profile,
-    List<DebtItem> debts
+    ProfileSummary profile
 ) {
     public record ProfileSummary(
         String fullName,
         String phone,
+        String identityNumber,
         LocalDate dateOfBirth,
         BigDecimal monthlyIncome,
         BigDecimal verifiedMonthlyIncome,
         BigDecimal debtToIncomeRatio,
+        String bankAccountNumber,
+        String bankName,
+        Integer creditHistoryScore,
         Integer paymentRating,
+        CustomerCreditCheckSummary creditCheck,
         String payslipFileName,
         Long payslipFileSize,
-        Instant payslipUploadedAt
-    ) {
-    }
-
-    public record DebtItem(
-        Long id,
-        String debtType,
-        BigDecimal monthlyPayment,
-        BigDecimal remainingBalance,
-        String lenderName,
-        String status
+        Instant payslipUploadedAt,
+        String identityCardFrontFileName,
+        Long identityCardFrontFileSize,
+        Instant identityCardFrontUploadedAt,
+        String identityCardBackFileName,
+        Long identityCardBackFileSize,
+        Instant identityCardBackUploadedAt
     ) {
     }
 }

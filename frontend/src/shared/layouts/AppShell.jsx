@@ -4,20 +4,89 @@ import {
   Button,
   Chip,
   Container,
+  Menu,
+  MenuItem,
   Stack,
   Toolbar,
   Typography
 } from "@mui/material";
-import { Link as RouterLink, Outlet } from "react-router-dom";
+import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
+import { useState } from "react";
+import { Link as RouterLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import NotificationMenu from "@/shared/components/NotificationMenu";
 import { labelRole } from "@/shared/utils/labels";
+
+const ROLE_NAVIGATION = {
+  CUSTOMER: [
+    { label: "Hồ sơ", to: "/customer/profile" },
+    { label: "Tạo hồ sơ vay", to: "/customer/loan/new" },
+    { label: "Hồ sơ vay", to: "/customer/loans" },
+    { label: "Thanh toán", to: "/customer/payments" }
+  ],
+  STAFF: [
+    { label: "Xác minh thông tin", to: "/staff/information-verifications" },
+    { label: "Thẩm định", to: "/staff/requests" },
+    { label: "Thủ tục thế chấp", to: "/staff/secured-procedures" },
+    { label: "Vận hành khoản vay", to: "/staff/loan-operations" },
+    { label: "Xác nhận thanh toán", to: "/staff/payment-confirmations" },
+    { label: "Bảng điều khiển", to: "/staff/dashboard" },
+    { label: "Danh sách nợ xấu", to: "/credit-bureau" }
+  ],
+  ADMIN: [
+    { label: "Quản lý người dùng", to: "/admin/users" },
+    { label: "Tạo tài khoản", to: "/admin/accounts/new" },
+    { label: "Danh sách nợ xấu", to: "/credit-bureau" }
+  ]
+};
 
 function NavButton({ to, children }) {
   return (
     <Button color="inherit" component={RouterLink} to={to}>
       {children}
     </Button>
+  );
+}
+
+function RoleNavigationMenu({ role }) {
+  const location = useLocation();
+  const [anchorEl, setAnchorEl] = useState(null);
+
+  const items = ROLE_NAVIGATION[role] || [];
+  const open = Boolean(anchorEl);
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      <Button
+        color="inherit"
+        endIcon={<KeyboardArrowDownRoundedIcon />}
+        onClick={(event) => setAnchorEl(event.currentTarget)}
+      >
+        {labelRole(role)}
+      </Button>
+      <Menu
+        anchorEl={anchorEl}
+        open={open}
+        onClose={() => setAnchorEl(null)}
+        keepMounted
+      >
+        {items.map((item) => (
+          <MenuItem
+            key={item.to}
+            component={RouterLink}
+            to={item.to}
+            selected={location.pathname.startsWith(item.to)}
+            onClick={() => setAnchorEl(null)}
+          >
+            {item.label}
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
   );
 }
 
@@ -51,30 +120,7 @@ export function AppShell() {
           </Typography>
           <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
             <NavButton to="/dashboard">Trang chủ</NavButton>
-            {user?.role === "CUSTOMER" && (
-              <>
-                <NavButton to="/customer/profile">Hồ sơ</NavButton>
-                <NavButton to="/customer/loan/new">Tạo hồ sơ vay</NavButton>
-                <NavButton to="/customer/loans">Hồ sơ vay</NavButton>
-                <NavButton to="/customer/payments">Thanh toán</NavButton>
-              </>
-            )}
-            {user?.role === "STAFF" && (
-              <>
-                <NavButton to="/staff/requests">Thẩm định</NavButton>
-                <NavButton to="/staff/loan-operations">Vận hành khoản vay</NavButton>
-                <NavButton to="/staff/information-verifications">Xác minh thông tin</NavButton>
-                <NavButton to="/staff/payment-confirmations">Xác nhận thanh toán</NavButton>
-                <NavButton to="/staff/secured-procedures">Thủ tục thế chấp</NavButton>
-                <NavButton to="/staff/dashboard">Bảng điều khiển</NavButton>
-              </>
-            )}
-            {user?.role === "ADMIN" && (
-              <>
-                <NavButton to="/admin/users">Quản lý người dùng</NavButton>
-                <NavButton to="/admin/accounts/new">Tạo tài khoản</NavButton>
-              </>
-            )}
+            <RoleNavigationMenu role={user?.role} />
             <NotificationMenu />
             <Chip
               label={labelRole(user?.role ?? "GUEST")}

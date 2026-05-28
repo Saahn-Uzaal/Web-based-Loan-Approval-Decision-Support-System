@@ -6,6 +6,9 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.loanapproval.dss.creditcheck.CreditBureauStatus;
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckService;
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckSummary;
 import com.loanapproval.dss.debt.CustomerDebtService;
 import com.loanapproval.dss.dss.CustomerSegment;
 import com.loanapproval.dss.dss.DecisionEngineService;
@@ -57,6 +60,9 @@ class LoanApprovalReassessmentServiceTest {
     @Mock
     private LoanApplicationSnapshotRepository loanApplicationSnapshotRepository;
 
+    @Mock
+    private CustomerCreditCheckService customerCreditCheckService;
+
     @InjectMocks
     private LoanApprovalReassessmentService loanApprovalReassessmentService;
 
@@ -73,6 +79,7 @@ class LoanApprovalReassessmentServiceTest {
                 24,
                 LoanPurpose.BUSINESS,
                 CollateralType.VEHICLE_REGISTRATION,
+                BigDecimal.valueOf(900_000_000),
                 LoanStatus.APPOINTMENT_SCHEDULED,
                 null,
                 BigDecimal.valueOf(700_000_000),
@@ -88,14 +95,27 @@ class LoanApprovalReassessmentServiceTest {
                 loan.customerId(),
                 "Trần Thị B",
                 "0900000001",
+                "012345678901",
                 LocalDate.of(1992, 5, 10),
                 BigDecimal.valueOf(60_000_000),
                 BigDecimal.valueOf(20_000_000),
                 BigDecimal.valueOf(25),
                 "Permanent",
                 LocalDate.of(2018, 3, 1),
+                null,
+                null,
                 85,
                 1,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 null,
                 null,
                 null,
@@ -103,6 +123,19 @@ class LoanApprovalReassessmentServiceTest {
                 null);
         CustomerVerification verification = fullyVerified(loan.customerId());
         when(loanApplicationSnapshotRepository.findByLoanRequestId(loan.id())).thenReturn(Optional.empty());
+        when(customerCreditCheckService.findLatestByCustomerId(loan.customerId()))
+                .thenReturn(Optional.of(new CustomerCreditCheckSummary(
+                        "012345678901",
+                        true,
+                        CreditBureauStatus.CLEAR,
+                        85,
+                        1,
+                        0,
+                        false,
+                        false,
+                        "Clear",
+                        "INTERNAL_BUREAU",
+                        Instant.parse("2026-01-01T00:00:00Z"))));
         BigDecimal annualRate = BigDecimal.valueOf(0.120000).setScale(6);
         BigDecimal appraisedValue = BigDecimal.valueOf(400_000_000);
         DssResult dssResult = new DssResult(

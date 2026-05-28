@@ -57,6 +57,12 @@ services:
     restart: unless-stopped
     environment:
       VITE_API_BASE_URL: http://localhost:${BACKEND_PORT:-8080}
+      VITE_PAYMENT_BANK_NAME: ${VITE_PAYMENT_BANK_NAME:-Techcombank}
+      VITE_PAYMENT_BANK_ID: ${VITE_PAYMENT_BANK_ID:-TCB}
+      VITE_PAYMENT_ACCOUNT_NO: ${VITE_PAYMENT_ACCOUNT_NO:-19071533252015}
+      VITE_PAYMENT_ACCOUNT_NAME: ${VITE_PAYMENT_ACCOUNT_NAME:-NGUYEN MINH HUNG}
+      VITE_PAYMENT_QR_TEMPLATE: ${VITE_PAYMENT_QR_TEMPLATE:-compact2}
+      VITE_PAYMENT_TRANSFER_PREFIX: ${VITE_PAYMENT_TRANSFER_PREFIX:-THANHTOAN}
       CHOKIDAR_USEPOLLING: "true"
     ports:
       - "${FRONTEND_PORT:-5173}:5173"
@@ -68,4 +74,3 @@ volumes:
   backend_profile_documents:
   backend_loan_documents:
   backend_payment_proofs:
-

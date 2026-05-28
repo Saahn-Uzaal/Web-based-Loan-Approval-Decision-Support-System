@@ -1,5 +1,7 @@
 package com.loanapproval.dss.repayment;
 
+import com.loanapproval.dss.contract.LoanInstallment;
+import com.loanapproval.dss.contract.LoanInstallmentService;
 import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
 import com.loanapproval.dss.loan.LoanStatus;
@@ -21,6 +23,7 @@ public class LoanDelinquencyService {
 
     private final LoanDelinquencyRepository loanDelinquencyRepository;
     private final RepaymentScheduleService repaymentScheduleService;
+    private final LoanInstallmentService loanInstallmentService;
     private final CustomerProfileRepository customerProfileRepository;
     private final LoanRepository loanRepository;
     private final LoanStatusHistoryService loanStatusHistoryService;
@@ -29,12 +32,14 @@ public class LoanDelinquencyService {
     public LoanDelinquencyService(
             LoanDelinquencyRepository loanDelinquencyRepository,
             RepaymentScheduleService repaymentScheduleService,
+            LoanInstallmentService loanInstallmentService,
             CustomerProfileRepository customerProfileRepository,
             LoanRepository loanRepository,
             LoanStatusHistoryService loanStatusHistoryService,
             NotificationService notificationService) {
         this.loanDelinquencyRepository = loanDelinquencyRepository;
         this.repaymentScheduleService = repaymentScheduleService;
+        this.loanInstallmentService = loanInstallmentService;
         this.customerProfileRepository = customerProfileRepository;
         this.loanRepository = loanRepository;
         this.loanStatusHistoryService = loanStatusHistoryService;
@@ -85,13 +90,20 @@ public class LoanDelinquencyService {
 
     private AssessmentResult assessCandidate(LoanDelinquencyCandidate candidate, LocalDate assessmentDate) {
         LoanRecord loan = candidate.loan();
+        loanInstallmentService.rebuildLedger(candidate.contract(), assessmentDate);
+        LoanInstallment currentInstallment = loanInstallmentService.listByLoanRequestId(loan.id()).stream()
+                .filter(installment -> installment.remainingAmount().compareTo(BigDecimal.ZERO) > 0)
+                .findFirst()
+                .orElse(null);
         LoanRepaymentSnapshot snapshot = repaymentScheduleService.snapshot(
                 loan,
                 candidate.contract(),
                 loan.customerId(),
                 assessmentDate);
 
-        if (!snapshot.overdue() || snapshot.currentAmountDue().compareTo(BigDecimal.ZERO) <= 0) {
+        if (currentInstallment == null
+                || !snapshot.overdue()
+                || snapshot.currentAmountDue().compareTo(BigDecimal.ZERO) <= 0) {
             int cured = loanDelinquencyRepository.markAllOpenCured(loan.id());
             if (loan.status() == LoanStatus.OVERDUE) {
                 loanRepository.updateStatus(loan.id(), LoanStatus.ACTIVE);
@@ -118,6 +130,16 @@ public class LoanDelinquencyService {
                 loan.id(),
                 snapshot.installmentNumber(),
                 snapshot.dueDate());
+        int currentMilestone = RepaymentRatingPolicy.currentLateMilestone(daysPastDue);
+        int previousMilestone = delinquency.highestMilestone() != null ? delinquency.highestMilestone() : 0;
+        BigDecimal lateFeeDelta = LateFeePolicy.lateFeeDelta(
+                previousMilestone,
+                currentMilestone,
+                currentInstallment.scheduledPrincipal().add(currentInstallment.scheduledInterest()));
+        if (lateFeeDelta.compareTo(BigDecimal.ZERO) > 0) {
+            loanInstallmentService.addLateFee(loan.id(), currentInstallment.installmentNumber(), lateFeeDelta);
+        }
+        BigDecimal updatedAmountDue = snapshot.currentAmountDue().add(lateFeeDelta);
 
         if (loan.status() == LoanStatus.ACTIVE) {
             loanRepository.updateStatus(loan.id(), LoanStatus.OVERDUE);
@@ -132,33 +154,35 @@ public class LoanDelinquencyService {
                     loan.customerId(),
                     snapshot.installmentNumber(),
                     snapshot.dueDate(),
-                    snapshot.currentAmountDue(),
+                    updatedAmountDue,
                     snapshot.overdueDays());
         }
 
-        int currentMilestone = RepaymentRatingPolicy.currentLateMilestone(daysPastDue);
-        int previousMilestone = delinquency.highestMilestone() != null ? delinquency.highestMilestone() : 0;
         if (currentMilestone <= previousMilestone) {
             return new AssessmentResult(1, cured, 0);
         }
 
         int ratingDelta = RepaymentRatingPolicy.latePenaltyDelta(previousMilestone, currentMilestone);
-        if (ratingDelta == 0) {
-            loanDelinquencyRepository.updateMilestoneAndDelta(delinquency.id(), currentMilestone, 0);
-            return new AssessmentResult(1, cured, 0);
+        int appliedRatingDelta = 0;
+        if (ratingDelta != 0) {
+            if (customerProfileRepository.adjustPaymentRating(loan.customerId(), ratingDelta).isPresent()) {
+                appliedRatingDelta = ratingDelta;
+            } else {
+                log.warn(
+                        "Skipped delinquency rating penalty because customer profile was not found: loanRequestId={}, customerId={}, milestone={}",
+                        loan.id(),
+                        loan.customerId(),
+                        currentMilestone);
+            }
         }
 
-        if (customerProfileRepository.adjustPaymentRating(loan.customerId(), ratingDelta).isEmpty()) {
-            log.warn(
-                    "Skipped delinquency rating penalty because customer profile was not found: loanRequestId={}, customerId={}, milestone={}",
-                    loan.id(),
-                    loan.customerId(),
-                    currentMilestone);
-            return new AssessmentResult(1, cured, 0);
-        }
-
-        loanDelinquencyRepository.updateMilestoneAndDelta(delinquency.id(), currentMilestone, ratingDelta);
-        return new AssessmentResult(1, cured, 1);
+        loanDelinquencyRepository.updateMilestoneProgress(
+                delinquency.id(),
+                currentMilestone,
+                appliedRatingDelta,
+                lateFeeDelta,
+                updatedAmountDue);
+        return new AssessmentResult(1, cured, appliedRatingDelta != 0 ? 1 : 0);
     }
 
     private LocalDate resolveDate(LocalDate assessmentDate) {

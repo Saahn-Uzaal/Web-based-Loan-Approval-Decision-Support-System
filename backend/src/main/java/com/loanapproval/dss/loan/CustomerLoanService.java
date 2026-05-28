@@ -4,6 +4,8 @@ import com.loanapproval.dss.compliance.ComplianceAuditService;
 import com.loanapproval.dss.compliance.ComplianceOutcome;
 import com.loanapproval.dss.contract.LoanContract;
 import com.loanapproval.dss.contract.LoanContractService;
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckService;
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckSummary;
 import com.loanapproval.dss.customerinfo.CustomerInformationVerificationService;
 import com.loanapproval.dss.customerinfo.CustomerInformationVerification;
 import com.loanapproval.dss.debt.CustomerDebtService;
@@ -31,6 +33,7 @@ import com.loanapproval.dss.verification.VerificationStatus;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -49,6 +52,7 @@ public class CustomerLoanService {
     private final CustomerDebtService customerDebtService;
     private final DecisionEngineService decisionEngineService;
     private final DssResultRepository dssResultRepository;
+    private final CustomerCreditCheckService customerCreditCheckService;
     private final CustomerVerificationService customerVerificationService;
     private final RiskAssessmentService riskAssessmentService;
     private final ComplianceAuditService complianceAuditService;
@@ -69,6 +73,7 @@ public class CustomerLoanService {
             CustomerDebtService customerDebtService,
             DecisionEngineService decisionEngineService,
             DssResultRepository dssResultRepository,
+            CustomerCreditCheckService customerCreditCheckService,
             CustomerVerificationService customerVerificationService,
             RiskAssessmentService riskAssessmentService,
             ComplianceAuditService complianceAuditService,
@@ -87,6 +92,7 @@ public class CustomerLoanService {
         this.customerDebtService = customerDebtService;
         this.decisionEngineService = decisionEngineService;
         this.dssResultRepository = dssResultRepository;
+        this.customerCreditCheckService = customerCreditCheckService;
         this.customerVerificationService = customerVerificationService;
         this.riskAssessmentService = riskAssessmentService;
         this.complianceAuditService = complianceAuditService;
@@ -102,16 +108,21 @@ public class CustomerLoanService {
 
     @Transactional
     public LoanDetailResponse create(Long customerId, CreateLoanRequest request) {
-        return create(customerId, request, LoanApplicationFiles.empty(), false);
+        return createSubmittedLoan(customerId, request, LoanApplicationFiles.empty(), false);
     }
 
     @Transactional
     public LoanDetailResponse createDraft(Long customerId, CreateLoanRequest request) {
+        return createDraft(customerId, request, LoanApplicationFiles.empty());
+    }
+
+    @Transactional
+    public LoanDetailResponse createDraft(Long customerId, CreateLoanRequest request, LoanApplicationFiles files) {
         assertNoOpenApplication(customerId);
         LoanType loanType = resolveLoanType(request.loanType());
         CollateralType collateralType = resolveCollateralType(loanType, request.collateralType());
         validateLoanRequest(loanType, request);
-        String intakeNote = "Bản nháp hồ sơ vay đã được lưu. Vui lòng nộp đủ chứng từ trước khi gửi thẩm định.";
+        String intakeNote = buildDraftIntakeNote();
         LoanRecord loan = loanRepository.create(
                 customerId,
                 loanType,
@@ -122,86 +133,127 @@ public class CustomerLoanService {
                 LoanStatus.DRAFT,
                 null,
                 intakeNote);
+        loanRepository.updateCollateralValue(
+                loan.id(),
+                loanType == LoanType.SECURED ? request.collateralValue() : null);
+        storeDocuments(loan.id(), loanType, files != null ? files : LoanApplicationFiles.empty(), false);
         loanStatusHistoryService.recordCreation(
                 loan,
                 customerId,
                 "CUSTOMER_CREATE_DRAFT",
                 "Customer created a draft loan application");
-        return toDetailResponse(loan);
+        return toDetailResponse(reloadOwnedLoan(customerId, loan.id()));
     }
 
     @Transactional
     public LoanDetailResponse create(Long customerId, CreateLoanRequest request, LoanApplicationFiles files) {
-        return create(customerId, request, files, true);
+        return createSubmittedLoan(customerId, request, files, true);
     }
 
-    private LoanDetailResponse create(
-            Long customerId,
-            CreateLoanRequest request,
-            LoanApplicationFiles files,
-            boolean requireDocuments) {
-        assertNoOpenApplication(customerId);
-        customerInformationVerificationService.assertApprovedForLoanCreation(customerId);
-        LoanApplicationFiles safeFiles = files != null ? files : LoanApplicationFiles.empty();
+    @Transactional
+    public LoanDetailResponse updateDraft(Long customerId, Long id, CreateLoanRequest request) {
+        return updateDraft(customerId, id, request, LoanApplicationFiles.empty());
+    }
 
-        CustomerProfile profile = customerProfileRepository.findByUserId(customerId).orElse(null);
-        LoanType loanType = resolveLoanType(request.loanType());
+    @Transactional
+    public LoanDetailResponse updateDraft(Long customerId, Long id, CreateLoanRequest request, LoanApplicationFiles files) {
+        LoanRecord draft = requireOwnedDraft(customerId, id);
+        LoanType loanType = resolveDraftLoanType(draft, request);
         CollateralType collateralType = resolveCollateralType(loanType, request.collateralType());
         validateLoanRequest(loanType, request);
-        if (requireDocuments) {
-            validateRequiredDocuments(loanType, safeFiles);
-        }
-        CustomerVerification verification = customerVerificationService.getOrDefault(customerId);
-        CustomerInformationVerification informationVerification =
-                customerInformationVerificationService.getOrDefault(customerId);
-        BigDecimal existingMonthlyDebt = customerDebtService.sumActiveMonthlyDebt(customerId);
-        BigDecimal projectedMonthlyPayment = loanContractService.calculateProjectedMonthlyPayment(
-                loanType,
-                request.amount(),
-                request.termMonths());
-        BigDecimal projectedDti = resolveProjectedDti(profile, existingMonthlyDebt, projectedMonthlyPayment);
 
-        DecisionInput decisionInput = new DecisionInput(
-                customerId,
-                profile != null ? profile.effectiveMonthlyIncome() : null,
-                projectedDti,
-                profile != null ? profile.employmentStatus() : null,
-                profile != null ? profile.dateOfBirth() : null,
-                profile != null ? profile.employmentStartDate() : null,
-                null,
-                request.collateralValue(),
-                existingMonthlyDebt,
-                request.amount(),
-                request.termMonths(),
-                request.purpose(),
-                profile != null ? profile.paymentRating() : null,
-                isFailed(verification.kycStatus()),
-                isFailed(verification.amlStatus()),
-                verification.fraudFlag(),
-                asIncomeVerified(verification.incomeStatus()),
-                projectedMonthlyPayment);
-
-        DssResult dssResult = decisionEngineService.evaluate(decisionInput);
-        LoanEligibilityResult eligibility = loanEligibilityService.evaluate(
-                profile,
-                existingMonthlyDebt,
-                loanType,
-                request.amount(),
-                request.termMonths(),
-                request.collateralValue(),
-                dssResult.riskRank());
-        String intakeNote = buildIntakeNote(loanType);
-
-        LoanRecord loan = loanRepository.create(
+        int updated = loanRepository.updateOwnedDraft(
+                id,
                 customerId,
                 loanType,
                 request.amount(),
                 request.termMonths(),
                 request.purpose(),
                 collateralType,
-                eligibility.eligibleLimit(),
-                intakeNote);
-        if (loanType == LoanType.SECURED) {
+                buildDraftIntakeNote());
+        if (updated == 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Bản nháp hồ sơ vay đã thay đổi trong lúc xử lý");
+        }
+
+        loanRepository.updateCollateralValue(
+                id,
+                loanType == LoanType.SECURED ? request.collateralValue() : null);
+        storeDocuments(id, loanType, files != null ? files : LoanApplicationFiles.empty(), true);
+        return toDetailResponse(reloadOwnedLoan(customerId, id));
+    }
+
+    @Transactional
+    public LoanDetailResponse submitDraft(Long customerId, Long id, CreateLoanRequest request) {
+        return submitDraft(customerId, id, request, LoanApplicationFiles.empty());
+    }
+
+    @Transactional
+    public LoanDetailResponse submitDraft(
+            Long customerId,
+            Long id,
+            CreateLoanRequest request,
+            LoanApplicationFiles files) {
+        LoanRecord draft = requireOwnedDraft(customerId, id);
+        LoanType loanType = resolveDraftLoanType(draft, request);
+        LoanApplicationFiles safeFiles = files != null ? files : LoanApplicationFiles.empty();
+        validateRequiredDocuments(
+                loanType,
+                safeFiles,
+                existingDocumentTypes(id));
+
+        LoanAssessmentData assessment = buildLoanAssessment(customerId, request, loanType);
+        int updated = loanRepository.submitOwnedDraftForReview(
+                id,
+                customerId,
+                loanType,
+                request.amount(),
+                request.termMonths(),
+                request.purpose(),
+                assessment.collateralType(),
+                assessment.eligibility().eligibleLimit(),
+                assessment.intakeNote());
+        if (updated == 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Bản nháp hồ sơ vay đã thay đổi trong lúc xử lý");
+        }
+
+        loanRepository.updateCollateralValue(
+                id,
+                loanType == LoanType.SECURED ? request.collateralValue() : null);
+        storeDocuments(id, loanType, safeFiles, true);
+
+        LoanRecord submittedLoan = reloadOwnedLoan(customerId, id);
+        loanStatusHistoryService.recordTransition(
+                draft,
+                LoanStatus.PENDING,
+                customerId,
+                "CUSTOMER_SUBMIT_DRAFT",
+                "Customer submitted draft loan application for review");
+        return finalizeSubmittedLoan(customerId, request, submittedLoan, assessment);
+    }
+
+    private LoanDetailResponse createSubmittedLoan(
+            Long customerId,
+            CreateLoanRequest request,
+            LoanApplicationFiles files,
+            boolean requireDocuments) {
+        assertNoOpenApplication(customerId);
+        LoanApplicationFiles safeFiles = files != null ? files : LoanApplicationFiles.empty();
+        LoanType loanType = resolveLoanType(request.loanType());
+        if (requireDocuments) {
+            validateRequiredDocuments(loanType, safeFiles);
+        }
+        LoanAssessmentData assessment = buildLoanAssessment(customerId, request, loanType);
+
+        LoanRecord loan = loanRepository.create(
+                customerId,
+                assessment.loanType(),
+                request.amount(),
+                request.termMonths(),
+                request.purpose(),
+                assessment.collateralType(),
+                assessment.eligibility().eligibleLimit(),
+                assessment.intakeNote());
+        if (assessment.loanType() == LoanType.SECURED) {
             loanRepository.updateCollateralValue(loan.id(), request.collateralValue());
         }
         loanStatusHistoryService.recordCreation(
@@ -210,53 +262,8 @@ public class CustomerLoanService {
                 "CUSTOMER_SUBMIT_LOAN",
                 "Customer submitted a new loan application");
 
-        loanApplicationSnapshotRepository.createIfMissing(
-                loan.id(),
-                customerId,
-                profile,
-                existingMonthlyDebt,
-                customerDebtService.countActiveDebts(customerId),
-                informationVerification,
-                verification);
-
-        storeDocuments(loan.id(), loanType, safeFiles, false);
-
-        log.info(
-                "Loan application created: loanId={}, customerId={}, loanType={}, amount={}, termMonths={}, purpose={}",
-                loan.id(), customerId, loanType, request.amount(), request.termMonths(), request.purpose());
-
-        dssResultRepository.upsert(loan.id(), dssResult);
-
-        RiskAssessment riskAssessment = riskAssessmentService.evaluateAndSave(
-                loan.id(),
-                decisionInput,
-                dssResult,
-                verification);
-
-        applyWorkflowTransition(customerId, loan, dssResult, riskAssessment, verification);
-        loan = loanRepository.findOwnedById(loan.id(), customerId).orElse(loan);
-
-        complianceAuditService.log(
-                customerId,
-                loan.id(),
-                customerId,
-                "LOAN_APPLICATION_EVALUATED",
-                resolveComplianceOutcome(verification),
-                String.format(
-                        "loanType=%s, recommendation=%s, riskLevel=%s, creditRisk=%d, fraudRisk=%d, operationalRisk=%d, projectedDti=%s, eligibleLimit=%s",
-                        loanType,
-                        dssResult.recommendation(),
-                        riskAssessment.overallRiskLevel(),
-                        riskAssessment.creditRiskScore(),
-                        riskAssessment.fraudRiskScore(),
-                        riskAssessment.operationalRiskScore(),
-                        projectedDti != null ? projectedDti.toPlainString() : "N/A",
-                        eligibility.eligibleLimit() != null ? eligibility.eligibleLimit().toPlainString() : "N/A"));
-        if (loan.status() == LoanStatus.PENDING) {
-            notificationService.notifyStaffLoanApplicationSubmitted(loan.id(), customerId, loan.loanType());
-        }
-
-        return toDetailResponse(loan);
+        storeDocuments(loan.id(), assessment.loanType(), safeFiles, false);
+        return finalizeSubmittedLoan(customerId, request, loan, assessment);
     }
 
     public List<LoanSummaryResponse> listMine(Long customerId) {
@@ -281,6 +288,131 @@ public class CustomerLoanService {
         LoanRecord loan = loanRepository.findOwnedById(id, customerId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
         return toDetailResponse(loan);
+    }
+
+    private LoanAssessmentData buildLoanAssessment(Long customerId, CreateLoanRequest request, LoanType loanType) {
+        validateLoanRequest(loanType, request);
+
+        CustomerProfile profile = customerProfileRepository.findByUserId(customerId).orElse(null);
+        assertSubmittedReusableProfile(profile);
+        CollateralType collateralType = resolveCollateralType(loanType, request.collateralType());
+        CustomerVerification verification = customerVerificationService.getOrDefault(customerId);
+        CustomerInformationVerification informationVerification =
+                customerInformationVerificationService.getOrDefault(customerId);
+        CustomerCreditCheckSummary creditCheck = customerCreditCheckService.findLatestByCustomerId(customerId)
+                .orElseGet(() -> customerCreditCheckService.refreshForCustomer(customerId, profile));
+        BigDecimal existingMonthlyDebt = customerDebtService.sumActiveMonthlyDebt(customerId);
+        BigDecimal projectedMonthlyPayment = loanContractService.calculateProjectedMonthlyPayment(
+                loanType,
+                request.amount(),
+                request.termMonths());
+        BigDecimal projectedDti = resolveProjectedDti(profile, existingMonthlyDebt, projectedMonthlyPayment);
+
+        DecisionInput decisionInput = new DecisionInput(
+                customerId,
+                profile != null ? profile.effectiveMonthlyIncome() : null,
+                projectedDti,
+                profile != null ? profile.employmentStatus() : null,
+                profile != null ? profile.dateOfBirth() : null,
+                profile != null ? profile.employmentStartDate() : null,
+                resolveCreditHistoryScore(profile, creditCheck),
+                request.collateralValue(),
+                existingMonthlyDebt,
+                request.amount(),
+                request.termMonths(),
+                request.purpose(),
+                profile != null ? profile.paymentRating() : null,
+                isFailed(verification.kycStatus()),
+                isFailed(verification.amlStatus()),
+                verification.fraudFlag(),
+                asIncomeVerified(verification.incomeStatus()),
+                creditCheck != null ? creditCheck.manualReviewRequired() : null,
+                creditCheck != null ? creditCheck.hardReject() : null,
+                projectedMonthlyPayment);
+
+        DssResult dssResult = decisionEngineService.evaluate(decisionInput);
+        LoanEligibilityResult eligibility = loanEligibilityService.evaluate(
+                profile,
+                existingMonthlyDebt,
+                loanType,
+                request.amount(),
+                request.termMonths(),
+                request.collateralValue(),
+                dssResult.riskRank());
+
+        return new LoanAssessmentData(
+                profile,
+                loanType,
+                collateralType,
+                verification,
+                informationVerification,
+                creditCheck,
+                existingMonthlyDebt,
+                projectedDti,
+                decisionInput,
+                dssResult,
+                eligibility,
+                buildIntakeNote(loanType));
+    }
+
+    private LoanDetailResponse finalizeSubmittedLoan(
+            Long customerId,
+            CreateLoanRequest request,
+            LoanRecord loan,
+            LoanAssessmentData assessment) {
+        loanApplicationSnapshotRepository.createIfMissing(
+                loan.id(),
+                customerId,
+                assessment.profile(),
+                assessment.existingMonthlyDebt(),
+                customerDebtService.countActiveDebts(customerId),
+                assessment.informationVerification(),
+                assessment.verification());
+
+        log.info(
+                "Loan application created: loanId={}, customerId={}, loanType={}, amount={}, termMonths={}, purpose={}",
+                loan.id(), customerId, assessment.loanType(), request.amount(), request.termMonths(), request.purpose());
+
+        dssResultRepository.upsert(loan.id(), assessment.dssResult());
+
+        RiskAssessment riskAssessment = riskAssessmentService.evaluateAndSave(
+                loan.id(),
+                assessment.decisionInput(),
+                assessment.dssResult(),
+                assessment.verification());
+
+        applyWorkflowTransition(
+                customerId,
+                loan,
+                assessment.dssResult(),
+                riskAssessment,
+                assessment.verification(),
+                assessment.creditCheck());
+        LoanRecord refreshedLoan = loanRepository.findOwnedById(loan.id(), customerId).orElse(loan);
+
+        complianceAuditService.log(
+                customerId,
+                refreshedLoan.id(),
+                customerId,
+                "LOAN_APPLICATION_EVALUATED",
+                resolveComplianceOutcome(assessment.verification()),
+                String.format(
+                        "loanType=%s, recommendation=%s, riskLevel=%s, creditRisk=%d, fraudRisk=%d, operationalRisk=%d, projectedDti=%s, eligibleLimit=%s",
+                        assessment.loanType(),
+                        assessment.dssResult().recommendation(),
+                        riskAssessment.overallRiskLevel(),
+                        riskAssessment.creditRiskScore(),
+                        riskAssessment.fraudRiskScore(),
+                        riskAssessment.operationalRiskScore(),
+                        assessment.projectedDti() != null ? assessment.projectedDti().toPlainString() : "N/A",
+                        assessment.eligibility().eligibleLimit() != null
+                                ? assessment.eligibility().eligibleLimit().toPlainString()
+                                : "N/A"));
+        if (refreshedLoan.status() == LoanStatus.PENDING) {
+            notificationService.notifyStaffLoanApplicationSubmitted(refreshedLoan.id(), customerId, refreshedLoan.loanType());
+        }
+
+        return toDetailResponse(refreshedLoan);
     }
 
     @Transactional
@@ -343,6 +475,7 @@ public class CustomerLoanService {
         if (updated == 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Hồ sơ vay đã thay đổi trạng thái trong lúc xử lý");
         }
+        loanContractService.cancelPendingAcceptance(id);
         loanStatusHistoryService.recordTransition(
                 loan,
                 LoanStatus.WITHDRAWN,
@@ -412,6 +545,16 @@ public class CustomerLoanService {
         return loanType != null ? loanType : LoanType.UNSECURED;
     }
 
+    private LoanType resolveDraftLoanType(LoanRecord draft, CreateLoanRequest request) {
+        LoanType requestedLoanType = request.loanType() != null ? request.loanType() : draft.loanType();
+        if (requestedLoanType != draft.loanType()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Không thể đổi loại vay của bản nháp hiện tại. Vui lòng tạo bản nháp mới nếu cần chuyển sang sản phẩm vay khác.");
+        }
+        return draft.loanType();
+    }
+
     private CollateralType resolveCollateralType(LoanType loanType, CollateralType collateralType) {
         if (loanType == LoanType.SECURED) {
             return collateralType != null ? collateralType : CollateralType.VEHICLE_REGISTRATION;
@@ -420,20 +563,44 @@ public class CustomerLoanService {
     }
 
     private void validateRequiredDocuments(LoanType loanType, LoanApplicationFiles files) {
+        validateRequiredDocuments(loanType, files, Set.of());
+    }
+
+    private void validateRequiredDocuments(
+            LoanType loanType,
+            LoanApplicationFiles files,
+            Set<LoanDocumentType> existingDocumentTypes) {
         if (loanType == LoanType.SECURED) {
-            requireFile(files.vehicleRegistration(), "Vui lòng chụp hoặc tải ảnh giấy tờ xe");
-            requireFile(files.licensePlateImage(), "Vui lòng chụp hoặc tải ảnh biển số xe");
+            requireDocument(
+                    files.vehicleRegistration(),
+                    existingDocumentTypes.contains(LoanDocumentType.VEHICLE_REGISTRATION),
+                    "Vui lòng chụp hoặc tải ảnh giấy tờ xe");
+            requireDocument(
+                    files.licensePlateImage(),
+                    existingDocumentTypes.contains(LoanDocumentType.LICENSE_PLATE_IMAGE),
+                    "Vui lòng chụp hoặc tải ảnh biển số xe");
             return;
         }
-        requireFile(files.idCardFront(), "Vui lòng tải ảnh mặt trước CCCD");
-        requireFile(files.idCardBack(), "Vui lòng tải ảnh mặt sau CCCD");
-        requireFile(files.faceCapture(), "Vui lòng chụp ảnh khuôn mặt hiện tại");
+        requireDocument(
+                files.faceCapture(),
+                existingDocumentTypes.contains(LoanDocumentType.FACE_CAPTURE),
+                "Vui lòng chụp ảnh khuôn mặt hiện tại");
     }
 
     private void requireFile(org.springframework.web.multipart.MultipartFile file, String message) {
         if (file == null || file.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, message);
         }
+    }
+
+    private void requireDocument(
+            org.springframework.web.multipart.MultipartFile file,
+            boolean existingDocumentPresent,
+            String message) {
+        if (existingDocumentPresent) {
+            return;
+        }
+        requireFile(file, message);
     }
 
     private void validateLoanRequest(LoanType loanType, CreateLoanRequest request) {
@@ -449,7 +616,11 @@ public class CustomerLoanService {
         if (loanType == LoanType.SECURED) {
             return "Đã tiếp nhận yêu cầu vay thế chấp. Nhân viên sẽ liên hệ để đặt lịch hẹn và đối chiếu tài sản trực tiếp.";
         }
-        return "Hồ sơ vay tín chấp đã được gửi thẩm định. Nhân viên sẽ đối chiếu CCCD, ảnh khuôn mặt, thông tin tín dụng nội bộ và DTI.";
+        return "Hồ sơ vay tín chấp đã được gửi thẩm định. Nhân viên sẽ dùng CCCD đã lưu trong hồ sơ gốc, ảnh khuôn mặt hiện tại, thông tin tín dụng nội bộ và DTI để đối chiếu.";
+    }
+
+    private String buildDraftIntakeNote() {
+        return "Bản nháp hồ sơ vay đã được lưu. Bạn có thể quay lại bổ sung chứng từ rồi gửi thẩm định sau.";
     }
 
     private void storeDocuments(Long loanRequestId, LoanType loanType, LoanApplicationFiles files, boolean upsert) {
@@ -469,8 +640,6 @@ public class CustomerLoanService {
                     upsert);
             return;
         }
-        storeDocumentIfPresent(loanRequestId, LoanDocumentType.ID_CARD_FRONT, files.idCardFront(), upsert);
-        storeDocumentIfPresent(loanRequestId, LoanDocumentType.ID_CARD_BACK, files.idCardBack(), upsert);
         storeDocumentIfPresent(loanRequestId, LoanDocumentType.FACE_CAPTURE, files.faceCapture(), upsert);
     }
 
@@ -511,9 +680,37 @@ public class CustomerLoanService {
             LoanRecord loan,
             DssResult dssResult,
             RiskAssessment riskAssessment,
-            CustomerVerification verification) {
+            CustomerVerification verification,
+            CustomerCreditCheckSummary creditCheck) {
         if (verification.hasHardRejectFlag()) {
             String reason = "Tự động từ chối do không đạt kiểm tra tuân thủ (KYC/AML/gian lận).";
+            loanRepository.updateDecision(loan.id(), LoanStatus.REJECTED, reason, null, null, null, null, null);
+            loanStatusHistoryService.recordTransition(
+                    loan,
+                    LoanStatus.REJECTED,
+                    customerId,
+                    "AUTO_DECISION",
+                    reason);
+            complianceAuditService.log(
+                    customerId,
+                    loan.id(),
+                    customerId,
+                    "LOAN_APPLICATION_AUTO_REJECTED",
+                    ComplianceOutcome.FAILED,
+                    reason);
+            notificationService.notifyCustomerLoanDecisionUpdated(
+                    loan.id(),
+                    customerId,
+                    null,
+                    loan.loanType(),
+                    LoanStatus.REJECTED,
+                    reason,
+                    true);
+            return;
+        }
+
+        if (creditCheck != null && creditCheck.hardReject()) {
+            String reason = buildCreditCheckRejectReason(creditCheck);
             loanRepository.updateDecision(loan.id(), LoanStatus.REJECTED, reason, null, null, null, null, null);
             loanStatusHistoryService.recordTransition(
                     loan,
@@ -588,6 +785,16 @@ public class CustomerLoanService {
             return "Tự động từ chối do DSS đề xuất từ chối.";
         }
         return "Tự động từ chối do mức rủi ro tổng thể ở ngưỡng HIGH.";
+    }
+
+    private String buildCreditCheckRejectReason(CustomerCreditCheckSummary creditCheck) {
+        if (creditCheck == null) {
+            return "Tự động từ chối do tra cứu tín dụng từ CCCD trả về cờ từ chối cứng.";
+        }
+        if (creditCheck.riskNote() != null && !creditCheck.riskNote().isBlank()) {
+            return "Tự động từ chối do tra cứu tín dụng từ CCCD: " + creditCheck.riskNote();
+        }
+        return "Tự động từ chối do tra cứu tín dụng từ CCCD trả về cờ từ chối cứng.";
     }
 
     private BigDecimal resolveProjectedDti(
@@ -680,6 +887,7 @@ public class CustomerLoanService {
                 loan.termMonths(),
                 loan.purpose(),
                 loan.collateralType(),
+                loan.collateralValue(),
                 loan.status(),
                 loan.finalReason(),
                 loan.eligibleLimit(),
@@ -697,6 +905,30 @@ public class CustomerLoanService {
                 loan.updatedAt());
     }
 
+    private void assertSubmittedReusableProfile(CustomerProfile profile) {
+        if (profile != null
+                && profile.identityNumber() != null
+                && !profile.identityNumber().isBlank()
+                && profile.payslipOriginalFilename() != null
+                && !profile.payslipOriginalFilename().isBlank()
+                && profile.identityCardFrontOriginalFilename() != null
+                && !profile.identityCardFrontOriginalFilename().isBlank()
+                && profile.identityCardBackOriginalFilename() != null
+                && !profile.identityCardBackOriginalFilename().isBlank()) {
+            return;
+        }
+        throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Bạn cần hoàn thiện hồ sơ cá nhân, số CCCD, ảnh CCCD 2 mặt và phiếu lương trước khi gửi hồ sơ vay đi thẩm định.");
+    }
+
+    private Integer resolveCreditHistoryScore(CustomerProfile profile, CustomerCreditCheckSummary creditCheck) {
+        if (creditCheck != null && creditCheck.creditScore() != null) {
+            return creditCheck.creditScore();
+        }
+        return profile != null ? profile.creditHistoryScore() : null;
+    }
+
     private LoanDocumentResponse toDocumentResponse(LoanDocumentRecord document) {
         return new LoanDocumentResponse(
                 document.id(),
@@ -711,6 +943,25 @@ public class CustomerLoanService {
                 && files.supplementalDocuments().stream().anyMatch(file -> file != null && !file.isEmpty());
     }
 
+    private LoanRecord requireOwnedDraft(Long customerId, Long id) {
+        LoanRecord loan = reloadOwnedLoan(customerId, id);
+        if (loan.status() == LoanStatus.DRAFT) {
+            return loan;
+        }
+        throw new ResponseStatusException(HttpStatus.CONFLICT, "Chỉ có thể chỉnh sửa hoặc gửi đi với hồ sơ đang ở trạng thái bản nháp");
+    }
+
+    private LoanRecord reloadOwnedLoan(Long customerId, Long id) {
+        return loanRepository.findOwnedById(id, customerId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
+    }
+
+    private Set<LoanDocumentType> existingDocumentTypes(Long loanRequestId) {
+        return loanDocumentRepository.findByLoanRequestId(loanRequestId).stream()
+                .map(LoanDocumentRecord::documentType)
+                .collect(java.util.stream.Collectors.toSet());
+    }
+
     private void assertNoOpenApplication(Long customerId) {
         if (!loanRepository.existsOpenApplicationByCustomerId(customerId)) {
             return;
@@ -718,6 +969,21 @@ public class CustomerLoanService {
         throw new ResponseStatusException(
                 HttpStatus.CONFLICT,
                 "Mỗi khách hàng chỉ được phép có 1 hồ sơ vay tại một thời điểm. Vui lòng hoàn tất hoặc rút hồ sơ hiện tại trước khi tạo mới.");
+    }
+
+    private record LoanAssessmentData(
+            CustomerProfile profile,
+            LoanType loanType,
+            CollateralType collateralType,
+            CustomerVerification verification,
+            CustomerInformationVerification informationVerification,
+            CustomerCreditCheckSummary creditCheck,
+            BigDecimal existingMonthlyDebt,
+            BigDecimal projectedDti,
+            DecisionInput decisionInput,
+            DssResult dssResult,
+            LoanEligibilityResult eligibility,
+            String intakeNote) {
     }
 }
 

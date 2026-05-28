@@ -22,6 +22,7 @@ public class LoanRepository {
                         rs.getInt("term_months"),
                         LoanPurpose.valueOf(rs.getString("purpose")),
                         parseEnum(CollateralType.class, rs.getString("collateral_type")),
+                        rs.getBigDecimal("collateral_value"),
                         LoanStatus.valueOf(rs.getString("status")),
                         rs.getString("final_reason"),
                         rs.getBigDecimal("eligible_limit"),
@@ -107,7 +108,7 @@ public class LoanRepository {
         public List<LoanRecord> findByCustomerId(Long customerId) {
                 return jdbcTemplate.query(
                                 """
-                                                SELECT id, customer_id, loan_type, amount, term_months, purpose, collateral_type,
+                                                SELECT id, customer_id, loan_type, amount, term_months, purpose, collateral_type, collateral_value,
                                                        status, final_reason, eligible_limit, approved_amount, approved_term_months,
                                                        approved_annual_rate, approved_monthly_payment, decision_policy_version,
                                                        intake_note, created_at, updated_at
@@ -139,9 +140,7 @@ public class LoanRepository {
                                                       'NEEDS_MORE_INFO',
                                                       'APPOINTMENT_SCHEDULED',
                                                       'APPROVED',
-                                                      'CONTRACTED',
-                                                      'ACTIVE',
-                                                      'OVERDUE'
+                                                      'CONTRACTED'
                                                   )
                                                 """,
                                 Integer.class,
@@ -152,7 +151,7 @@ public class LoanRepository {
         public List<LoanRecord> findByCustomerIdPaged(Long customerId, int offset, int limit) {
                 return jdbcTemplate.query(
                                 """
-                                                SELECT id, customer_id, loan_type, amount, term_months, purpose, collateral_type,
+                                                SELECT id, customer_id, loan_type, amount, term_months, purpose, collateral_type, collateral_value,
                                                        status, final_reason, eligible_limit, approved_amount, approved_term_months,
                                                        approved_annual_rate, approved_monthly_payment, decision_policy_version,
                                                        intake_note, created_at, updated_at
@@ -168,7 +167,7 @@ public class LoanRepository {
         public Optional<LoanRecord> findOwnedById(Long id, Long customerId) {
                 return jdbcTemplate.query(
                                 """
-                                                SELECT id, customer_id, loan_type, amount, term_months, purpose, collateral_type,
+                                                SELECT id, customer_id, loan_type, amount, term_months, purpose, collateral_type, collateral_value,
                                                        status, final_reason, eligible_limit, approved_amount, approved_term_months,
                                                        approved_annual_rate, approved_monthly_payment, decision_policy_version,
                                                        intake_note, created_at, updated_at
@@ -183,7 +182,7 @@ public class LoanRepository {
         public Optional<LoanRecord> findById(Long id) {
                 return jdbcTemplate.query(
                                 """
-                                                SELECT id, customer_id, loan_type, amount, term_months, purpose, collateral_type,
+                                                SELECT id, customer_id, loan_type, amount, term_months, purpose, collateral_type, collateral_value,
                                                        status, final_reason, eligible_limit, approved_amount, approved_term_months,
                                                        approved_annual_rate, approved_monthly_payment, decision_policy_version,
                                                        intake_note, created_at, updated_at
@@ -218,6 +217,82 @@ public class LoanRepository {
                                                 """,
                                 status.name(),
                                 reason,
+                                id,
+                                customerId);
+        }
+
+        public int updateOwnedDraft(
+                        Long id,
+                        Long customerId,
+                        LoanType loanType,
+                        BigDecimal amount,
+                        Integer termMonths,
+                        LoanPurpose purpose,
+                        CollateralType collateralType,
+                        String intakeNote) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET loan_type = ?,
+                                                    amount = ?,
+                                                    term_months = ?,
+                                                    purpose = ?,
+                                                    collateral_type = ?,
+                                                    intake_note = ?,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                                  AND customer_id = ?
+                                                  AND status = 'DRAFT'
+                                                """,
+                                loanType.name(),
+                                amount,
+                                termMonths,
+                                purpose.name(),
+                                collateralType != null ? collateralType.name() : null,
+                                intakeNote,
+                                id,
+                                customerId);
+        }
+
+        public int submitOwnedDraftForReview(
+                        Long id,
+                        Long customerId,
+                        LoanType loanType,
+                        BigDecimal amount,
+                        Integer termMonths,
+                        LoanPurpose purpose,
+                        CollateralType collateralType,
+                        BigDecimal eligibleLimit,
+                        String intakeNote) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET loan_type = ?,
+                                                    amount = ?,
+                                                    term_months = ?,
+                                                    purpose = ?,
+                                                    collateral_type = ?,
+                                                    status = 'PENDING',
+                                                    final_reason = NULL,
+                                                    eligible_limit = ?,
+                                                    approved_amount = NULL,
+                                                    approved_term_months = NULL,
+                                                    approved_annual_rate = NULL,
+                                                    approved_monthly_payment = NULL,
+                                                    decision_policy_version = NULL,
+                                                    intake_note = ?,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                                  AND customer_id = ?
+                                                  AND status = 'DRAFT'
+                                                """,
+                                loanType.name(),
+                                amount,
+                                termMonths,
+                                purpose.name(),
+                                collateralType != null ? collateralType.name() : null,
+                                eligibleLimit,
+                                intakeNote,
                                 id,
                                 customerId);
         }
@@ -372,6 +447,19 @@ public class LoanRepository {
                         return Optional.empty();
                 }
                 return Optional.ofNullable(values.get(0));
+        }
+
+        public BigDecimal sumCommittedMonthlyPaymentByCustomerId(Long customerId) {
+                BigDecimal total = jdbcTemplate.queryForObject(
+                                """
+                                                SELECT COALESCE(SUM(approved_monthly_payment), 0)
+                                                FROM loan_requests
+                                                WHERE customer_id = ?
+                                                  AND status IN ('CONTRACTED', 'ACTIVE', 'OVERDUE')
+                                                """,
+                                BigDecimal.class,
+                                customerId);
+                return total != null ? total : BigDecimal.ZERO;
         }
 
         private static java.time.Instant toInstant(Timestamp timestamp) {

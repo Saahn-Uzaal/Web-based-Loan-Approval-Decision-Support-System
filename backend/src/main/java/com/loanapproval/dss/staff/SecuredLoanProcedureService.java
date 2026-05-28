@@ -5,8 +5,8 @@ import com.loanapproval.dss.compliance.ComplianceOutcome;
 import com.loanapproval.dss.contract.LoanContractStatus;
 import com.loanapproval.dss.contract.LoanContractScheduleTerms;
 import com.loanapproval.dss.contract.LoanContractService;
-import com.loanapproval.dss.customerinfo.CustomerInformationVerificationService;
 import com.loanapproval.dss.loan.LoanApprovalReassessmentService;
+import com.loanapproval.dss.loan.LoanApplicationVerificationService;
 import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
 import com.loanapproval.dss.loan.LoanStatus;
@@ -18,8 +18,6 @@ import com.loanapproval.dss.staff.dto.StaffSecuredProcedureRequest;
 import com.loanapproval.dss.staff.dto.StaffSecuredProcedureResponse;
 import com.loanapproval.dss.staff.dto.StaffSecuredProcedureSummaryResponse;
 import com.loanapproval.dss.verification.CustomerVerification;
-import com.loanapproval.dss.verification.CustomerVerificationService;
-import com.loanapproval.dss.verification.VerificationStatus;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
@@ -39,8 +37,7 @@ public class SecuredLoanProcedureService {
     private final LoanRepository loanRepository;
     private final LoanContractService loanContractService;
     private final ComplianceAuditService complianceAuditService;
-    private final CustomerInformationVerificationService customerInformationVerificationService;
-    private final CustomerVerificationService customerVerificationService;
+    private final LoanApplicationVerificationService loanApplicationVerificationService;
     private final LoanApprovalReassessmentService loanApprovalReassessmentService;
     private final LoanStatusHistoryService loanStatusHistoryService;
     private final NotificationService notificationService;
@@ -50,8 +47,7 @@ public class SecuredLoanProcedureService {
             LoanRepository loanRepository,
             LoanContractService loanContractService,
             ComplianceAuditService complianceAuditService,
-            CustomerInformationVerificationService customerInformationVerificationService,
-            CustomerVerificationService customerVerificationService,
+            LoanApplicationVerificationService loanApplicationVerificationService,
             LoanApprovalReassessmentService loanApprovalReassessmentService,
             LoanStatusHistoryService loanStatusHistoryService,
             NotificationService notificationService) {
@@ -59,8 +55,7 @@ public class SecuredLoanProcedureService {
         this.loanRepository = loanRepository;
         this.loanContractService = loanContractService;
         this.complianceAuditService = complianceAuditService;
-        this.customerInformationVerificationService = customerInformationVerificationService;
-        this.customerVerificationService = customerVerificationService;
+        this.loanApplicationVerificationService = loanApplicationVerificationService;
         this.loanApprovalReassessmentService = loanApprovalReassessmentService;
         this.loanStatusHistoryService = loanStatusHistoryService;
         this.notificationService = notificationService;
@@ -191,21 +186,23 @@ public class SecuredLoanProcedureService {
             BigDecimal requestedAnnualRate = toAnnualRate(request.monthlyInterestRate());
             reassessment = loanApprovalReassessmentService.reassessAndPersist(
                     loan,
-                    resolveVerifiedCustomer(loan.customerId()),
+                    resolveVerifiedCustomer(loan),
                     loan.approvedAmount(),
                     loan.approvedTermMonths(),
                     requestedAnnualRate,
                     request.appraisalValue(),
                     true);
-            validateMonthlyPaymentMatchesDss(request, reassessment);
         }
 
-        securedLoanProcedureRepository.upsert(loanRequestId, staffUserId, request);
+        StaffSecuredProcedureRequest requestToPersist = finalizingBeforeContract
+                ? applyReassessedTerms(request, reassessment)
+                : request;
+        securedLoanProcedureRepository.upsert(loanRequestId, staffUserId, requestToPersist);
         if (finalizingBeforeContract) {
             loanRepository.updateDecision(
                     loanRequestId,
                     LoanStatus.APPROVED,
-                    buildCompletionReason(currentDetail, request, reassessment),
+                    buildCompletionReason(currentDetail, requestToPersist, reassessment),
                     reassessment.eligibleLimit(),
                     reassessment.approvedAmount(),
                     reassessment.approvedTermMonths(),
@@ -217,7 +214,7 @@ public class SecuredLoanProcedureService {
                     LoanStatus.APPROVED,
                     staffUserId,
                     "SECURED_PROCEDURE_COMPLETION",
-                    buildCompletionReason(currentDetail, request, reassessment));
+                    buildCompletionReason(currentDetail, requestToPersist, reassessment));
             securedLoanProcedureRepository.markLatestAppointmentCompleted(loanRequestId);
             LoanRecord approvedLoan = loanRepository.findById(loanRequestId)
                     .orElseThrow(() -> new ResponseStatusException(
@@ -226,7 +223,7 @@ public class SecuredLoanProcedureService {
             loanContractService.createIfMissingFromApprovedLoan(
                     approvedLoan,
                     staffUserId,
-                    buildContractScheduleTerms(request, reassessment),
+                    buildContractScheduleTerms(requestToPersist, reassessment),
                     LoanContractStatus.PENDING_ACCEPTANCE);
         }
 
@@ -329,7 +326,8 @@ public class SecuredLoanProcedureService {
         if (request.monthlyInterestRate() == null || request.monthlyInterestRate().compareTo(BigDecimal.ZERO) <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Lãi suất thực tế hằng tháng phải lớn hơn 0");
         }
-        if (request.monthlyPaymentAmount() == null || request.monthlyPaymentAmount().compareTo(BigDecimal.ZERO) <= 0) {
+        if (request.monthlyPaymentAmount() != null
+                && request.monthlyPaymentAmount().compareTo(BigDecimal.ZERO) <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Khoản thanh toán hằng tháng phải lớn hơn 0");
         }
         if (request.contractSignedDate() != null
@@ -363,33 +361,20 @@ public class SecuredLoanProcedureService {
         }
     }
 
-    private CustomerVerification resolveVerifiedCustomer(Long customerId) {
-        CustomerVerification verification = customerVerificationService.getOrDefault(customerId);
-        if (!verification.hasHardRejectFlag() && !isFullyVerified(verification)) {
-            verification = customerInformationVerificationService
-                    .syncLoanApprovalVerificationFromCurrentStatus(customerId);
-        }
+    private CustomerVerification resolveVerifiedCustomer(LoanRecord loan) {
+        CustomerVerification verification =
+                loanApplicationVerificationService.getOrDefault(loan.id(), loan.customerId());
         if (verification.hasHardRejectFlag()) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
                     "Không thể hoàn tất vay thế chấp vì khách hàng không đạt kiểm tra KYC/AML/gian lận");
         }
-        if (!isFullyVerified(verification)) {
+        if (!loanApplicationVerificationService.isFullyVerified(loan.loanType(), verification)) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "Không thể hoàn tất vay thế chấp trước khi tất cả bước xác minh đều đạt");
         }
         return verification;
-    }
-
-    private boolean isFullyVerified(CustomerVerification verification) {
-        return verification.documentStatus() == VerificationStatus.PASSED
-                && verification.identityStatus() == VerificationStatus.PASSED
-                && verification.faceMatchStatus() == VerificationStatus.PASSED
-                && verification.incomeStatus() == VerificationStatus.PASSED
-                && verification.kycStatus() == VerificationStatus.PASSED
-                && verification.amlStatus() == VerificationStatus.PASSED
-                && !verification.fraudFlag();
     }
 
     private String buildCompletionReason(
@@ -443,20 +428,63 @@ public class SecuredLoanProcedureService {
         return builder.toString();
     }
 
-    private void validateMonthlyPaymentMatchesDss(
+    private StaffSecuredProcedureRequest applyReassessedTerms(
             StaffSecuredProcedureRequest request,
             LoanApprovalReassessmentService.ReassessmentResult reassessment) {
-        if (request.monthlyPaymentAmount() == null || reassessment.approvedMonthlyPayment() == null) {
-            return;
+        if (reassessment == null || reassessment.approvedMonthlyPayment() == null) {
+            return request;
         }
-        BigDecimal enteredPayment = request.monthlyPaymentAmount().setScale(2, RoundingMode.HALF_UP);
-        BigDecimal dssPayment = reassessment.approvedMonthlyPayment().setScale(2, RoundingMode.HALF_UP);
-        if (enteredPayment.subtract(dssPayment).abs().compareTo(MONTHLY_PAYMENT_TOLERANCE) > 0) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Khoản thanh toán hằng tháng phải khớp kết quả DSS sau khi thẩm định lại: "
-                            + dssPayment.toPlainString());
+        BigDecimal normalizedMonthlyPayment = reassessment.approvedMonthlyPayment()
+                .setScale(2, RoundingMode.HALF_UP);
+        if (request.monthlyPaymentAmount() != null) {
+            BigDecimal enteredPayment = request.monthlyPaymentAmount().setScale(2, RoundingMode.HALF_UP);
+            if (enteredPayment.subtract(normalizedMonthlyPayment).abs().compareTo(MONTHLY_PAYMENT_TOLERANCE) <= 0) {
+                return request;
+            }
         }
+        return new StaffSecuredProcedureRequest(
+                request.mortgageeName(),
+                request.mortgageeAddress(),
+                request.mortgageeBusinessCode(),
+                request.mortgageePhone(),
+                request.contractNumber(),
+                request.contractSignedDate(),
+                request.nationality(),
+                request.identityDocumentNumber(),
+                request.permanentAddress(),
+                request.currentAddress(),
+                request.occupation(),
+                request.jobTitle(),
+                request.assetType(),
+                request.assetManufacturer(),
+                request.engineNumber(),
+                request.frameNumber(),
+                request.collateralOwnerName(),
+                request.collateralIdentifier(),
+                request.registrationNumber(),
+                request.salePrice(),
+                request.downPayment(),
+                request.appraisalValue(),
+                request.monthlyInterestRate(),
+                normalizedMonthlyPayment,
+                request.firstPaymentDate(),
+                request.monthlyPaymentDay(),
+                request.finalPaymentDate(),
+                request.appraisalReportCode(),
+                request.insurancePolicyNumber(),
+                request.originalCertificateReceived(),
+                request.certifiedCopyDelivered(),
+                request.collateralRegistrationCompleted(),
+                request.disputeChecked(),
+                request.seizureNoticeAcknowledged(),
+                request.documentsChecked(),
+                request.assetInspected(),
+                request.valuationApproved(),
+                request.contractSigned(),
+                request.collateralHandoverConfirmed(),
+                request.disbursementReady(),
+                request.status(),
+                request.note());
     }
 
     private LoanContractScheduleTerms buildContractScheduleTerms(

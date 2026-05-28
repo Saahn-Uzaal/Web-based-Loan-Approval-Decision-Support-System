@@ -15,6 +15,7 @@ public record LoanDelinquencyRecord(
         Integer daysPastDue,
         Integer highestMilestone,
         Integer totalRatingDelta,
+        BigDecimal totalFeeAssessed,
         LoanDelinquencyStatus status,
         Instant openedAt,
         Instant lastAssessedAt,

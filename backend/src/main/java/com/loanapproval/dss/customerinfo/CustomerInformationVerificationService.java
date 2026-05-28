@@ -1,5 +1,7 @@
 package com.loanapproval.dss.customerinfo;
 
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckService;
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckSummary;
 import com.loanapproval.dss.compliance.ComplianceAuditService;
 import com.loanapproval.dss.compliance.ComplianceOutcome;
 import com.loanapproval.dss.customerinfo.dto.CustomerInformationVerificationResponse;
@@ -7,6 +9,7 @@ import com.loanapproval.dss.customerinfo.dto.ReviewCustomerInformationRequest;
 import com.loanapproval.dss.customerinfo.dto.StaffCustomerInformationDetailResponse;
 import com.loanapproval.dss.customerinfo.dto.StaffCustomerInformationSummaryResponse;
 import com.loanapproval.dss.debt.CustomerDebtRepository;
+import com.loanapproval.dss.loan.LoanApplicationSnapshotRepository;
 import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.profile.CustomerProfile;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
@@ -29,6 +32,8 @@ public class CustomerInformationVerificationService {
     private final CustomerProfileRepository customerProfileRepository;
     private final CustomerDebtRepository customerDebtRepository;
     private final CustomerVerificationRepository customerVerificationRepository;
+    private final LoanApplicationSnapshotRepository loanApplicationSnapshotRepository;
+    private final CustomerCreditCheckService customerCreditCheckService;
     private final ComplianceAuditService complianceAuditService;
     private final NotificationService notificationService;
 
@@ -37,6 +42,8 @@ public class CustomerInformationVerificationService {
         CustomerProfileRepository customerProfileRepository,
         CustomerDebtRepository customerDebtRepository,
         CustomerVerificationRepository customerVerificationRepository,
+        LoanApplicationSnapshotRepository loanApplicationSnapshotRepository,
+        CustomerCreditCheckService customerCreditCheckService,
         ComplianceAuditService complianceAuditService,
         NotificationService notificationService
     ) {
@@ -44,6 +51,8 @@ public class CustomerInformationVerificationService {
         this.customerProfileRepository = customerProfileRepository;
         this.customerDebtRepository = customerDebtRepository;
         this.customerVerificationRepository = customerVerificationRepository;
+        this.loanApplicationSnapshotRepository = loanApplicationSnapshotRepository;
+        this.customerCreditCheckService = customerCreditCheckService;
         this.complianceAuditService = complianceAuditService;
         this.notificationService = notificationService;
     }
@@ -72,18 +81,7 @@ public class CustomerInformationVerificationService {
     public StaffCustomerInformationDetailResponse getCustomerDetail(Long customerId) {
         StaffCustomerInformationDetailResponse detail = customerInformationVerificationRepository.findCustomerDetailById(customerId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy khách hàng"));
-
-        List<StaffCustomerInformationDetailResponse.DebtItem> debts = customerDebtRepository.findByCustomerId(customerId)
-            .stream()
-            .map(debt -> new StaffCustomerInformationDetailResponse.DebtItem(
-                debt.id(),
-                debt.debtType(),
-                debt.monthlyPayment(),
-                debt.remainingBalance(),
-                debt.lenderName(),
-                debt.status().name()
-            ))
-            .toList();
+        CustomerCreditCheckSummary creditCheck = customerCreditCheckService.findLatestByCustomerId(customerId).orElse(null);
 
         return new StaffCustomerInformationDetailResponse(
             detail.customerId(),
@@ -93,8 +91,7 @@ public class CustomerInformationVerificationService {
             detail.rejectionReason(),
             detail.reviewedByEmail(),
             detail.reviewedAt(),
-            detail.profile(),
-            debts
+            withCreditCheck(detail.profile(), creditCheck)
         );
     }
 
@@ -146,7 +143,13 @@ public class CustomerInformationVerificationService {
             staffUserId,
             Instant.now()
         );
-        syncLoanApprovalVerification(customerId, staffUserId, status, reason);
+        syncLoanApprovalVerification(
+            customerId,
+            staffUserId,
+            status,
+            reason,
+            status == VerificationStatus.PASSED ? request.verifiedMonthlyIncome() : null
+        );
 
         complianceAuditService.log(
             customerId,
@@ -167,29 +170,14 @@ public class CustomerInformationVerificationService {
 
     @Transactional
     public void markPending(Long customerId) {
-        customerInformationVerificationRepository.markPending(customerId);
-        syncPendingLoanApprovalVerification(customerId);
-        notificationService.notifyStaffInformationReviewSubmitted(customerId);
+        markPending(customerId, null);
     }
 
-    public void assertApprovedForLoanCreation(Long customerId) {
-        CustomerInformationVerification verification = getOrDefault(customerId);
-        if (verification.status() == VerificationStatus.PASSED) {
-            return;
-        }
-
-        if (verification.status() == VerificationStatus.FAILED) {
-            String reason = verification.rejectionReason();
-            String message = reason == null || reason.isBlank()
-                ? "Thông tin kê khai của bạn đã bị từ chối. Vui lòng cập nhật hồ sơ và chờ nhân viên chấp thuận trước khi tạo hồ sơ vay."
-                : "Thông tin kê khai của bạn đã bị từ chối: " + reason;
-            throw new ResponseStatusException(HttpStatus.CONFLICT, message);
-        }
-
-        throw new ResponseStatusException(
-            HttpStatus.CONFLICT,
-            "Thông tin kê khai của bạn đang chờ nhân viên xác minh. Vui lòng chờ chấp thuận trước khi tạo hồ sơ vay."
-        );
+    @Transactional
+    public void markPending(Long customerId, BigDecimal preservedVerifiedMonthlyIncome) {
+        customerInformationVerificationRepository.markPending(customerId);
+        syncPendingLoanApprovalVerification(customerId, preservedVerifiedMonthlyIncome);
+        notificationService.notifyStaffInformationReviewSubmitted(customerId);
     }
 
     @Transactional
@@ -200,7 +188,8 @@ public class CustomerInformationVerificationService {
                 customerId,
                 verification.reviewedBy(),
                 verification.status(),
-                verification.rejectionReason()
+                verification.rejectionReason(),
+                findVerifiedMonthlyIncome(customerId)
             );
         }
         return customerVerificationRepository.findByCustomerId(customerId)
@@ -268,47 +257,99 @@ public class CustomerInformationVerificationService {
         Long customerId,
         Long staffUserId,
         VerificationStatus status,
-        String reason
+        String reason,
+        BigDecimal verifiedMonthlyIncome
     ) {
         CustomerVerification current = customerVerificationRepository.findByCustomerId(customerId)
             .orElseGet(() -> customerVerificationRepository.defaultPending(customerId));
-
-        customerVerificationRepository.upsert(new CustomerVerification(
+        Instant syncedAt = Instant.now();
+        CustomerVerification synced = new CustomerVerification(
             customerId,
-            current.documentStatus(),
-            current.identityStatus(),
+            documentLikeStatusFromInformation(current.documentStatus(), status),
+            documentLikeStatusFromInformation(current.identityStatus(), status),
             current.faceMatchStatus(),
-            status == VerificationStatus.PASSED ? VerificationStatus.PASSED : VerificationStatus.FAILED,
-            current.kycStatus(),
-            current.amlStatus(),
+            incomeStatusFromInformation(status),
+            documentLikeStatusFromInformation(current.kycStatus(), status),
+            documentLikeStatusFromInformation(current.amlStatus(), status),
             current.fraudFlag(),
             buildSyncedVerificationNote(status, reason),
             staffUserId,
-            Instant.now(),
+            syncedAt,
             current.createdAt(),
-            Instant.now()
-        ));
+            syncedAt
+        );
+
+        customerVerificationRepository.upsert(synced);
+        loanApplicationSnapshotRepository.syncCustomerInformationVerification(
+            customerId,
+            status,
+            synced,
+            verifiedMonthlyIncome,
+            synced.note(),
+            staffUserId,
+            syncedAt
+        );
     }
 
-    private void syncPendingLoanApprovalVerification(Long customerId) {
+    private void syncPendingLoanApprovalVerification(Long customerId, BigDecimal verifiedMonthlyIncome) {
         CustomerVerification current = customerVerificationRepository.findByCustomerId(customerId)
             .orElseGet(() -> customerVerificationRepository.defaultPending(customerId));
-
-        customerVerificationRepository.upsert(new CustomerVerification(
+        Instant syncedAt = Instant.now();
+        CustomerVerification synced = new CustomerVerification(
             customerId,
-            current.documentStatus(),
-            current.identityStatus(),
+            VerificationStatus.PENDING,
+            VerificationStatus.PENDING,
             current.faceMatchStatus(),
             VerificationStatus.PENDING,
-            current.kycStatus(),
-            current.amlStatus(),
+            VerificationStatus.PENDING,
+            VerificationStatus.PENDING,
             current.fraudFlag(),
             "Chờ xác minh lại do hồ sơ khách hàng vừa được cập nhật",
             null,
             null,
             current.createdAt(),
-            Instant.now()
-        ));
+            syncedAt
+        );
+
+        customerVerificationRepository.upsert(synced);
+        loanApplicationSnapshotRepository.syncCustomerInformationVerification(
+            customerId,
+            VerificationStatus.PENDING,
+            synced,
+            verifiedMonthlyIncome,
+            synced.note(),
+            null,
+            null
+        );
+    }
+
+    private VerificationStatus documentLikeStatusFromInformation(
+        VerificationStatus currentStatus,
+        VerificationStatus informationStatus
+    ) {
+        if (informationStatus == VerificationStatus.PASSED) {
+            return VerificationStatus.PASSED;
+        }
+        if (informationStatus == VerificationStatus.PENDING) {
+            return VerificationStatus.PENDING;
+        }
+        return currentStatus != null ? currentStatus : VerificationStatus.PENDING;
+    }
+
+    private VerificationStatus incomeStatusFromInformation(VerificationStatus informationStatus) {
+        if (informationStatus == VerificationStatus.PASSED) {
+            return VerificationStatus.PASSED;
+        }
+        if (informationStatus == VerificationStatus.FAILED) {
+            return VerificationStatus.FAILED;
+        }
+        return VerificationStatus.PENDING;
+    }
+
+    private BigDecimal findVerifiedMonthlyIncome(Long customerId) {
+        return customerProfileRepository.findByUserId(customerId)
+            .map(CustomerProfile::verifiedMonthlyIncome)
+            .orElse(null);
     }
 
     private String buildSyncedVerificationNote(VerificationStatus status, String reason) {
@@ -362,10 +403,58 @@ public class CustomerInformationVerificationService {
     }
 
     private boolean hasSubmittedProfile(StaffCustomerInformationDetailResponse.ProfileSummary profile) {
-        return profile != null && profile.payslipFileName() != null && !profile.payslipFileName().isBlank();
+        return profile != null
+            && profile.identityNumber() != null
+            && !profile.identityNumber().isBlank()
+            && profile.payslipFileName() != null
+            && !profile.payslipFileName().isBlank()
+            && profile.identityCardFrontFileName() != null
+            && !profile.identityCardFrontFileName().isBlank()
+            && profile.identityCardBackFileName() != null
+            && !profile.identityCardBackFileName().isBlank();
     }
 
     private boolean hasSubmittedProfile(CustomerProfile profile) {
-        return profile != null && profile.payslipOriginalFilename() != null && !profile.payslipOriginalFilename().isBlank();
+        return profile != null
+            && profile.identityNumber() != null
+            && !profile.identityNumber().isBlank()
+            && profile.payslipOriginalFilename() != null
+            && !profile.payslipOriginalFilename().isBlank()
+            && profile.identityCardFrontOriginalFilename() != null
+            && !profile.identityCardFrontOriginalFilename().isBlank()
+            && profile.identityCardBackOriginalFilename() != null
+            && !profile.identityCardBackOriginalFilename().isBlank();
+    }
+
+    private StaffCustomerInformationDetailResponse.ProfileSummary withCreditCheck(
+        StaffCustomerInformationDetailResponse.ProfileSummary profile,
+        CustomerCreditCheckSummary creditCheck
+    ) {
+        if (profile == null) {
+            return null;
+        }
+        return new StaffCustomerInformationDetailResponse.ProfileSummary(
+            profile.fullName(),
+            profile.phone(),
+            profile.identityNumber(),
+            profile.dateOfBirth(),
+            profile.monthlyIncome(),
+            profile.verifiedMonthlyIncome(),
+            profile.debtToIncomeRatio(),
+            profile.bankAccountNumber(),
+            profile.bankName(),
+            profile.creditHistoryScore(),
+            profile.paymentRating(),
+            creditCheck,
+            profile.payslipFileName(),
+            profile.payslipFileSize(),
+            profile.payslipUploadedAt(),
+            profile.identityCardFrontFileName(),
+            profile.identityCardFrontFileSize(),
+            profile.identityCardFrontUploadedAt(),
+            profile.identityCardBackFileName(),
+            profile.identityCardBackFileSize(),
+            profile.identityCardBackUploadedAt()
+        );
     }
 }

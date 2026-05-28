@@ -17,6 +17,7 @@ public record LoanDetailResponse(
         Integer termMonths,
         LoanPurpose purpose,
         CollateralType collateralType,
+        BigDecimal collateralValue,
         LoanStatus status,
         String finalReason,
         BigDecimal eligibleLimit,

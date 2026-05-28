@@ -18,7 +18,10 @@ import {
 } from "@mui/material";
 import { useEffect, useState } from "react";
 import { Link as RouterLink, useParams } from "react-router-dom";
-import { downloadInformationVerificationPayslipApi } from "@/features/staff/api/informationVerificationApi";
+import {
+  downloadInformationVerificationIdentityCardApi,
+  downloadInformationVerificationPayslipApi
+} from "@/features/staff/api/informationVerificationApi";
 import {
   assignStaffCaseApi,
   disburseStaffLoanApi,
@@ -36,6 +39,7 @@ import { formatPercentInputFromFraction, normalizePercentInput, percentInputToFr
 import {
   labelContractStatus,
   labelCollateralType,
+  labelCreditBureauStatus,
   labelCustomerSegment,
   labelDssRecommendation,
   labelLoanDocumentType,
@@ -104,6 +108,7 @@ const verificationStepFieldKeywords = {
   identityStatus: ["định danh", "identityStatus"],
   faceMatchStatus: ["khuôn mặt", "faceMatchStatus"],
   incomeStatus: ["thu nhập", "incomeStatus"],
+  verifiedMonthlyIncome: ["thu nhập đã xác minh", "verifiedMonthlyIncome"],
   kycStatus: ["kyc"],
   amlStatus: ["aml"],
   note: ["ghi chú xác minh", "note"]
@@ -160,6 +165,7 @@ export default function StaffRequestDetailPage() {
   const [claimingCase, setClaimingCase] = useState(false);
   const [releasingCase, setReleasingCase] = useState(false);
   const [downloadingPayslip, setDownloadingPayslip] = useState(false);
+  const [downloadingIdentityCard, setDownloadingIdentityCard] = useState("");
   const [downloadingDocument, setDownloadingDocument] = useState("");
   const [decisionFieldErrors, setDecisionFieldErrors] = useState({});
   const [verificationFieldErrors, setVerificationFieldErrors] = useState({});
@@ -177,6 +183,7 @@ export default function StaffRequestDetailPage() {
     identityStatus: "PENDING",
     faceMatchStatus: "PENDING",
     incomeStatus: "PENDING",
+    verifiedMonthlyIncome: "",
     kycStatus: "PENDING",
     amlStatus: "PENDING",
     fraudFlag: false,
@@ -205,6 +212,14 @@ export default function StaffRequestDetailPage() {
           identityStatus: response?.verification?.identityStatus || "PENDING",
           faceMatchStatus: response?.verification?.faceMatchStatus || "PENDING",
           incomeStatus: response?.verification?.incomeStatus || "PENDING",
+          verifiedMonthlyIncome:
+            response?.verification?.verifiedMonthlyIncome != null
+              ? formatVndInput(response.verification.verifiedMonthlyIncome)
+              : response?.customerProfile?.verifiedMonthlyIncome != null
+                ? formatVndInput(response.customerProfile.verifiedMonthlyIncome)
+                : response?.customerProfile?.monthlyIncome != null
+                  ? formatVndInput(response.customerProfile.monthlyIncome)
+                  : "",
           kycStatus: response?.verification?.kycStatus || "PENDING",
           amlStatus: response?.verification?.amlStatus || "PENDING",
           fraudFlag: Boolean(response?.verification?.fraudFlag),
@@ -250,11 +265,24 @@ export default function StaffRequestDetailPage() {
   const assignmentOwnedByCurrentUser = Boolean(user?.id && detail?.assignment?.staffUserId === user.id);
   const assignmentBlockedByOtherStaff = Boolean(detail?.assignment?.staffUserId && !assignmentOwnedByCurrentUser);
   const stage = resolveWorkflowStage(detail?.status);
+  const isSecuredLoan = detail?.loanType === "SECURED";
+  const faceMatchApplicable = !isSecuredLoan;
   const showApprovalFields = decision.action === "APPROVE";
-  const showAppointmentFields = showApprovalFields && detail?.loanType === "SECURED";
+  const showAppointmentFields = showApprovalFields && isSecuredLoan;
   const showRejectReasonField = decision.action === "REJECT";
   const showMoreInfoReasonField = decision.action === "REQUEST_MORE_INFO";
   const hasSelectedAction = ["APPROVE", "REJECT", "REQUEST_MORE_INFO"].includes(decision.action);
+  const hasDisbursementAccount = Boolean(
+    detail?.customerProfile?.bankAccountNumber && detail?.customerProfile?.bankName
+  );
+  const verificationStepFields = [
+    ["documentStatus", "Giấy tờ"],
+    ["identityStatus", "Định danh"],
+    ...(faceMatchApplicable ? [["faceMatchStatus", "Đối khớp khuôn mặt"]] : []),
+    ["incomeStatus", "Thu nhập"],
+    ["kycStatus", "KYC"],
+    ["amlStatus", "AML"]
+  ];
 
   const handleDecisionChange = (field) => (event) => {
     setDecisionFieldErrors((prev) => clearFieldError(prev, field));
@@ -281,7 +309,11 @@ export default function StaffRequestDetailPage() {
   };
 
   const handleVerificationChange = (field) => (event) => {
-    const value = field === "fraudFlag" ? event.target.value === "true" : event.target.value;
+    const value = field === "fraudFlag"
+      ? event.target.value === "true"
+      : field === "verifiedMonthlyIncome"
+        ? formatVndInput(event.target.value)
+        : event.target.value;
     setVerificationFieldErrors((prev) => clearFieldError(prev, field));
     setVerificationForm((prev) => ({
       ...prev,
@@ -299,9 +331,33 @@ export default function StaffRequestDetailPage() {
     setSubmitSuccess("");
     setVerificationFieldErrors({});
     try {
-      await updateStaffRequestVerificationApi(accessToken, detail.id, verificationForm);
+      await updateStaffRequestVerificationApi(accessToken, detail.id, {
+        ...verificationForm,
+        verifiedMonthlyIncome:
+          verificationForm.incomeStatus === "PASSED"
+            ? parseVndInput(verificationForm.verifiedMonthlyIncome)
+            : null
+      });
       const refreshed = await getStaffRequestDetailApi(accessToken, detail.id);
       setDetail(refreshed);
+      setVerificationForm({
+        documentStatus: refreshed?.verification?.documentStatus || "PENDING",
+        identityStatus: refreshed?.verification?.identityStatus || "PENDING",
+        faceMatchStatus: refreshed?.verification?.faceMatchStatus || "PENDING",
+        incomeStatus: refreshed?.verification?.incomeStatus || "PENDING",
+        verifiedMonthlyIncome:
+          refreshed?.verification?.verifiedMonthlyIncome != null
+            ? formatVndInput(refreshed.verification.verifiedMonthlyIncome)
+            : refreshed?.customerProfile?.verifiedMonthlyIncome != null
+              ? formatVndInput(refreshed.customerProfile.verifiedMonthlyIncome)
+              : refreshed?.customerProfile?.monthlyIncome != null
+                ? formatVndInput(refreshed.customerProfile.monthlyIncome)
+                : "",
+        kycStatus: refreshed?.verification?.kycStatus || "PENDING",
+        amlStatus: refreshed?.verification?.amlStatus || "PENDING",
+        fraudFlag: Boolean(refreshed?.verification?.fraudFlag),
+        note: refreshed?.verification?.note || ""
+      });
       setSubmitSuccess("Đã cập nhật các bước xác minh hồ sơ.");
     } catch (err) {
       const message = err.message || "Không cập nhật được xác minh hồ sơ";
@@ -391,6 +447,24 @@ export default function StaffRequestDetailPage() {
       setError(err.message || "Không tải được phiếu lương");
     } finally {
       setDownloadingPayslip(false);
+    }
+  };
+
+  const handleDownloadIdentityCard = async (side) => {
+    const fileName = side === "front"
+      ? detail?.customerProfile?.identityCardFrontFileName
+      : detail?.customerProfile?.identityCardBackFileName;
+    if (!detail?.customer?.id || !fileName) {
+      return;
+    }
+    setDownloadingIdentityCard(side);
+    setError("");
+    try {
+      await downloadInformationVerificationIdentityCardApi(accessToken, detail.customer.id, side, fileName);
+    } catch (err) {
+      setError(err.message || "Không tải được ảnh CCCD");
+    } finally {
+      setDownloadingIdentityCard("");
     }
   };
 
@@ -542,12 +616,37 @@ export default function StaffRequestDetailPage() {
               <Typography variant="body2">Mã khách hàng: #{detail.customer?.id}</Typography>
               <Typography variant="body2">Email: {detail.customer?.email || "-"}</Typography>
               <Typography variant="body2">Họ tên: {detail.customerProfile?.fullName || "-"}</Typography>
+              <Typography variant="body2">Số CCCD: {detail.customerProfile?.identityNumber || "-"}</Typography>
+              <Typography variant="body2">
+                Số tài khoản nhận giải ngân: {detail.customerProfile?.bankAccountNumber || "-"}
+              </Typography>
+              <Typography variant="body2">
+                Ngân hàng nhận giải ngân: {detail.customerProfile?.bankName || "-"}
+              </Typography>
+              {!hasDisbursementAccount && (
+                <Alert severity="warning">
+                  Khách hàng chưa cập nhật đủ thông tin tài khoản nhận giải ngân. Không thể giải ngân cho tới khi hồ sơ có số tài khoản và tên ngân hàng.
+                </Alert>
+              )}
               <Typography variant="body2">
                 Thu nhập hàng tháng: {detail.customerProfile?.monthlyIncome != null ? formatVnd(detail.customerProfile.monthlyIncome) : "-"}
               </Typography>
               <Typography variant="body2">
+                Thu nhập đã xác minh sẵn có: {detail.customerProfile?.verifiedMonthlyIncome != null ? formatVnd(detail.customerProfile.verifiedMonthlyIncome) : "-"}
+              </Typography>
+              <Typography variant="body2">
                 DTI: {detail.customerProfile?.debtToIncomeRatio != null ? `${detail.customerProfile.debtToIncomeRatio}%` : "-"}
               </Typography>
+              <Typography variant="body2">Điểm tín dụng nội bộ: {detail.customerProfile?.creditHistoryScore ?? "-"}</Typography>
+              {detail.customerProfile?.creditCheck && (
+                <Alert severity={detail.customerProfile.creditCheck.hardReject ? "error" : detail.customerProfile.creditCheck.manualReviewRequired ? "warning" : "info"}>
+                  Tra cứu tín dụng nội bộ theo CCCD: {labelCreditBureauStatus(detail.customerProfile.creditCheck.bureauStatus)}.
+                  {detail.customerProfile.creditCheck.creditScore != null ? ` Điểm: ${detail.customerProfile.creditCheck.creditScore}.` : ""}
+                  {detail.customerProfile.creditCheck.manualReviewRequired ? " Cần thẩm định thủ công." : ""}
+                  {detail.customerProfile.creditCheck.hardReject ? " Có cờ từ chối cứng." : ""}
+                  {detail.customerProfile.creditCheck.riskNote ? ` Ghi chú: ${detail.customerProfile.creditCheck.riskNote}` : ""}
+                </Alert>
+              )}
               <Typography variant="body2">
                 Phiếu lương: {detail.customerProfile?.payslipFileName || "-"}
                 {detail.customerProfile?.payslipFileSize != null
@@ -566,6 +665,46 @@ export default function StaffRequestDetailPage() {
                   disabled={downloadingPayslip}
                 >
                   {downloadingPayslip ? "Đang tải..." : "Tải phiếu lương"}
+                </Button>
+              )}
+              <Typography variant="body2">
+                CCCD mặt trước: {detail.customerProfile?.identityCardFrontFileName || "-"}
+                {detail.customerProfile?.identityCardFrontFileSize != null
+                  ? ` (${formatFileSize(detail.customerProfile.identityCardFrontFileSize)})`
+                  : ""}
+              </Typography>
+              <Typography variant="body2">
+                Tải lên lúc: {detail.customerProfile?.identityCardFrontUploadedAt ? new Date(detail.customerProfile.identityCardFrontUploadedAt).toLocaleString() : "-"}
+              </Typography>
+              {detail.customerProfile?.identityCardFrontFileName && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  sx={{ alignSelf: "flex-start" }}
+                  onClick={() => handleDownloadIdentityCard("front")}
+                  disabled={downloadingIdentityCard === "front"}
+                >
+                  {downloadingIdentityCard === "front" ? "Đang tải..." : "Tải CCCD mặt trước"}
+                </Button>
+              )}
+              <Typography variant="body2">
+                CCCD mặt sau: {detail.customerProfile?.identityCardBackFileName || "-"}
+                {detail.customerProfile?.identityCardBackFileSize != null
+                  ? ` (${formatFileSize(detail.customerProfile.identityCardBackFileSize)})`
+                  : ""}
+              </Typography>
+              <Typography variant="body2">
+                Tải lên lúc: {detail.customerProfile?.identityCardBackUploadedAt ? new Date(detail.customerProfile.identityCardBackUploadedAt).toLocaleString() : "-"}
+              </Typography>
+              {detail.customerProfile?.identityCardBackFileName && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  sx={{ alignSelf: "flex-start" }}
+                  onClick={() => handleDownloadIdentityCard("back")}
+                  disabled={downloadingIdentityCard === "back"}
+                >
+                  {downloadingIdentityCard === "back" ? "Đang tải..." : "Tải CCCD mặt sau"}
                 </Button>
               )}
             </InfoCard>
@@ -679,6 +818,11 @@ export default function StaffRequestDetailPage() {
                   <Alert severity="info">
                     Hồ sơ đã có hợp đồng hiệu lực nhưng chưa giải ngân. Sau khi giải ngân, khách hàng mới được phép thanh toán.
                   </Alert>
+                  {!hasDisbursementAccount && (
+                    <Alert severity="warning">
+                      Thiếu thông tin nhận giải ngân của khách hàng. Hãy yêu cầu khách hàng cập nhật số tài khoản và tên ngân hàng trong hồ sơ gốc trước khi tiếp tục.
+                    </Alert>
+                  )}
                   {submitError && <Alert severity="error">{submitError}</Alert>}
                   {submitSuccess && <Alert severity="success">{submitSuccess}</Alert>}
                   {detail.loanType === "SECURED" && (
@@ -694,7 +838,7 @@ export default function StaffRequestDetailPage() {
                   <Button
                     variant="contained"
                     onClick={handleDisburse}
-                    disabled={submittingDisbursement || assignmentBlockedByOtherStaff}
+                    disabled={submittingDisbursement || assignmentBlockedByOtherStaff || !hasDisbursementAccount}
                     sx={{ alignSelf: "flex-start" }}
                   >
                     {submittingDisbursement ? "Đang giải ngân..." : "Giải ngân khoản vay"}
@@ -780,8 +924,17 @@ export default function StaffRequestDetailPage() {
                 <>
                   <Typography variant="body2">Giấy tờ: {labelVerificationStatus(detail.verification.documentStatus)}</Typography>
                   <Typography variant="body2">Định danh: {labelVerificationStatus(detail.verification.identityStatus)}</Typography>
-                  <Typography variant="body2">Đối khớp khuôn mặt: {labelVerificationStatus(detail.verification.faceMatchStatus)}</Typography>
+                  <Typography variant="body2">
+                    Đối khớp khuôn mặt: {faceMatchApplicable
+                      ? labelVerificationStatus(detail.verification.faceMatchStatus)
+                      : "N/A ở bước đầu"}
+                  </Typography>
                   <Typography variant="body2">Thu nhập: {labelVerificationStatus(detail.verification.incomeStatus)}</Typography>
+                  {detail.verification.verifiedMonthlyIncome != null && (
+                    <Typography variant="body2">
+                      Thu nhập xác minh: {formatVnd(detail.verification.verifiedMonthlyIncome)}
+                    </Typography>
+                  )}
                   <Typography variant="body2">KYC: {labelVerificationStatus(detail.verification.kycStatus)}</Typography>
                   <Typography variant="body2">AML: {labelVerificationStatus(detail.verification.amlStatus)}</Typography>
                   <Typography variant="body2">
@@ -798,18 +951,16 @@ export default function StaffRequestDetailPage() {
                       Hồ sơ này đang do nhân viên khác phụ trách nên bạn không thể cập nhật xác minh ở màn hình này.
                     </Alert>
                   )}
+                  {detail.customerProfile?.verifiedMonthlyIncome != null && (
+                    <Alert severity="info">
+                      Thu nhập đã xác minh từ hồ sơ khách hàng gốc đã được nạp sẵn. Bạn chỉ cần nhập lại nếu muốn điều chỉnh theo bộ chứng từ của riêng hồ sơ vay này.
+                    </Alert>
+                  )}
                   <Divider />
                   <Stack spacing={2} component="form" onSubmit={handleSaveVerification}>
                     <Typography variant="subtitle2">Cập nhật từng bước xác minh</Typography>
                     <Grid container spacing={1.5}>
-                      {[
-                        ["documentStatus", "Giấy tờ"],
-                        ["identityStatus", "Định danh"],
-                        ["faceMatchStatus", "Đối khớp khuôn mặt"],
-                        ["incomeStatus", "Thu nhập"],
-                        ["kycStatus", "KYC"],
-                        ["amlStatus", "AML"]
-                      ].map(([field, label]) => (
+                      {verificationStepFields.map(([field, label]) => (
                         <Grid item xs={12} sm={6} key={field}>
                           <TextField
                             select
@@ -827,6 +978,27 @@ export default function StaffRequestDetailPage() {
                           </TextField>
                         </Grid>
                       ))}
+                      <Grid item xs={12} sm={6}>
+                        <TextField
+                          size="small"
+                          label="Thu nhập đã xác minh"
+                          value={verificationForm.verifiedMonthlyIncome}
+                          onChange={handleVerificationChange("verifiedMonthlyIncome")}
+                          fullWidth
+                          inputProps={{ inputMode: "numeric" }}
+                          disabled={
+                            submittingVerification
+                            || !verificationEditable
+                            || assignmentBlockedByOtherStaff
+                            || verificationForm.incomeStatus !== "PASSED"
+                          }
+                          {...fieldErrorProps(
+                            verificationFieldErrors,
+                            "verifiedMonthlyIncome",
+                            "Bắt buộc khi bước thu nhập được đánh dấu là đạt."
+                          )}
+                        />
+                      </Grid>
                       <Grid item xs={12} sm={6}>
                         <TextField
                           select

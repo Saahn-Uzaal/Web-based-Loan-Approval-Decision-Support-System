@@ -14,9 +14,16 @@ import {
   Typography
 } from "@mui/material";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link as RouterLink, useNavigate } from "react-router-dom";
+import { Link as RouterLink, useLocation, useNavigate, useParams } from "react-router-dom";
 import { getMyInformationVerificationApi } from "@/features/customer/api/informationVerificationApi";
-import { createLoanApi, getMyLoansApi } from "@/features/customer/api/loanApi";
+import {
+  createLoanApi,
+  createLoanDraftApi,
+  getLoanDetailApi,
+  getMyLoansApi,
+  submitLoanDraftApi,
+  updateLoanDraftApi
+} from "@/features/customer/api/loanApi";
 import { getMyProfileApi } from "@/features/customer/api/profileApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
@@ -33,8 +40,6 @@ import {
 const emptyFiles = {
   vehicleRegistration: null,
   licensePlateImage: null,
-  idCardFront: null,
-  idCardBack: null,
   faceCapture: null
 };
 
@@ -53,12 +58,19 @@ const loanFieldKeywords = {
   collateralValue: ["giá trị tài sản", "tài sản bảo đảm"],
   vehicleRegistration: ["giấy tờ xe", "đăng ký xe", "vehicle registration"],
   licensePlateImage: ["biển số xe", "license plate"],
-  idCardFront: ["cccd mặt trước", "mặt trước cccd", "id card front"],
-  idCardBack: ["cccd mặt sau", "mặt sau cccd", "id card back"],
   faceCapture: ["ảnh khuôn mặt", "khuôn mặt", "face"]
 };
 
-function FilePicker({ label, file, disabled, onChange, error, helperText }) {
+const BLOCKING_APPLICATION_STATUSES = [
+  "DRAFT",
+  "PENDING",
+  "NEEDS_MORE_INFO",
+  "APPOINTMENT_SCHEDULED",
+  "APPROVED",
+  "CONTRACTED"
+];
+
+function FilePicker({ label, file, currentFileName, disabled, onChange, error, helperText }) {
   return (
     <Paper
       variant="outlined"
@@ -72,12 +84,17 @@ function FilePicker({ label, file, disabled, onChange, error, helperText }) {
       <Stack spacing={1.25}>
         <Typography variant="subtitle2">{label}</Typography>
         <Button component="label" variant="outlined" disabled={disabled} sx={{ alignSelf: "flex-start" }}>
-          {file ? "Đổi ảnh" : "Chọn ảnh"}
+          {file ? "Đổi ảnh" : currentFileName ? "Đổi ảnh đã lưu" : "Chọn ảnh"}
           <input hidden type="file" accept={LOAN_IMAGE_ACCEPT} onChange={onChange} />
         </Button>
         {file && (
           <Typography variant="body2" color="text.secondary">
-            {file.name} ({formatFileSize(file.size)})
+            Đã chọn: {file.name} ({formatFileSize(file.size)})
+          </Typography>
+        )}
+        {!file && currentFileName && (
+          <Typography variant="body2" color="text.secondary">
+            Đã lưu: {currentFileName}
           </Typography>
         )}
         {helperText && (
@@ -90,26 +107,82 @@ function FilePicker({ label, file, disabled, onChange, error, helperText }) {
   );
 }
 
+function buildStoredDocumentMap(documents) {
+  return (Array.isArray(documents) ? documents : []).reduce((accumulator, document) => {
+    accumulator[document.documentType] = document;
+    return accumulator;
+  }, {});
+}
+
+function buildFormFromLoan(loan) {
+  return {
+    loanType: loan?.loanType || "UNSECURED",
+    amount: loan?.amount != null ? formatVndInput(loan.amount) : "",
+    termMonths: loan?.termMonths != null ? String(loan.termMonths) : "",
+    purpose: loan?.purpose || "PERSONAL",
+    collateralType: loan?.collateralType || "VEHICLE_REGISTRATION",
+    collateralValue: loan?.collateralValue != null ? formatVndInput(loan.collateralValue) : ""
+  };
+}
+
+function existingBlockingLoan(loans, currentLoanId) {
+  const currentId = currentLoanId != null ? String(currentLoanId) : null;
+  return (Array.isArray(loans) ? loans : []).find((loan) => {
+    if (!BLOCKING_APPLICATION_STATUSES.includes(loan.status)) {
+      return false;
+    }
+    if (currentId != null && String(loan.id) === currentId) {
+      return false;
+    }
+    return true;
+  }) || null;
+}
+
+function requiredCurrentDocument(storedDocuments, file, documentType) {
+  return Boolean(file) || Boolean(storedDocuments[documentType]);
+}
+
+function hasReusableIdentityProfile(profile) {
+  return Boolean(
+    profile?.identityNumber
+      && profile?.payslipFileName
+      && profile?.identityCardFrontFileName
+      && profile?.identityCardBackFileName
+  );
+}
+
 export default function CustomerLoanNewPage() {
+  const location = useLocation();
   const navigate = useNavigate();
+  const { id } = useParams();
   const { accessToken } = useAuth();
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
 
+  const isEditMode = Boolean(id);
+
   const [submitting, setSubmitting] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [loading, setLoading] = useState(true);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [error, setError] = useState("");
   const [verificationError, setVerificationError] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState(location.state?.successMessage || "");
   const [informationVerification, setInformationVerification] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [existingOpenLoan, setExistingOpenLoan] = useState(null);
+  const [blockingLoan, setBlockingLoan] = useState(null);
+  const [repaymentLoans, setRepaymentLoans] = useState([]);
+  const [draftLoan, setDraftLoan] = useState(null);
+  const [storedDocuments, setStoredDocuments] = useState({});
   const [form, setForm] = useState(emptyForm);
   const [fieldErrors, setFieldErrors] = useState({});
   const [files, setFiles] = useState(emptyFiles);
+
+  useEffect(() => {
+    setSuccessMessage(location.state?.successMessage || "");
+  }, [id, location.state?.successMessage]);
 
   useEffect(() => {
     let active = true;
@@ -119,6 +192,7 @@ export default function CustomerLoanNewPage() {
         return;
       }
       setLoading(true);
+      setError("");
       setVerificationError("");
       try {
         const profilePromise = getMyProfileApi(accessToken).catch((err) => {
@@ -128,21 +202,40 @@ export default function CustomerLoanNewPage() {
           }
           throw err;
         });
-        const [profileResponse, verificationResponse, loansResponse] = await Promise.all([
+        const draftPromise = isEditMode ? getLoanDetailApi(accessToken, id) : Promise.resolve(null);
+        const [profileResponse, verificationResponse, loansResponse, draftResponse] = await Promise.all([
           profilePromise,
           getMyInformationVerificationApi(accessToken),
-          getMyLoansApi(accessToken)
+          getMyLoansApi(accessToken),
+          draftPromise
         ]);
+
         if (!active) {
           return;
         }
+
+        const loans = Array.isArray(loansResponse) ? loansResponse : [];
+        const nextBlockingLoan = existingBlockingLoan(loans, id);
+
         setProfile(profileResponse);
         setInformationVerification(verificationResponse);
-        setExistingOpenLoan(
-          (Array.isArray(loansResponse) ? loansResponse : []).find(
-            (loan) => !["CLOSED", "REJECTED", "WITHDRAWN"].includes(loan.status)
-          ) || null
-        );
+        setBlockingLoan(nextBlockingLoan);
+        setRepaymentLoans(loans.filter((loan) => ["ACTIVE", "OVERDUE"].includes(loan.status)));
+
+        if (draftResponse) {
+          if (draftResponse.status !== "DRAFT") {
+            setError("Chỉ có thể tiếp tục chỉnh sửa hồ sơ đang ở trạng thái bản nháp.");
+          }
+          setDraftLoan(draftResponse);
+          setForm(buildFormFromLoan(draftResponse));
+          setStoredDocuments(buildStoredDocumentMap(draftResponse.documents));
+        } else {
+          setDraftLoan(null);
+          setForm(emptyForm);
+          setStoredDocuments({});
+        }
+
+        setFiles(emptyFiles);
       } catch (err) {
         if (!active) {
           return;
@@ -161,7 +254,7 @@ export default function CustomerLoanNewPage() {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     };
-  }, [accessToken]);
+  }, [accessToken, id, isEditMode]);
 
   useEffect(() => {
     if (videoRef.current && streamRef.current) {
@@ -171,16 +264,28 @@ export default function CustomerLoanNewPage() {
 
   const collateralValue = parseVndInput(form.collateralValue);
   const verificationStatus = informationVerification?.status || "PENDING";
-  const blockedByExistingLoan = Boolean(existingOpenLoan);
+  const blockedByExistingLoan = Boolean(blockingLoan);
   const displayedIncome = profile?.verifiedMonthlyIncome ?? profile?.monthlyIncome ?? null;
   const usesVerifiedIncome = profile?.verifiedMonthlyIncome != null;
+  const busy = savingDraft || submitting;
+  const draftEditable = !isEditMode || draftLoan?.status === "DRAFT";
+  const creationBlocked = !isEditMode && blockedByExistingLoan;
 
   const loanTypeHelp = useMemo(() => {
     if (form.loanType === "SECURED") {
       return "Vay bằng giấy tờ xe, cần ảnh giấy tờ xe và ảnh biển số xe tương ứng. Nhân viên sẽ liên hệ đặt lịch hẹn sau khi tiếp nhận.";
     }
-    return "Vay tín chấp cần CCCD hai mặt và ảnh khuôn mặt chụp trực tiếp bằng máy ảnh trên trình duyệt.";
+    return "Vay tín chấp sẽ dùng lại CCCD hai mặt từ hồ sơ khách hàng gốc, bạn chỉ cần chụp ảnh khuôn mặt hiện tại bằng máy ảnh trên trình duyệt.";
   }, [form.loanType]);
+
+  const pageTitle = isEditMode ? `Hoàn thiện bản nháp #${id}` : "Tạo hồ sơ vay";
+  const pageDescription = isEditMode
+    ? "Bổ sung thông tin và chứng từ còn thiếu cho bản nháp, sau đó lưu tiếp hoặc gửi đi thẩm định."
+    : "Kiểm tra thông tin cá nhân đã lưu, sau đó chọn vay thế chấp hoặc vay tín chấp để nộp chứng từ tương ứng.";
+
+  const actionSuccessMessage = isEditMode
+    ? "Đã lưu bản nháp. Bạn có thể tiếp tục chỉnh sửa hoặc gửi hồ sơ khi đã đủ chứng từ."
+    : "Đã lưu bản nháp. Bạn có thể quay lại hoàn thiện rồi gửi hồ sơ sau.";
 
   const handleChange = (name) => (event) => {
     setFieldErrors((prev) => clearFieldError(prev, name));
@@ -199,7 +304,7 @@ export default function CustomerLoanNewPage() {
   };
 
   const handleLoanTypeChange = (_event, value) => {
-    if (!value) {
+    if (!value || isEditMode) {
       return;
     }
     setForm((prev) => ({
@@ -281,9 +386,14 @@ export default function CustomerLoanNewPage() {
     );
   };
 
-  const validateSubmit = () => {
-    if (blockedByExistingLoan) {
-      return `Bạn đang có hồ sơ vay #${existingOpenLoan.id} chưa kết thúc. Mỗi khách hàng chỉ được có 1 hồ sơ vay tại một thời điểm.`;
+  const validateBasePayload = () => {
+    if (!draftEditable) {
+      return "Hồ sơ này không còn ở trạng thái bản nháp nên không thể tiếp tục chỉnh sửa.";
+    }
+    if (creationBlocked) {
+      return blockingLoan?.status === "DRAFT"
+        ? `Bạn đang có bản nháp hồ sơ vay #${blockingLoan.id}. Hãy tiếp tục hoàn thiện bản nháp đó hoặc rút đi trước khi tạo hồ sơ mới.`
+        : `Bạn đang có hồ sơ vay #${blockingLoan.id} ở trạng thái ${labelLoanStatus(blockingLoan.status)}. Vui lòng hoàn tất hồ sơ hiện tại trước khi tạo mới.`;
     }
     const amountValue = parseVndInput(form.amount);
     const termMonthsValue = Number(form.termMonths);
@@ -293,28 +403,96 @@ export default function CustomerLoanNewPage() {
     if (!Number.isFinite(termMonthsValue) || termMonthsValue <= 0) {
       return "Vui lòng nhập kỳ hạn hợp lệ.";
     }
+    if (form.loanType === "SECURED" && (collateralValue == null || collateralValue <= 0)) {
+      return "Vui lòng nhập giá trị tài sản bảo đảm.";
+    }
+    return "";
+  };
+
+  const validateFinalSubmit = () => {
+    const baseValidationError = validateBasePayload();
+    if (baseValidationError) {
+      return baseValidationError;
+    }
+    if (!profile) {
+      return "Bạn cần hoàn thiện hồ sơ cá nhân trước khi gửi hồ sơ vay đi thẩm định.";
+    }
+    if (!hasReusableIdentityProfile(profile)) {
+      return "Bạn cần hoàn thiện hồ sơ cá nhân, số CCCD, ảnh CCCD 2 mặt và phiếu lương trước khi gửi hồ sơ vay đi thẩm định.";
+    }
     if (form.loanType === "SECURED") {
-      if (collateralValue == null || collateralValue <= 0) {
-        return "Vui lòng nhập giá trị tài sản bảo đảm.";
-      }
-      if (!files.vehicleRegistration) {
+      if (!requiredCurrentDocument(storedDocuments, files.vehicleRegistration, "VEHICLE_REGISTRATION")) {
         return "Vui lòng chụp hoặc tải ảnh giấy tờ xe.";
       }
-      if (!files.licensePlateImage) {
+      if (!requiredCurrentDocument(storedDocuments, files.licensePlateImage, "LICENSE_PLATE_IMAGE")) {
         return "Vui lòng chụp hoặc tải ảnh biển số xe.";
       }
       return "";
     }
-    if (!files.idCardFront) {
-      return "Vui lòng tải ảnh CCCD mặt trước.";
-    }
-    if (!files.idCardBack) {
-      return "Vui lòng tải ảnh CCCD mặt sau.";
-    }
-    if (!files.faceCapture) {
+    if (!requiredCurrentDocument(storedDocuments, files.faceCapture, "FACE_CAPTURE")) {
       return "Vui lòng chụp ảnh khuôn mặt hiện tại bằng máy ảnh.";
     }
     return "";
+  };
+
+  const buildPayload = () => ({
+    loanType: form.loanType,
+    amount: parseVndInput(form.amount),
+    termMonths: Number(form.termMonths),
+    purpose: form.purpose,
+    collateralType: form.loanType === "SECURED" ? form.collateralType : null,
+    collateralValue: form.loanType === "SECURED" ? collateralValue : null
+  });
+
+  const buildFilesPayload = () => (
+    form.loanType === "SECURED"
+      ? {
+          vehicleRegistration: files.vehicleRegistration,
+          licensePlateImage: files.licensePlateImage
+        }
+      : {
+          faceCapture: files.faceCapture
+        }
+  );
+
+  const handleSaveDraft = async () => {
+    setError("");
+    setFieldErrors({});
+    setSuccessMessage("");
+
+    const validationError = validateBasePayload();
+    if (validationError) {
+      setError(validationError);
+      setFieldErrors(mapFieldErrors(validationError, loanFieldKeywords));
+      return;
+    }
+
+    setSavingDraft(true);
+    try {
+      const payload = buildPayload();
+      const nextFiles = buildFilesPayload();
+      const saved = isEditMode
+        ? await updateLoanDraftApi(accessToken, id, payload, nextFiles)
+        : await createLoanDraftApi(accessToken, payload, nextFiles);
+
+      if (!isEditMode) {
+        navigate(`/customer/loans/${saved.id}/edit`, {
+          state: { successMessage: actionSuccessMessage }
+        });
+        return;
+      }
+
+      setDraftLoan(saved);
+      setStoredDocuments(buildStoredDocumentMap(saved.documents));
+      setFiles(emptyFiles);
+      setSuccessMessage(actionSuccessMessage);
+    } catch (err) {
+      const message = err.message || "Không lưu được bản nháp hồ sơ vay";
+      setError(message);
+      setFieldErrors(mapFieldErrors(message, loanFieldKeywords));
+    } finally {
+      setSavingDraft(false);
+    }
   };
 
   const handleSubmit = async (event) => {
@@ -323,45 +501,21 @@ export default function CustomerLoanNewPage() {
     setFieldErrors({});
     setSuccessMessage("");
 
-    const validationError = validateSubmit();
+    const validationError = validateFinalSubmit();
     if (validationError) {
       setError(validationError);
       setFieldErrors(mapFieldErrors(validationError, loanFieldKeywords));
       return;
     }
 
-    const amountValue = parseVndInput(form.amount);
-    const termMonthsValue = Number(form.termMonths);
     setSubmitting(true);
     try {
-      const created = await createLoanApi(
-        accessToken,
-        {
-          loanType: form.loanType,
-          amount: amountValue,
-          termMonths: termMonthsValue,
-          purpose: form.purpose,
-          collateralType: form.loanType === "SECURED" ? form.collateralType : null,
-          collateralValue: form.loanType === "SECURED" ? collateralValue : null
-        },
-        form.loanType === "SECURED"
-          ? {
-              vehicleRegistration: files.vehicleRegistration,
-              licensePlateImage: files.licensePlateImage
-            }
-          : {
-              idCardFront: files.idCardFront,
-              idCardBack: files.idCardBack,
-              faceCapture: files.faceCapture
-            }
-      );
-      setSuccessMessage(
-        form.loanType === "SECURED"
-          ? `Đã tiếp nhận hồ sơ vay thế chấp #${created.id}. Nhân viên sẽ liên hệ để đặt lịch hẹn.`
-          : `Đã gửi hồ sơ vay tín chấp #${created.id}. Vui lòng chờ kết quả thẩm định.`
-      );
-      setForm(emptyForm);
-      setFiles(emptyFiles);
+      const payload = buildPayload();
+      const nextFiles = buildFilesPayload();
+      const created = isEditMode
+        ? await submitLoanDraftApi(accessToken, id, payload, nextFiles)
+        : await createLoanApi(accessToken, payload, nextFiles);
+
       navigate(`/customer/loans/${created.id}`);
     } catch (err) {
       const message = err.message || "Không tạo được hồ sơ vay";
@@ -374,10 +528,8 @@ export default function CustomerLoanNewPage() {
 
   return (
     <Stack spacing={2}>
-      <Typography variant="h4">Tạo hồ sơ vay</Typography>
-      <Typography color="text.secondary">
-        Kiểm tra thông tin cá nhân đã lưu, sau đó chọn vay thế chấp hoặc vay tín chấp để nộp chứng từ tương ứng.
-      </Typography>
+      <Typography variant="h4">{pageTitle}</Typography>
+      <Typography color="text.secondary">{pageDescription}</Typography>
 
       <Paper sx={{ p: 3 }}>
         <Stack spacing={1.5}>
@@ -393,15 +545,38 @@ export default function CustomerLoanNewPage() {
                 <Typography variant="body2">Số điện thoại: {profile.phone || "-"}</Typography>
               </Grid>
               <Grid item xs={12} md={4}>
+                <Typography variant="body2">Số CCCD: {profile.identityNumber || "-"}</Typography>
+              </Grid>
+              <Grid item xs={12} md={4}>
                 <Typography variant="body2">
                   Thu nhập dùng để đối chiếu: {displayedIncome != null ? formatVnd(displayedIncome) : "-"}
                   {usesVerifiedIncome ? " (đã xác minh)" : ""}
                 </Typography>
               </Grid>
+              <Grid item xs={12} md={4}>
+                <Typography variant="body2">
+                  CCCD mặt trước: {profile.identityCardFrontFileName ? "Đã nộp" : "Thiếu"}
+                </Typography>
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <Typography variant="body2">
+                  CCCD mặt sau: {profile.identityCardBackFileName ? "Đã nộp" : "Thiếu"}
+                </Typography>
+              </Grid>
             </Grid>
           ) : (
             <Alert severity="info">
-              Bạn cần hoàn thiện hồ sơ cá nhân và phiếu lương trước khi tạo hồ sơ vay.
+              Bạn nên hoàn thiện hồ sơ cá nhân, số CCCD, 2 ảnh CCCD và phiếu lương để việc thẩm định nhanh hơn. Nếu chưa sẵn sàng, bạn vẫn có thể lưu bản nháp trước.
+            </Alert>
+          )}
+          {profile && !hasReusableIdentityProfile(profile) && (
+            <Alert severity="warning">
+              Hồ sơ khách hàng hiện chưa đủ dữ liệu định danh gốc. Hãy bổ sung số CCCD, ảnh CCCD hai mặt và phiếu lương trước khi gửi hồ sơ vay đi thẩm định.
+            </Alert>
+          )}
+          {profile && !(profile.bankAccountNumber && profile.bankName) && (
+            <Alert severity="info">
+              Bạn chưa khai báo tài khoản nhận giải ngân. Hồ sơ vay vẫn có thể được nộp và thẩm định, nhưng sẽ phải bổ sung số tài khoản và tên ngân hàng trước khi nhân viên giải ngân.
             </Alert>
           )}
           {informationVerification && (
@@ -410,27 +585,34 @@ export default function CustomerLoanNewPage() {
               {informationVerification.rejectionReason ? ` Lý do: ${informationVerification.rejectionReason}.` : ""}
               {verificationStatus === "PASSED"
                 ? " Hệ thống sẽ ưu tiên dữ liệu đã xác minh khi thẩm định hồ sơ vay."
-                : " Bạn vẫn có thể nộp hồ sơ vay; nhân viên sẽ tiếp tục rà soát trong từng hồ sơ cụ thể."}
+                : " Bạn vẫn có thể lưu nháp hoặc nộp hồ sơ vay; nhân viên sẽ tiếp tục rà soát trong từng hồ sơ cụ thể."}
             </Alert>
           )}
-          {existingOpenLoan && (
+          {blockingLoan && !isEditMode && (
             <Alert severity="warning">
-              Bạn đang có hồ sơ vay #{existingOpenLoan.id} ở trạng thái {labelLoanStatus(existingOpenLoan.status)}. Mỗi khách hàng chỉ được phép có 1 hồ sơ vay tại một thời điểm.
+              {blockingLoan.status === "DRAFT"
+                ? `Bạn đang có bản nháp hồ sơ vay #${blockingLoan.id}. Hãy tiếp tục hoàn thiện bản nháp đó thay vì tạo mới.`
+                : `Bạn đang có hồ sơ vay #${blockingLoan.id} ở trạng thái ${labelLoanStatus(blockingLoan.status)}. Mỗi khách hàng chỉ được phép có một hồ sơ đang xử lý tại cùng thời điểm.`}
             </Alert>
           )}
-          {(!profile || verificationStatus === "FAILED") && (
+          {repaymentLoans.length > 0 && (
+            <Alert severity="info">
+              Bạn đang có {repaymentLoans.length} khoản vay còn hiệu lực. Nghĩa vụ trả nợ hiện tại của các khoản vay này sẽ được tính vào khả năng vay mới.
+            </Alert>
+          )}
+          {!profile && (
             <Button component={RouterLink} to="/customer/profile" variant="outlined" sx={{ alignSelf: "flex-start" }}>
               Đến hồ sơ của tôi
             </Button>
           )}
-          {existingOpenLoan && (
+          {blockingLoan && !isEditMode && (
             <Button
               component={RouterLink}
-              to={`/customer/loans/${existingOpenLoan.id}`}
+              to={blockingLoan.status === "DRAFT" ? `/customer/loans/${blockingLoan.id}/edit` : `/customer/loans/${blockingLoan.id}`}
               variant="outlined"
               sx={{ alignSelf: "flex-start" }}
             >
-              Xem hồ sơ hiện tại
+              {blockingLoan.status === "DRAFT" ? "Tiếp tục bản nháp hiện tại" : "Xem hồ sơ hiện tại"}
             </Button>
           )}
         </Stack>
@@ -440,6 +622,11 @@ export default function CustomerLoanNewPage() {
         <Stack spacing={2.5}>
           {error && <Alert severity="error">{error}</Alert>}
           {successMessage && <Alert severity="success">{successMessage}</Alert>}
+          {isEditMode && draftLoan?.status === "DRAFT" && (
+            <Alert severity="info">
+              Đây là bản nháp hồ sơ vay #{draftLoan.id}. Bạn có thể lưu lại nhiều lần trước khi gửi thẩm định.
+            </Alert>
+          )}
 
           <Stack spacing={1}>
             <Typography variant="h6">Chọn loại vay</Typography>
@@ -447,12 +634,17 @@ export default function CustomerLoanNewPage() {
               exclusive
               value={form.loanType}
               onChange={handleLoanTypeChange}
-              disabled={submitting || loading}
+              disabled={busy || loading || isEditMode}
               sx={{ alignSelf: "flex-start" }}
             >
               <ToggleButton value="UNSECURED">{labelLoanType("UNSECURED")}</ToggleButton>
               <ToggleButton value="SECURED">{labelLoanType("SECURED")}</ToggleButton>
             </ToggleButtonGroup>
+            {isEditMode && (
+              <Typography variant="caption" color="text.secondary">
+                Loại vay của bản nháp đã được khóa để tránh lẫn bộ chứng từ và logic thẩm định.
+              </Typography>
+            )}
             <Typography variant="body2" color="text.secondary">{loanTypeHelp}</Typography>
           </Stack>
 
@@ -465,7 +657,7 @@ export default function CustomerLoanNewPage() {
                 onChange={handleMoneyChange("amount")}
                 required
                 fullWidth
-                disabled={submitting || loading}
+                disabled={busy || loading || !draftEditable}
                 inputProps={{ inputMode: "numeric" }}
                 {...fieldErrorProps(fieldErrors, "amount")}
               />
@@ -478,7 +670,7 @@ export default function CustomerLoanNewPage() {
                 onChange={handleChange("termMonths")}
                 required
                 fullWidth
-                disabled={submitting || loading}
+                disabled={busy || loading || !draftEditable}
                 {...fieldErrorProps(fieldErrors, "termMonths")}
               />
             </Grid>
@@ -489,7 +681,7 @@ export default function CustomerLoanNewPage() {
                 fullWidth
                 value={form.purpose}
                 onChange={handleChange("purpose")}
-                disabled={submitting || loading}
+                disabled={busy || loading || !draftEditable}
               >
                 <MenuItem value="PERSONAL">Tiêu dùng cá nhân</MenuItem>
                 <MenuItem value="HOME">Mua nhà</MenuItem>
@@ -518,7 +710,7 @@ export default function CustomerLoanNewPage() {
                     fullWidth
                     value={form.collateralType}
                     onChange={handleChange("collateralType")}
-                    disabled={submitting || loading}
+                    disabled={busy || loading || !draftEditable}
                   >
                     <MenuItem value="VEHICLE_REGISTRATION">{labelCollateralType("VEHICLE_REGISTRATION")}</MenuItem>
                   </TextField>
@@ -531,7 +723,7 @@ export default function CustomerLoanNewPage() {
                     onChange={handleMoneyChange("collateralValue")}
                     fullWidth
                     required
-                    disabled={submitting}
+                    disabled={busy || loading || !draftEditable}
                     inputProps={{ inputMode: "numeric" }}
                     placeholder="Ví dụ: 150.000.000"
                     {...fieldErrorProps(
@@ -545,7 +737,8 @@ export default function CustomerLoanNewPage() {
                   <FilePicker
                     label={labelLoanDocumentType("VEHICLE_REGISTRATION")}
                     file={files.vehicleRegistration}
-                    disabled={submitting || loading}
+                    currentFileName={storedDocuments.VEHICLE_REGISTRATION?.fileName}
+                    disabled={busy || loading || !draftEditable}
                     onChange={handleFileChange("vehicleRegistration")}
                     error={Boolean(fieldErrors.vehicleRegistration)}
                     helperText={fieldErrors.vehicleRegistration}
@@ -555,7 +748,8 @@ export default function CustomerLoanNewPage() {
                   <FilePicker
                     label={labelLoanDocumentType("LICENSE_PLATE_IMAGE")}
                     file={files.licensePlateImage}
-                    disabled={submitting || loading}
+                    currentFileName={storedDocuments.LICENSE_PLATE_IMAGE?.fileName}
+                    disabled={busy || loading || !draftEditable}
                     onChange={handleFileChange("licensePlateImage")}
                     error={Boolean(fieldErrors.licensePlateImage)}
                     helperText={fieldErrors.licensePlateImage}
@@ -569,27 +763,10 @@ export default function CustomerLoanNewPage() {
             <Stack spacing={2}>
               <Divider />
               <Typography variant="h6">Xác minh vay tín chấp</Typography>
+              <Alert severity="info">
+                CCCD hai mặt sẽ được dùng lại từ hồ sơ khách hàng gốc. Bước này chỉ yêu cầu ảnh khuôn mặt hiện tại để nhân viên đối chiếu với dữ liệu định danh đã lưu.
+              </Alert>
               <Grid container spacing={2}>
-                <Grid item xs={12} md={6}>
-                  <FilePicker
-                    label={labelLoanDocumentType("ID_CARD_FRONT")}
-                    file={files.idCardFront}
-                    disabled={submitting || loading}
-                    onChange={handleFileChange("idCardFront")}
-                    error={Boolean(fieldErrors.idCardFront)}
-                    helperText={fieldErrors.idCardFront}
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <FilePicker
-                    label={labelLoanDocumentType("ID_CARD_BACK")}
-                    file={files.idCardBack}
-                    disabled={submitting || loading}
-                    onChange={handleFileChange("idCardBack")}
-                    error={Boolean(fieldErrors.idCardBack)}
-                    helperText={fieldErrors.idCardBack}
-                  />
-                </Grid>
                 <Grid item xs={12}>
                   <Paper
                     variant="outlined"
@@ -609,6 +786,11 @@ export default function CustomerLoanNewPage() {
                       {files.faceCapture && (
                         <Alert severity="success">
                           Đã chụp ảnh khuôn mặt ({formatFileSize(files.faceCapture.size)}).
+                        </Alert>
+                      )}
+                      {!files.faceCapture && storedDocuments.FACE_CAPTURE && (
+                        <Alert severity="info">
+                          Đã lưu ảnh khuôn mặt: {storedDocuments.FACE_CAPTURE.fileName}. Bạn chỉ cần chụp lại nếu muốn thay ảnh hiện tại.
                         </Alert>
                       )}
                       {cameraActive && (
@@ -634,17 +816,17 @@ export default function CustomerLoanNewPage() {
                           <Button
                             variant="outlined"
                             onClick={startCamera}
-                            disabled={submitting || loading}
+                            disabled={busy || loading || !draftEditable}
                           >
-                            Mở máy ảnh
+                            {storedDocuments.FACE_CAPTURE ? "Chụp lại ảnh khuôn mặt" : "Mở máy ảnh"}
                           </Button>
                         )}
                         {cameraActive && (
                           <>
-                            <Button variant="contained" onClick={captureFace} disabled={submitting}>
+                            <Button variant="contained" onClick={captureFace} disabled={busy || !draftEditable}>
                               Chụp ảnh
                             </Button>
-                            <Button variant="outlined" color="inherit" onClick={stopCamera} disabled={submitting}>
+                            <Button variant="outlined" color="inherit" onClick={stopCamera} disabled={busy || !draftEditable}>
                               Tắt máy ảnh
                             </Button>
                           </>
@@ -657,14 +839,27 @@ export default function CustomerLoanNewPage() {
             </Stack>
           )}
 
-          <Button
-            type="submit"
-            variant="contained"
-            disabled={submitting || blockedByExistingLoan || loading || !profile}
-            sx={{ alignSelf: "flex-start" }}
-          >
-            {submitting ? "Đang gửi..." : "Gửi hồ sơ vay"}
-          </Button>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+            <Button
+              type="button"
+              variant="outlined"
+              onClick={handleSaveDraft}
+              disabled={busy || loading || creationBlocked || !draftEditable}
+            >
+              {savingDraft ? "Đang lưu nháp..." : isEditMode ? "Lưu cập nhật bản nháp" : "Lưu nháp"}
+            </Button>
+            <Button
+              type="submit"
+              variant="contained"
+              disabled={busy || creationBlocked || loading || !draftEditable}
+            >
+              {submitting
+                ? "Đang gửi..."
+                : isEditMode
+                  ? "Gửi hồ sơ từ bản nháp"
+                  : "Gửi hồ sơ vay"}
+            </Button>
+          </Stack>
         </Stack>
       </Paper>
     </Stack>

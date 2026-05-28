@@ -27,3 +27,10 @@ export function downloadInformationVerificationPayslipApi(token, customerId, fil
     fileName
   });
 }
+
+export function downloadInformationVerificationIdentityCardApi(token, customerId, side, fileName) {
+  return downloadFile(`/api/staff/information-verifications/${customerId}/id-card/${side}`, {
+    token,
+    fileName
+  });
+}

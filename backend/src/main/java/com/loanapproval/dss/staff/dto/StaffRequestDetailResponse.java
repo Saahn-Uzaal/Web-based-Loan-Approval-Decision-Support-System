@@ -1,5 +1,6 @@
 package com.loanapproval.dss.staff.dto;
 
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckSummary;
 import com.loanapproval.dss.dss.CustomerSegment;
 import com.loanapproval.dss.dss.DssRecommendation;
 import com.loanapproval.dss.dss.RiskRank;
@@ -55,14 +56,25 @@ public record StaffRequestDetailResponse(
     public record CustomerProfileSummary(
             String fullName,
             String phone,
+            String identityNumber,
             BigDecimal monthlyIncome,
+            BigDecimal verifiedMonthlyIncome,
             BigDecimal debtToIncomeRatio,
             String employmentStatus,
             java.time.LocalDate employmentStartDate,
+            String bankAccountNumber,
+            String bankName,
             Integer creditHistoryScore,
+            CustomerCreditCheckSummary creditCheck,
             String payslipFileName,
             Long payslipFileSize,
-            Instant payslipUploadedAt) {
+            Instant payslipUploadedAt,
+            String identityCardFrontFileName,
+            Long identityCardFrontFileSize,
+            Instant identityCardFrontUploadedAt,
+            String identityCardBackFileName,
+            Long identityCardBackFileSize,
+            Instant identityCardBackUploadedAt) {
     }
 
     public record DssSummary(
@@ -79,6 +91,7 @@ public record StaffRequestDetailResponse(
             String identityStatus,
             String faceMatchStatus,
             String incomeStatus,
+            BigDecimal verifiedMonthlyIncome,
             String kycStatus,
             String amlStatus,
             boolean fraudFlag,

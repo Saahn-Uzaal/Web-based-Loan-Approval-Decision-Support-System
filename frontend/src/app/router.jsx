@@ -9,6 +9,7 @@ const HomePage = lazy(() => import("@/shared/pages/HomePage"));
 const LoginPage = lazy(() => import("@/features/auth/pages/LoginPage"));
 const NotFoundPage = lazy(() => import("@/shared/pages/NotFoundPage"));
 const AdminUsersPage = lazy(() => import("@/features/admin/pages/AdminUsersPage"));
+const CreditBureauRecordsPage = lazy(() => import("@/features/creditcheck/pages/CreditBureauRecordsPage"));
 const CustomerLoanDetailPage = lazy(() => import("@/features/customer/pages/CustomerLoanDetailPage"));
 const CustomerLoanNewPage = lazy(() => import("@/features/customer/pages/CustomerLoanNewPage"));
 const CustomerLoansPage = lazy(() => import("@/features/customer/pages/CustomerLoansPage"));
@@ -68,6 +69,14 @@ export const router = createBrowserRouter([
         )
       },
       {
+        path: "credit-bureau",
+        element: (
+          <RoleRoute allow={["STAFF", "ADMIN"]}>
+            <SuspenseWrapper><CreditBureauRecordsPage /></SuspenseWrapper>
+          </RoleRoute>
+        )
+      },
+      {
         path: "customer/loan/new",
         element: (
           <RoleRoute allow={["CUSTOMER"]}>
@@ -88,6 +97,14 @@ export const router = createBrowserRouter([
         element: (
           <RoleRoute allow={["CUSTOMER"]}>
             <SuspenseWrapper><CustomerLoanDetailPage /></SuspenseWrapper>
+          </RoleRoute>
+        )
+      },
+      {
+        path: "customer/loans/:id/edit",
+        element: (
+          <RoleRoute allow={["CUSTOMER"]}>
+            <SuspenseWrapper><CustomerLoanNewPage /></SuspenseWrapper>
           </RoleRoute>
         )
       },

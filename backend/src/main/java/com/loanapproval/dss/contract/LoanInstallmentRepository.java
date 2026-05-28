@@ -33,6 +33,7 @@ public class LoanInstallmentRepository {
                         "opening_principal",
                         "scheduled_principal",
                         "scheduled_interest",
+                        "waived_interest",
                         "scheduled_fee",
                         "scheduled_amount",
                         "paid_principal",
@@ -65,6 +66,7 @@ public class LoanInstallmentRepository {
                     opening_principal,
                     scheduled_principal,
                     scheduled_interest,
+                    waived_interest,
                     scheduled_fee,
                     scheduled_amount,
                     paid_principal,
@@ -96,6 +98,7 @@ public class LoanInstallmentRepository {
                     opening_principal,
                     scheduled_principal,
                     scheduled_interest,
+                    waived_interest,
                     scheduled_fee,
                     scheduled_amount,
                     paid_principal,
@@ -124,6 +127,7 @@ public class LoanInstallmentRepository {
         values.put("opening_principal", installment.openingPrincipal());
         values.put("scheduled_principal", installment.scheduledPrincipal());
         values.put("scheduled_interest", installment.scheduledInterest());
+        values.put("waived_interest", installment.waivedInterest());
         values.put("scheduled_fee", installment.scheduledFee());
         values.put("scheduled_amount", installment.scheduledAmount());
         values.put("paid_principal", installment.paidPrincipal());
@@ -139,7 +143,8 @@ public class LoanInstallmentRepository {
         jdbcTemplate.update(
                 """
                 UPDATE loan_installments
-                SET paid_principal = 0,
+                SET waived_interest = 0,
+                    paid_principal = 0,
                     paid_interest = 0,
                     paid_fee = 0,
                     paid_amount = 0,
@@ -153,6 +158,7 @@ public class LoanInstallmentRepository {
 
     public void updateLedgerState(
             Long installmentId,
+            BigDecimal waivedInterest,
             BigDecimal paidPrincipal,
             BigDecimal paidInterest,
             BigDecimal paidFee,
@@ -162,7 +168,8 @@ public class LoanInstallmentRepository {
         jdbcTemplate.update(
                 """
                 UPDATE loan_installments
-                SET paid_principal = ?,
+                SET waived_interest = ?,
+                    paid_principal = ?,
                     paid_interest = ?,
                     paid_fee = ?,
                     paid_amount = ?,
@@ -171,6 +178,7 @@ public class LoanInstallmentRepository {
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
+                waivedInterest,
                 paidPrincipal,
                 paidInterest,
                 paidFee,
@@ -178,6 +186,22 @@ public class LoanInstallmentRepository {
                 lastPaidAt != null ? Timestamp.from(lastPaidAt) : null,
                 status.name(),
                 installmentId);
+    }
+
+    public void addScheduledFee(Long loanRequestId, Integer installmentNumber, BigDecimal feeDelta) {
+        jdbcTemplate.update(
+                """
+                UPDATE loan_installments
+                SET scheduled_fee = scheduled_fee + ?,
+                    scheduled_amount = scheduled_amount + ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE loan_request_id = ?
+                  AND installment_number = ?
+                """,
+                feeDelta,
+                feeDelta,
+                loanRequestId,
+                installmentNumber);
     }
 
     private LoanInstallment mapRecord(ResultSet rs, int rowNum) throws SQLException {
@@ -191,6 +215,7 @@ public class LoanInstallmentRepository {
                 rs.getBigDecimal("opening_principal"),
                 rs.getBigDecimal("scheduled_principal"),
                 rs.getBigDecimal("scheduled_interest"),
+                rs.getBigDecimal("waived_interest"),
                 rs.getBigDecimal("scheduled_fee"),
                 rs.getBigDecimal("scheduled_amount"),
                 rs.getBigDecimal("paid_principal"),

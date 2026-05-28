@@ -186,6 +186,12 @@ public class RepaymentService {
                     HttpStatus.BAD_REQUEST,
                     "Payment amount cannot exceed the remaining outstanding balance");
         }
+        if (amountPaid.compareTo(snapshot.currentAmountDue()) > 0
+                && amountPaid.compareTo(snapshot.outstandingAmount()) < 0) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Chỉ hỗ trợ thanh toán kỳ hiện tại hoặc tất toán toàn bộ khoản vay. Trả trước một phần nhiều kỳ chưa được hỗ trợ.");
+        }
 
         if (snapshot.overdue()) {
             loanDelinquencyService.assessLoan(loan.id(), paidDate);
@@ -196,18 +202,21 @@ public class RepaymentService {
         int ratingDelta = completedCurrentInstallment
                 ? RepaymentRatingPolicy.rewardDelta(repaymentStatus)
                 : 0;
+        BigDecimal recordedAmountDue = isSettlementPayment(amountPaid, snapshot)
+                ? snapshot.outstandingAmount()
+                : snapshot.currentAmountDue();
 
         RepaymentRecord record = repaymentRepository.create(
                 loan.id(),
                 customerId,
-                snapshot.currentAmountDue(),
+                recordedAmountDue,
                 amountPaid,
                 snapshot.dueDate(),
                 paidAt,
                 repaymentStatus,
                 ratingDelta,
                 note);
-        loanInstallmentService.rebuildLedger(contract);
+        loanInstallmentService.rebuildLedger(contract, paidDate);
 
         int currentRating = customerProfileRepository.adjustPaymentRating(customerId, ratingDelta)
                 .orElseThrow(() -> new ResponseStatusException(
@@ -292,5 +301,10 @@ public class RepaymentService {
             return delinquency.totalRatingDelta();
         }
         return RepaymentRatingPolicy.firstLatePenalty();
+    }
+
+    private boolean isSettlementPayment(BigDecimal amountPaid, LoanRepaymentSnapshot snapshot) {
+        return amountPaid.compareTo(snapshot.currentAmountDue()) > 0
+                && amountPaid.compareTo(snapshot.outstandingAmount()) == 0;
     }
 }

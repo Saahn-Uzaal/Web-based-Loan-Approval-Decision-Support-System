@@ -8,6 +8,7 @@ import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -107,12 +108,102 @@ public class LoanApplicationSnapshotRepository {
                             kyc_status,
                             aml_status,
                             fraud_flag,
+                            verification_note,
+                            verified_by,
+                            verified_at,
                             snapshot_at
                         FROM loan_application_snapshots
                         WHERE loan_request_id = ?
                         """,
                 (rs, rowNum) -> map(rs),
                 loanRequestId).stream().findFirst();
+    }
+
+    public void updateVerification(
+            Long loanRequestId,
+            VerificationStatus documentStatus,
+            VerificationStatus identityStatus,
+            VerificationStatus faceMatchStatus,
+            VerificationStatus incomeStatus,
+            VerificationStatus kycStatus,
+            VerificationStatus amlStatus,
+            boolean fraudFlag,
+            String note,
+            Long verifiedBy,
+            Instant verifiedAt,
+            BigDecimal verifiedMonthlyIncome) {
+        jdbcTemplate.update(
+                """
+                        UPDATE loan_application_snapshots
+                        SET document_status = ?,
+                            identity_status = ?,
+                            face_match_status = ?,
+                            income_status = ?,
+                            kyc_status = ?,
+                            aml_status = ?,
+                            fraud_flag = ?,
+                            information_verification_status = ?,
+                            verification_note = ?,
+                            verified_by = ?,
+                            verified_at = ?,
+                            verified_monthly_income = ?,
+                            snapshot_at = snapshot_at
+                        WHERE loan_request_id = ?
+                        """,
+                statusOrPending(documentStatus).name(),
+                statusOrPending(identityStatus).name(),
+                statusOrPending(faceMatchStatus).name(),
+                statusOrPending(incomeStatus).name(),
+                statusOrPending(kycStatus).name(),
+                statusOrPending(amlStatus).name(),
+                fraudFlag,
+                resolveInformationStatus(incomeStatus, kycStatus, amlStatus, fraudFlag).name(),
+                note,
+                verifiedBy,
+                verifiedAt != null ? Timestamp.from(verifiedAt) : null,
+                verifiedMonthlyIncome,
+                loanRequestId);
+    }
+
+    public void syncCustomerInformationVerification(
+            Long customerId,
+            VerificationStatus informationStatus,
+            CustomerVerification verification,
+            BigDecimal verifiedMonthlyIncome,
+            String note,
+            Long verifiedBy,
+            Instant verifiedAt) {
+        jdbcTemplate.update(
+                """
+                        UPDATE loan_application_snapshots las
+                        JOIN loan_requests lr ON lr.id = las.loan_request_id
+                        SET las.information_verification_status = ?,
+                            las.document_status = ?,
+                            las.identity_status = ?,
+                            las.income_status = ?,
+                            las.kyc_status = ?,
+                            las.aml_status = ?,
+                            las.fraud_flag = ?,
+                            las.verification_note = ?,
+                            las.verified_by = ?,
+                            las.verified_at = ?,
+                            las.verified_monthly_income = ?,
+                            las.snapshot_at = las.snapshot_at
+                        WHERE las.customer_id = ?
+                          AND lr.status IN ('PENDING', 'NEEDS_MORE_INFO', 'APPOINTMENT_SCHEDULED')
+                        """,
+                statusOrPending(informationStatus).name(),
+                statusOrPending(verification != null ? verification.documentStatus() : null).name(),
+                statusOrPending(verification != null ? verification.identityStatus() : null).name(),
+                statusOrPending(verification != null ? verification.incomeStatus() : null).name(),
+                statusOrPending(verification != null ? verification.kycStatus() : null).name(),
+                statusOrPending(verification != null ? verification.amlStatus() : null).name(),
+                verification != null && verification.fraudFlag(),
+                note,
+                verifiedBy,
+                verifiedAt != null ? Timestamp.from(verifiedAt) : null,
+                verifiedMonthlyIncome,
+                customerId);
     }
 
     private LoanApplicationSnapshot map(ResultSet rs) throws SQLException {
@@ -139,11 +230,33 @@ public class LoanApplicationSnapshotRepository {
                 VerificationStatus.valueOf(rs.getString("kyc_status")),
                 VerificationStatus.valueOf(rs.getString("aml_status")),
                 rs.getBoolean("fraud_flag"),
+                rs.getString("verification_note"),
+                (Long) rs.getObject("verified_by"),
+                toInstant(rs.getTimestamp("verified_at")),
                 toInstant(rs.getTimestamp("snapshot_at")));
     }
 
     private VerificationStatus statusOrPending(VerificationStatus status) {
         return status != null ? status : VerificationStatus.PENDING;
+    }
+
+    private VerificationStatus resolveInformationStatus(
+            VerificationStatus incomeStatus,
+            VerificationStatus kycStatus,
+            VerificationStatus amlStatus,
+            boolean fraudFlag) {
+        if (fraudFlag
+                || incomeStatus == VerificationStatus.FAILED
+                || kycStatus == VerificationStatus.FAILED
+                || amlStatus == VerificationStatus.FAILED) {
+            return VerificationStatus.FAILED;
+        }
+        if (incomeStatus == VerificationStatus.PASSED
+                && kycStatus == VerificationStatus.PASSED
+                && amlStatus == VerificationStatus.PASSED) {
+            return VerificationStatus.PASSED;
+        }
+        return VerificationStatus.PENDING;
     }
 
     private static java.time.Instant toInstant(Timestamp timestamp) {

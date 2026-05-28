@@ -1,14 +1,16 @@
 package com.loanapproval.dss.customerinfo;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckService;
 import com.loanapproval.dss.debt.CustomerDebtRepository;
+import com.loanapproval.dss.loan.LoanApplicationSnapshotRepository;
 import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.profile.CustomerProfile;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
@@ -18,10 +20,10 @@ import com.loanapproval.dss.verification.VerificationStatus;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -43,6 +45,12 @@ class CustomerInformationVerificationServiceTest {
     private CustomerVerificationRepository customerVerificationRepository;
 
     @Mock
+    private LoanApplicationSnapshotRepository loanApplicationSnapshotRepository;
+
+    @Mock
+    private CustomerCreditCheckService customerCreditCheckService;
+
+    @Mock
     private com.loanapproval.dss.compliance.ComplianceAuditService complianceAuditService;
 
     @Mock
@@ -54,31 +62,28 @@ class CustomerInformationVerificationServiceTest {
         Long customerId = 100L;
         Long staffUserId = 7L;
         when(customerInformationVerificationRepository.findCustomerDetailById(customerId))
-            .thenReturn(Optional.of(detailWithoutProfile(customerId)));
+                .thenReturn(Optional.of(detailWithoutProfile(customerId)));
 
         assertThatThrownBy(() -> service.review(
-            customerId,
-            staffUserId,
-            new com.loanapproval.dss.customerinfo.dto.ReviewCustomerInformationRequest(
-                CustomerInformationDecisionAction.REJECT,
-                "Thiếu dữ liệu",
-                null
-            )
-        ))
-            .isInstanceOf(ResponseStatusException.class)
-            .satisfies(error -> {
-                ResponseStatusException exception = (ResponseStatusException) error;
-                assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-                assertThat(exception.getReason()).contains("nộp đầy đủ hồ sơ");
-            });
+                customerId,
+                staffUserId,
+                new com.loanapproval.dss.customerinfo.dto.ReviewCustomerInformationRequest(
+                        CustomerInformationDecisionAction.REJECT,
+                        "Thiếu dữ liệu",
+                        null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> {
+                    ResponseStatusException exception = (ResponseStatusException) error;
+                    assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(exception.getReason()).contains("nộp đầy đủ hồ sơ");
+                });
 
         verify(customerInformationVerificationRepository, never()).upsertDecision(
-            eq(customerId),
-            any(),
-            any(),
-            any(),
-            any()
-        );
+                eq(customerId),
+                any(),
+                any(),
+                any(),
+                any());
     }
 
     @Test
@@ -89,77 +94,230 @@ class CustomerInformationVerificationServiceTest {
         when(customerProfileRepository.findByUserId(customerId)).thenReturn(Optional.of(submittedProfile(customerId)));
 
         CustomerVerification verification = new CustomerVerification(
-            customerId,
-            VerificationStatus.PASSED,
-            VerificationStatus.PASSED,
-            VerificationStatus.PASSED,
-            VerificationStatus.PASSED,
-            VerificationStatus.FAILED,
-            VerificationStatus.PASSED,
-            false,
-            "manual check",
-            staffUserId,
-            Instant.now(),
-            Instant.now(),
-            Instant.now()
-        );
+                customerId,
+                VerificationStatus.PASSED,
+                VerificationStatus.PASSED,
+                VerificationStatus.PASSED,
+                VerificationStatus.PASSED,
+                VerificationStatus.FAILED,
+                VerificationStatus.PASSED,
+                false,
+                "manual check",
+                staffUserId,
+                Instant.now(),
+                Instant.now(),
+                Instant.now());
 
         service.syncFromLoanApprovalVerification(customerId, staffUserId, verification);
 
         verify(customerInformationVerificationRepository).upsertDecision(
-            eq(customerId),
-            eq(VerificationStatus.FAILED),
-            eq("Từ chối do KYC không đạt trong bước xác minh tổng hợp"),
-            eq(staffUserId),
-            any()
-        );
+                eq(customerId),
+                eq(VerificationStatus.FAILED),
+                eq("Từ chối do KYC không đạt trong bước xác minh tổng hợp"),
+                eq(staffUserId),
+                any());
         verify(customerInformationVerificationRepository, never()).markPending(customerId);
+    }
+
+    @Test
+    void shouldSyncApprovedInformationVerificationToLoanApprovalSnapshot() {
+        CustomerInformationVerificationService service = service();
+        Long customerId = 300L;
+        Long staffUserId = 12L;
+        BigDecimal verifiedIncome = BigDecimal.valueOf(25_000_000);
+
+        when(customerInformationVerificationRepository.findCustomerDetailById(customerId))
+                .thenReturn(Optional.of(detailWithSubmittedProfile(customerId)));
+        when(customerVerificationRepository.findByCustomerId(customerId))
+                .thenReturn(Optional.of(new CustomerVerification(
+                        customerId,
+                        VerificationStatus.PENDING,
+                        VerificationStatus.PENDING,
+                        VerificationStatus.PENDING,
+                        VerificationStatus.PENDING,
+                        VerificationStatus.PENDING,
+                        VerificationStatus.PENDING,
+                        false,
+                        null,
+                        null,
+                        null,
+                        Instant.now(),
+                        Instant.now())));
+        when(customerProfileRepository.findEffectiveMonthlyIncomeByUserId(customerId))
+                .thenReturn(Optional.of(verifiedIncome));
+        when(customerDebtRepository.sumActiveMonthlyDebt(customerId)).thenReturn(BigDecimal.ZERO);
+        when(customerInformationVerificationRepository.findByCustomerId(customerId))
+                .thenReturn(Optional.of(new CustomerInformationVerification(
+                        customerId,
+                        VerificationStatus.PASSED,
+                        null,
+                        staffUserId,
+                        Instant.now(),
+                        null,
+                        null)));
+
+        service.review(
+                customerId,
+                staffUserId,
+                new com.loanapproval.dss.customerinfo.dto.ReviewCustomerInformationRequest(
+                        CustomerInformationDecisionAction.APPROVE,
+                        null,
+                        verifiedIncome));
+
+        ArgumentCaptor<CustomerVerification> verificationCaptor =
+                ArgumentCaptor.forClass(CustomerVerification.class);
+        verify(customerVerificationRepository).upsert(verificationCaptor.capture());
+        CustomerVerification synced = verificationCaptor.getValue();
+        assertThat(synced.documentStatus()).isEqualTo(VerificationStatus.PASSED);
+        assertThat(synced.identityStatus()).isEqualTo(VerificationStatus.PASSED);
+        assertThat(synced.faceMatchStatus()).isEqualTo(VerificationStatus.PENDING);
+        assertThat(synced.incomeStatus()).isEqualTo(VerificationStatus.PASSED);
+        assertThat(synced.kycStatus()).isEqualTo(VerificationStatus.PASSED);
+        assertThat(synced.amlStatus()).isEqualTo(VerificationStatus.PASSED);
+
+        verify(loanApplicationSnapshotRepository).syncCustomerInformationVerification(
+                eq(customerId),
+                eq(VerificationStatus.PASSED),
+                eq(synced),
+                eq(verifiedIncome),
+                eq("Đồng bộ từ bước xác minh thông tin"),
+                eq(staffUserId),
+                any());
+    }
+
+    @Test
+    void shouldPreserveVerifiedIncomeInLoanSnapshotsWhenMarkingInformationPending() {
+        CustomerInformationVerificationService service = service();
+        Long customerId = 350L;
+        BigDecimal verifiedIncome = BigDecimal.valueOf(22_000_000);
+        Instant now = Instant.now();
+        CustomerVerification current = new CustomerVerification(
+                customerId,
+                VerificationStatus.PASSED,
+                VerificationStatus.PASSED,
+                VerificationStatus.PENDING,
+                VerificationStatus.PASSED,
+                VerificationStatus.PASSED,
+                VerificationStatus.PASSED,
+                false,
+                null,
+                null,
+                null,
+                now,
+                now);
+
+        when(customerVerificationRepository.findByCustomerId(customerId)).thenReturn(Optional.of(current));
+
+        service.markPending(customerId, verifiedIncome);
+
+        ArgumentCaptor<CustomerVerification> verificationCaptor =
+                ArgumentCaptor.forClass(CustomerVerification.class);
+        verify(customerVerificationRepository).upsert(verificationCaptor.capture());
+        CustomerVerification synced = verificationCaptor.getValue();
+        assertThat(synced.documentStatus()).isEqualTo(VerificationStatus.PENDING);
+        assertThat(synced.identityStatus()).isEqualTo(VerificationStatus.PENDING);
+        assertThat(synced.incomeStatus()).isEqualTo(VerificationStatus.PENDING);
+
+        verify(loanApplicationSnapshotRepository).syncCustomerInformationVerification(
+                eq(customerId),
+                eq(VerificationStatus.PENDING),
+                eq(synced),
+                eq(verifiedIncome),
+                eq("Chờ xác minh lại do hồ sơ khách hàng vừa được cập nhật"),
+                eq(null),
+                eq(null));
     }
 
     private CustomerInformationVerificationService service() {
         return new CustomerInformationVerificationService(
-            customerInformationVerificationRepository,
-            customerProfileRepository,
-            customerDebtRepository,
-            customerVerificationRepository,
-            complianceAuditService,
-            notificationService
-        );
+                customerInformationVerificationRepository,
+                customerProfileRepository,
+                customerDebtRepository,
+                customerVerificationRepository,
+                loanApplicationSnapshotRepository,
+                customerCreditCheckService,
+                complianceAuditService,
+                notificationService);
     }
 
     private com.loanapproval.dss.customerinfo.dto.StaffCustomerInformationDetailResponse detailWithoutProfile(Long customerId) {
         return new com.loanapproval.dss.customerinfo.dto.StaffCustomerInformationDetailResponse(
-            customerId,
-            "customer@example.com",
-            Instant.now(),
-            VerificationStatus.PENDING,
-            null,
-            null,
-            null,
-            null,
-            List.of()
-        );
+                customerId,
+                "customer@example.com",
+                Instant.now(),
+                VerificationStatus.PENDING,
+                null,
+                null,
+                null,
+                null);
+    }
+
+    private com.loanapproval.dss.customerinfo.dto.StaffCustomerInformationDetailResponse detailWithSubmittedProfile(
+            Long customerId) {
+        Instant now = Instant.now();
+        return new com.loanapproval.dss.customerinfo.dto.StaffCustomerInformationDetailResponse(
+                customerId,
+                "customer@example.com",
+                now,
+                VerificationStatus.PENDING,
+                null,
+                null,
+                null,
+                new com.loanapproval.dss.customerinfo.dto.StaffCustomerInformationDetailResponse.ProfileSummary(
+                        "Nguyễn Minh An",
+                        "0901234567",
+                        "012345678901",
+                        LocalDate.of(1994, 5, 12),
+                        BigDecimal.valueOf(20_000_000),
+                        null,
+                        BigDecimal.ZERO,
+                        "19036866889922",
+                        "Vietcombank",
+                        700,
+                        0,
+                        null,
+                        "payslip.pdf",
+                        1024L,
+                        now,
+                        "id-front.jpg",
+                        2048L,
+                        now,
+                        "id-back.jpg",
+                        2048L,
+                        now));
     }
 
     private CustomerProfile submittedProfile(Long customerId) {
         Instant now = Instant.now();
         return new CustomerProfile(
-            customerId,
-            "Nguyễn Minh An",
-            "0901234567",
-            LocalDate.of(1994, 5, 12),
-            BigDecimal.valueOf(20_000_000),
-            null,
-            BigDecimal.ZERO,
-            "EMPLOYED",
-            LocalDate.of(2020, 1, 1),
-            700,
-            0,
-            "payslip.pdf",
-            "stored.pdf",
-            "application/pdf",
-            1024L,
-            now
-        );
+                customerId,
+                "Nguyễn Minh An",
+                "0901234567",
+                "012345678901",
+                LocalDate.of(1994, 5, 12),
+                BigDecimal.valueOf(20_000_000),
+                null,
+                BigDecimal.ZERO,
+                "EMPLOYED",
+                LocalDate.of(2020, 1, 1),
+                "19036866889922",
+                "Vietcombank",
+                700,
+                0,
+                "payslip.pdf",
+                "stored.pdf",
+                "application/pdf",
+                1024L,
+                now,
+                "id-front.jpg",
+                "stored-front.jpg",
+                "image/jpeg",
+                2048L,
+                now,
+                "id-back.jpg",
+                "stored-back.jpg",
+                "image/jpeg",
+                2048L,
+                now);
     }
 }

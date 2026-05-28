@@ -80,6 +80,9 @@ public class LoanContractService {
 
         LoanContract existing = loanContractRepository.findByLoanRequestId(loan.id()).orElse(null);
         if (existing != null) {
+            if (existing.status() == LoanContractStatus.CANCELLED) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Hợp đồng vay đã bị hủy");
+            }
             if (desiredStatus == LoanContractStatus.ACTIVE && existing.status() != LoanContractStatus.ACTIVE) {
                 loanContractRepository.updateStatus(existing.id(), LoanContractStatus.ACTIVE);
                 LoanContract updated = loanContractRepository.findById(existing.id()).orElse(existing);
@@ -119,6 +122,14 @@ public class LoanContractService {
     @Transactional
     public void closeContract(Long contractId) {
         loanContractRepository.updateStatus(contractId, LoanContractStatus.CLOSED);
+    }
+
+    @Transactional
+    public void cancelPendingAcceptance(Long loanRequestId) {
+        LoanContract contract = loanContractRepository.findByLoanRequestId(loanRequestId).orElse(null);
+        if (contract != null && contract.status() == LoanContractStatus.PENDING_ACCEPTANCE) {
+            loanContractRepository.updateStatus(contract.id(), LoanContractStatus.CANCELLED);
+        }
     }
 
     public BigDecimal calculateProjectedMonthlyPayment(BigDecimal principalAmount, Integer termMonths) {
@@ -167,18 +178,29 @@ public class LoanContractService {
     }
 
     private LoanContract getOrCreateContractForCustomer(Long customerId, Long loanRequestId) {
+        LoanRecord loan = loanRepository.findOwnedById(loanRequestId, customerId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hợp đồng vay"));
         LoanContract existing = loanContractRepository.findByLoanRequestIdAndCustomerId(loanRequestId, customerId)
                 .orElse(null);
         if (existing != null) {
+            if (existing.status() == LoanContractStatus.CANCELLED || !canCustomerAccessContract(loan.status())) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hợp đồng vay");
+            }
             return existing;
         }
 
-        LoanRecord loan = loanRepository.findOwnedById(loanRequestId, customerId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hợp đồng vay"));
         if (loan.status() != LoanStatus.APPROVED) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hợp đồng vay");
         }
         return createIfMissingFromApprovedLoan(loan, customerId);
+    }
+
+    private boolean canCustomerAccessContract(LoanStatus loanStatus) {
+        return loanStatus == LoanStatus.APPROVED
+                || loanStatus == LoanStatus.CONTRACTED
+                || loanStatus == LoanStatus.ACTIVE
+                || loanStatus == LoanStatus.OVERDUE
+                || loanStatus == LoanStatus.CLOSED;
     }
 
     private LoanContract createContract(

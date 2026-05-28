@@ -22,6 +22,8 @@ public record DecisionInput(
     Boolean amlFailed,
     Boolean fraudFlag,
     Boolean incomeVerified,
+    Boolean creditCheckManualReview,
+    Boolean creditCheckHardReject,
     BigDecimal projectedMonthlyPayment
 ) {
 }

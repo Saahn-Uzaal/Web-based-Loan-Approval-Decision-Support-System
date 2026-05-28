@@ -84,7 +84,7 @@ public class DecisionEngineService {
         String appliedRule = appliedRule(input, recommendation, riskRank, lowDti, borderline, debtToIncomeRatio, policy);
         String explanation = String.format(
                 Locale.US,
-                "Điểm=%d (nền=%d, thưởng thanh toán=%+d, phạt tuân thủ=%+d, DTI %.1f%%, thu nhập %.0f, tỷ lệ vay/thu nhập %.2fx, việc làm %.0f, tuổi %.0f, lịch sử tín dụng %.0f, tài sản bảo đảm %.0f, xác minh %.0f). Rủi ro=%s, phân khúc=%s, quy tắc=%s.",
+                "Điểm=%d (nền=%d, thưởng thanh toán=%+d, phạt tuân thủ=%+d, DTI %.1f%%, thu nhập %.0f, tỷ lệ vay/thu nhập %.2fx, việc làm %.0f, tuổi %.0f, lịch sử tín dụng %.0f, tài sản bảo đảm %.0f, xác minh %.0f, tra cứu tín dụng manualReview=%s hardReject=%s). Rủi ro=%s, phân khúc=%s, quy tắc=%s.",
                 creditScore,
                 baseScore,
                 paymentBonus,
@@ -97,6 +97,8 @@ public class DecisionEngineService {
                 creditHistoryScore,
                 collateralScore,
                 verificationScore,
+                Boolean.TRUE.equals(input.creditCheckManualReview()),
+                Boolean.TRUE.equals(input.creditCheckHardReject()),
                 riskRank.name(),
                 customerSegment.name(),
                 appliedRule);
@@ -181,7 +183,7 @@ public class DecisionEngineService {
     }
 
     private RiskRank riskRank(int creditScore, double dti, DecisionInput input, CreditPolicyDefinition policy) {
-        if (hasComplianceHardReject(input) || dti >= policy.dtiExtremeThreshold()) {
+        if (hasHardRejectFlag(input) || dti >= policy.dtiExtremeThreshold()) {
             return RiskRank.D;
         }
 
@@ -223,11 +225,14 @@ public class DecisionEngineService {
             RiskRank riskRank,
             double dti,
             CreditPolicyDefinition policy) {
-        if (hasComplianceHardReject(input) || riskRank == RiskRank.D) {
+        if (hasHardRejectFlag(input) || riskRank == RiskRank.D) {
             return DssRecommendation.REJECT_RECOMMENDED;
         }
         if (riskRank == RiskRank.C && dti > policy.dtiRejectThreshold()) {
             return DssRecommendation.REJECT_RECOMMENDED;
+        }
+        if (Boolean.TRUE.equals(input.creditCheckManualReview())) {
+            return DssRecommendation.MANUAL_REVIEW_RECOMMENDED;
         }
         if (isUnsecuredApplication(input)) {
             return DssRecommendation.MANUAL_REVIEW_RECOMMENDED;
@@ -263,6 +268,9 @@ public class DecisionEngineService {
             boolean borderline,
             double dti,
             CreditPolicyDefinition policy) {
+        if (Boolean.TRUE.equals(input.creditCheckHardReject())) {
+            return "Từ chối cứng do CCCD khớp dữ liệu tín dụng bị cờ nghiêm trọng";
+        }
         if (hasComplianceHardReject(input)) {
             return "Từ chối cứng theo quy tắc tuân thủ";
         }
@@ -275,6 +283,9 @@ public class DecisionEngineService {
             return "Xếp hạng rủi ro C với DTI rất cao";
         }
         if (recommendation == DssRecommendation.MANUAL_REVIEW_RECOMMENDED) {
+            if (Boolean.TRUE.equals(input.creditCheckManualReview())) {
+                return "CCCD khớp dữ liệu tín dụng cần thẩm định thủ công";
+            }
             return "Hồ sơ vay tín chấp đạt ngưỡng tiếp nhận nhưng phải qua thẩm định thủ công";
         }
         if (recommendation == DssRecommendation.APPROVE_RECOMMENDED && riskRank == RiskRank.A && lowDti) {
@@ -298,11 +309,17 @@ public class DecisionEngineService {
     }
 
     private int compliancePenalty(DecisionInput input) {
+        if (Boolean.TRUE.equals(input.creditCheckHardReject())) {
+            return -220;
+        }
         if (Boolean.TRUE.equals(input.fraudFlag())) {
             return -250;
         }
         if (Boolean.TRUE.equals(input.kycFailed()) || Boolean.TRUE.equals(input.amlFailed())) {
             return -180;
+        }
+        if (Boolean.TRUE.equals(input.creditCheckManualReview())) {
+            return -35;
         }
         if (Boolean.FALSE.equals(input.incomeVerified())) {
             return -45;
@@ -319,12 +336,22 @@ public class DecisionEngineService {
                 || Boolean.TRUE.equals(input.amlFailed());
     }
 
+    private boolean hasHardRejectFlag(DecisionInput input) {
+        return hasComplianceHardReject(input) || Boolean.TRUE.equals(input.creditCheckHardReject());
+    }
+
     private double verificationScore(DecisionInput input) {
+        if (Boolean.TRUE.equals(input.creditCheckHardReject())) {
+            return 10;
+        }
         if (Boolean.TRUE.equals(input.fraudFlag())) {
             return 0;
         }
         if (Boolean.TRUE.equals(input.kycFailed()) || Boolean.TRUE.equals(input.amlFailed())) {
             return 20;
+        }
+        if (Boolean.TRUE.equals(input.creditCheckManualReview())) {
+            return 40;
         }
         if (Boolean.TRUE.equals(input.incomeVerified())) {
             return 85;

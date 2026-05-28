@@ -2,59 +2,60 @@ import {
   Alert,
   Button,
   Chip,
-  Grid,
   MenuItem,
   Paper,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
   TextField,
   Typography
 } from "@mui/material";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createDebtApi, deleteDebtApi, getDebtMetricsApi, getMyDebtsApi } from "@/features/customer/api/debtApi";
+import { useEffect, useRef, useState } from "react";
 import { getMyInformationVerificationApi } from "@/features/customer/api/informationVerificationApi";
-import { downloadMyPayslipApi, getMyProfileApi, upsertMyProfileApi } from "@/features/customer/api/profileApi";
+import {
+  downloadMyIdentityCardApi,
+  downloadMyPayslipApi,
+  getMyProfileApi,
+  upsertMyProfileApi
+} from "@/features/customer/api/profileApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
 import { clearFieldError, fieldErrorProps, mapFieldErrors } from "@/shared/utils/formErrors";
-import { PAYSLIP_ACCEPT, formatFileSize, isAcceptedPayslipFile } from "@/shared/utils/files";
-import { labelEmploymentStatus, labelVerificationStatus } from "@/shared/utils/labels";
-import ConfirmDialog from "@/shared/components/ConfirmDialog";
+import {
+  IDENTITY_CARD_ACCEPT,
+  PAYSLIP_ACCEPT,
+  formatFileSize,
+  isAcceptedIdentityCardFile,
+  isAcceptedPayslipFile
+} from "@/shared/utils/files";
+import {
+  labelCreditBureauStatus,
+  labelEmploymentStatus,
+  labelVerificationStatus
+} from "@/shared/utils/labels";
 
 const emptyProfileForm = {
   fullName: "",
   phone: "",
+  identityNumber: "",
   dateOfBirth: "",
   monthlyIncome: "",
   verifiedMonthlyIncome: null,
   employmentStatus: "",
-  employmentStartDate: ""
-};
-
-const emptyDebtForm = {
-  debtType: "",
-  monthlyPayment: "",
-  remainingBalance: "",
-  lenderName: ""
+  employmentStartDate: "",
+  bankAccountNumber: "",
+  bankName: ""
 };
 
 const profileFieldKeywords = {
   fullName: ["họ và tên", "họ tên", "full name", "fullName"],
   phone: ["số điện thoại", "điện thoại", "phone"],
+  identityNumber: ["cccd", "căn cước", "identityNumber"],
   dateOfBirth: ["ngày sinh", "date of birth"],
   monthlyIncome: ["thu nhập", "lương", "monthlyIncome"],
-  payslip: ["phiếu lương", "payslip", "file"]
-};
-
-const debtFieldKeywords = {
-  debtType: ["tên khoản nợ", "khoản nợ", "debtType"],
-  monthlyPayment: ["trả hàng tháng", "trả hằng tháng", "monthlyPayment"],
-  remainingBalance: ["dư nợ", "remainingBalance"],
-  lenderName: ["đơn vị cho vay", "lenderName"]
+  bankAccountNumber: ["số tài khoản", "tài khoản ngân hàng", "bank account", "bankAccountNumber"],
+  bankName: ["tên ngân hàng", "ngân hàng", "bank name", "bankName"],
+  payslip: ["phiếu lương", "payslip", "file"],
+  idCardFront: ["cccd mặt trước", "mặt trước cccd", "id card front"],
+  idCardBack: ["cccd mặt sau", "mặt sau cccd", "id card back"]
 };
 
 const employmentStatusOptions = [
@@ -105,29 +106,76 @@ function toPayslipSummary(profile) {
   };
 }
 
+function toIdentityCardSummary(profile, side) {
+  if (side === "front") {
+    if (!profile?.identityCardFrontFileName) {
+      return null;
+    }
+    return {
+      fileName: profile.identityCardFrontFileName,
+      fileSize: profile.identityCardFrontFileSize ?? null,
+      uploadedAt: profile.identityCardFrontUploadedAt ?? null
+    };
+  }
+
+  if (!profile?.identityCardBackFileName) {
+    return null;
+  }
+  return {
+    fileName: profile.identityCardBackFileName,
+    fileSize: profile.identityCardBackFileSize ?? null,
+    uploadedAt: profile.identityCardBackUploadedAt ?? null
+  };
+}
+
+function creditCheckSeverity(creditCheck) {
+  if (creditCheck?.hardReject) {
+    return "error";
+  }
+  if (creditCheck?.manualReviewRequired) {
+    return "warning";
+  }
+  return "info";
+}
+
+function creditCheckChipColor(creditCheck) {
+  if (creditCheck?.hardReject) {
+    return "error";
+  }
+  if (creditCheck?.manualReviewRequired) {
+    return "warning";
+  }
+  if (creditCheck?.bureauStatus === "CLEAR" || creditCheck?.bureauStatus === "NO_HIT") {
+    return "success";
+  }
+  return "default";
+}
+
 export default function CustomerProfilePage() {
   const { accessToken } = useAuth();
   const fileInputRef = useRef(null);
+  const idCardFrontInputRef = useRef(null);
+  const idCardBackInputRef = useRef(null);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [debtSubmitting, setDebtSubmitting] = useState(false);
   const [downloadingPayslip, setDownloadingPayslip] = useState(false);
   const [error, setError] = useState("");
-  const [debtError, setDebtError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
-  const [debtSuccess, setDebtSuccess] = useState("");
+  const [creditHistoryScore, setCreditHistoryScore] = useState(null);
+  const [creditCheck, setCreditCheck] = useState(null);
   const [paymentRating, setPaymentRating] = useState(0);
+  const [debtToIncomeRatio, setDebtToIncomeRatio] = useState(null);
   const [informationVerification, setInformationVerification] = useState(null);
   const [form, setForm] = useState(emptyProfileForm);
   const [profileFieldErrors, setProfileFieldErrors] = useState({});
   const [selectedPayslip, setSelectedPayslip] = useState(null);
   const [currentPayslip, setCurrentPayslip] = useState(null);
-  const [debtForm, setDebtForm] = useState(emptyDebtForm);
-  const [debtFieldErrors, setDebtFieldErrors] = useState({});
-  const [debts, setDebts] = useState([]);
-  const [debtMetrics, setDebtMetrics] = useState(null);
-  const [confirmDeleteDebt, setConfirmDeleteDebt] = useState(null);
+  const [selectedIdentityCardFront, setSelectedIdentityCardFront] = useState(null);
+  const [selectedIdentityCardBack, setSelectedIdentityCardBack] = useState(null);
+  const [currentIdentityCardFront, setCurrentIdentityCardFront] = useState(null);
+  const [currentIdentityCardBack, setCurrentIdentityCardBack] = useState(null);
+  const [downloadingIdentityCard, setDownloadingIdentityCard] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -138,7 +186,6 @@ export default function CustomerProfilePage() {
       }
       setLoading(true);
       setError("");
-      setDebtError("");
       try {
         const profilePromise = getMyProfileApi(accessToken).catch((err) => {
           const message = String(err.message || "");
@@ -151,10 +198,8 @@ export default function CustomerProfilePage() {
           throw err;
         });
 
-        const [profile, debtList, metrics, verification] = await Promise.all([
+        const [profile, verification] = await Promise.all([
           profilePromise,
-          getMyDebtsApi(accessToken),
-          getDebtMetricsApi(accessToken),
           getMyInformationVerificationApi(accessToken)
         ]);
 
@@ -166,26 +211,45 @@ export default function CustomerProfilePage() {
           setForm({
             fullName: profile.fullName ?? "",
             phone: profile.phone ?? "",
+            identityNumber: profile.identityNumber ?? "",
             dateOfBirth: profile.dateOfBirth ?? "",
             monthlyIncome: profile.monthlyIncome != null ? formatVndInput(profile.monthlyIncome) : "",
             verifiedMonthlyIncome: profile.verifiedMonthlyIncome ?? null,
             employmentStatus: normalizeEmploymentStatusValue(profile.employmentStatus),
-            employmentStartDate: profile.employmentStartDate ?? ""
+            employmentStartDate: profile.employmentStartDate ?? "",
+            bankAccountNumber: profile.bankAccountNumber ?? "",
+            bankName: profile.bankName ?? ""
           });
+          setCreditHistoryScore(profile.creditHistoryScore ?? null);
+          setCreditCheck(profile.creditCheck ?? null);
           setPaymentRating(Number(profile.paymentRating || 0));
+          setDebtToIncomeRatio(profile.debtToIncomeRatio ?? null);
           setCurrentPayslip(toPayslipSummary(profile));
+          setCurrentIdentityCardFront(toIdentityCardSummary(profile, "front"));
+          setCurrentIdentityCardBack(toIdentityCardSummary(profile, "back"));
         } else {
           setForm(emptyProfileForm);
+          setCreditHistoryScore(null);
+          setCreditCheck(null);
           setPaymentRating(0);
+          setDebtToIncomeRatio(null);
           setCurrentPayslip(null);
+          setCurrentIdentityCardFront(null);
+          setCurrentIdentityCardBack(null);
         }
 
         setSelectedPayslip(null);
+        setSelectedIdentityCardFront(null);
+        setSelectedIdentityCardBack(null);
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }
-        setDebts(Array.isArray(debtList) ? debtList : []);
-        setDebtMetrics(metrics ?? null);
+        if (idCardFrontInputRef.current) {
+          idCardFrontInputRef.current.value = "";
+        }
+        if (idCardBackInputRef.current) {
+          idCardBackInputRef.current.value = "";
+        }
         setInformationVerification(verification ?? null);
       } catch (err) {
         if (active) {
@@ -206,24 +270,19 @@ export default function CustomerProfilePage() {
 
   const refreshAuxiliaryData = async () => {
     if (!accessToken) {
-      return;
+      return null;
     }
-    const [debtList, metrics, verification] = await Promise.all([
-      getMyDebtsApi(accessToken),
-      getDebtMetricsApi(accessToken),
-      getMyInformationVerificationApi(accessToken)
-    ]);
-    setDebts(Array.isArray(debtList) ? debtList : []);
-    setDebtMetrics(metrics ?? null);
+    const verification = await getMyInformationVerificationApi(accessToken);
     setInformationVerification(verification ?? null);
+    return verification ?? null;
   };
 
-  const dtiDisplay = useMemo(() => {
-    if (debtMetrics?.debtToIncomeRatio == null) {
+  const dtiDisplay = (() => {
+    if (debtToIncomeRatio == null) {
       return "Chưa đủ dữ liệu";
     }
-    return `${Number(debtMetrics.debtToIncomeRatio).toFixed(2)}%`;
-  }, [debtMetrics]);
+    return `${Number(debtToIncomeRatio).toFixed(2)}%`;
+  })();
 
   const handleChange = (name) => (event) => {
     setProfileFieldErrors((prev) => clearFieldError(prev, name));
@@ -241,26 +300,24 @@ export default function CustomerProfilePage() {
     }));
   };
 
-  const handleDebtChange = (field) => (event) => {
-    setDebtFieldErrors((prev) => clearFieldError(prev, field));
-    setDebtForm((prev) => ({
-      ...prev,
-      [field]: event.target.value
-    }));
-  };
-
-  const handleDebtMoneyChange = (field) => (event) => {
-    setDebtFieldErrors((prev) => clearFieldError(prev, field));
-    setDebtForm((prev) => ({
-      ...prev,
-      [field]: formatVndInput(event.target.value)
-    }));
-  };
-
   const clearSelectedPayslip = () => {
     setSelectedPayslip(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
+    }
+  };
+
+  const clearSelectedIdentityCard = (side) => {
+    if (side === "front") {
+      setSelectedIdentityCardFront(null);
+      if (idCardFrontInputRef.current) {
+        idCardFrontInputRef.current.value = "";
+      }
+      return;
+    }
+    setSelectedIdentityCardBack(null);
+    if (idCardBackInputRef.current) {
+      idCardBackInputRef.current.value = "";
     }
   };
 
@@ -284,6 +341,35 @@ export default function CustomerProfilePage() {
     setSelectedPayslip(nextFile);
   };
 
+  const handleIdentityCardChange = (side) => (event) => {
+    const nextFile = event.target.files?.[0] ?? null;
+    const fieldName = side === "front" ? "idCardFront" : "idCardBack";
+    setProfileFieldErrors((prev) => clearFieldError(prev, fieldName));
+    if (!nextFile) {
+      if (side === "front") {
+        setSelectedIdentityCardFront(null);
+      } else {
+        setSelectedIdentityCardBack(null);
+      }
+      return;
+    }
+
+    if (!isAcceptedIdentityCardFile(nextFile)) {
+      const message = "Chỉ chấp nhận ảnh CCCD dạng JPG, JPEG, PNG hoặc WEBP.";
+      setError(message);
+      setProfileFieldErrors({ [fieldName]: message });
+      event.target.value = "";
+      return;
+    }
+
+    setError("");
+    if (side === "front") {
+      setSelectedIdentityCardFront(nextFile);
+    } else {
+      setSelectedIdentityCardBack(nextFile);
+    }
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
@@ -296,12 +382,41 @@ export default function CustomerProfilePage() {
       setProfileFieldErrors({ payslip: message });
       return;
     }
+    if (!selectedIdentityCardFront && !currentIdentityCardFront) {
+      const message = "Vui lòng tải ảnh CCCD mặt trước.";
+      setError(message);
+      setProfileFieldErrors({ idCardFront: message });
+      return;
+    }
+    if (!selectedIdentityCardBack && !currentIdentityCardBack) {
+      const message = "Vui lòng tải ảnh CCCD mặt sau.";
+      setError(message);
+      setProfileFieldErrors({ idCardBack: message });
+      return;
+    }
 
     const monthlyIncome = parseVndInput(form.monthlyIncome);
+    const bankAccountNumber = form.bankAccountNumber.replace(/\s+/g, "").trim();
+    const bankName = form.bankName.trim();
     if (monthlyIncome == null || monthlyIncome <= 0) {
       const message = "Vui lòng nhập thu nhập hàng tháng hợp lệ để tính hạn mức vay.";
       setError(message);
       setProfileFieldErrors({ monthlyIncome: message });
+      return;
+    }
+    if ((bankAccountNumber && !bankName) || (!bankAccountNumber && bankName)) {
+      const message = "Vui lòng nhập đầy đủ số tài khoản và tên ngân hàng để phục vụ giải ngân.";
+      setError(message);
+      setProfileFieldErrors({
+        bankAccountNumber: message,
+        bankName: message
+      });
+      return;
+    }
+    if (bankAccountNumber && !/^\d{6,30}$/.test(bankAccountNumber)) {
+      const message = "Số tài khoản ngân hàng phải gồm từ 6 đến 30 chữ số.";
+      setError(message);
+      setProfileFieldErrors({ bankAccountNumber: message });
       return;
     }
 
@@ -310,27 +425,50 @@ export default function CustomerProfilePage() {
       const payload = {
         fullName: form.fullName.trim(),
         phone: form.phone.trim() || null,
+        identityNumber: form.identityNumber.replace(/\s+/g, "").trim(),
         dateOfBirth: form.dateOfBirth || null,
         monthlyIncome,
         employmentStatus: form.employmentStatus.trim() || null,
-        employmentStartDate: form.employmentStartDate || null
+        employmentStartDate: form.employmentStartDate || null,
+        bankAccountNumber: bankAccountNumber || null,
+        bankName: bankName || null
       };
 
-      const profile = await upsertMyProfileApi(accessToken, payload, selectedPayslip);
+      const profile = await upsertMyProfileApi(
+        accessToken,
+        payload,
+        selectedPayslip,
+        selectedIdentityCardFront,
+        selectedIdentityCardBack
+      );
       setForm({
         fullName: profile.fullName ?? "",
         phone: profile.phone ?? "",
+        identityNumber: profile.identityNumber ?? "",
         dateOfBirth: profile.dateOfBirth ?? "",
         monthlyIncome: profile.monthlyIncome != null ? formatVndInput(profile.monthlyIncome) : "",
         verifiedMonthlyIncome: profile.verifiedMonthlyIncome ?? null,
         employmentStatus: normalizeEmploymentStatusValue(profile.employmentStatus),
-        employmentStartDate: profile.employmentStartDate ?? ""
+        employmentStartDate: profile.employmentStartDate ?? "",
+        bankAccountNumber: profile.bankAccountNumber ?? "",
+        bankName: profile.bankName ?? ""
       });
+      setCreditHistoryScore(profile.creditHistoryScore ?? null);
+      setCreditCheck(profile.creditCheck ?? null);
       setPaymentRating(Number(profile.paymentRating || 0));
+      setDebtToIncomeRatio(profile.debtToIncomeRatio ?? null);
       setCurrentPayslip(toPayslipSummary(profile));
+      setCurrentIdentityCardFront(toIdentityCardSummary(profile, "front"));
+      setCurrentIdentityCardBack(toIdentityCardSummary(profile, "back"));
       clearSelectedPayslip();
-      await refreshAuxiliaryData();
-      setSuccessMessage("Lưu hồ sơ thành công. Trạng thái xác minh sẽ quay về chờ đối chiếu lại.");
+      clearSelectedIdentityCard("front");
+      clearSelectedIdentityCard("back");
+      const refreshedVerification = await refreshAuxiliaryData();
+      setSuccessMessage(
+        refreshedVerification?.status === "PENDING"
+          ? "Lưu hồ sơ thành công. Các thay đổi liên quan đến định danh hoặc thu nhập đã đưa trạng thái xác minh về chờ đối chiếu lại."
+          : "Lưu hồ sơ thành công."
+      );
     } catch (err) {
       const message = err.message || "Không lưu được hồ sơ";
       setError(message);
@@ -355,69 +493,19 @@ export default function CustomerProfilePage() {
     }
   };
 
-  const handleCreateDebt = async (event) => {
-    event.preventDefault();
-    setDebtError("");
-    setDebtFieldErrors({});
-    setDebtSuccess("");
-
-    const monthlyPayment = parseVndInput(debtForm.monthlyPayment);
-    const remainingBalance = parseVndInput(debtForm.remainingBalance);
-
-    if (!debtForm.debtType.trim()) {
-      const message = "Vui lòng nhập tên khoản nợ.";
-      setDebtError(message);
-      setDebtFieldErrors({ debtType: message });
+  const handleDownloadIdentityCard = async (side) => {
+    const currentFile = side === "front" ? currentIdentityCardFront : currentIdentityCardBack;
+    if (!currentFile?.fileName) {
       return;
     }
-    if (monthlyPayment == null || monthlyPayment <= 0) {
-      const message = "Vui lòng nhập số tiền trả hàng tháng hợp lệ.";
-      setDebtError(message);
-      setDebtFieldErrors({ monthlyPayment: message });
-      return;
-    }
-
-    setDebtSubmitting(true);
+    setDownloadingIdentityCard(side);
+    setError("");
     try {
-      await createDebtApi(accessToken, {
-        debtType: debtForm.debtType.trim(),
-        monthlyPayment,
-        remainingBalance: remainingBalance ?? 0,
-        lenderName: debtForm.lenderName.trim() || null
-      });
-      setDebtForm(emptyDebtForm);
-      await refreshAuxiliaryData();
-      setDebtSuccess("Đã thêm khoản nợ. Trạng thái xác minh thông tin đã được đưa về chờ xác minh.");
+      await downloadMyIdentityCardApi(accessToken, side, currentFile.fileName);
     } catch (err) {
-      const message = err.message || "Không thêm được khoản nợ";
-      setDebtError(message);
-      setDebtFieldErrors(mapFieldErrors(message, debtFieldKeywords));
+      setError(err.message || "Không tải được ảnh CCCD");
     } finally {
-      setDebtSubmitting(false);
-    }
-  };
-
-  const handleDeleteDebt = async (debt) => {
-    setConfirmDeleteDebt(debt);
-  };
-
-  const handleConfirmDelete = async () => {
-    const debt = confirmDeleteDebt;
-    setConfirmDeleteDebt(null);
-    if (!debt) {
-      return;
-    }
-    setDebtError("");
-    setDebtSuccess("");
-    setDebtSubmitting(true);
-    try {
-      await deleteDebtApi(accessToken, debt.id);
-      await refreshAuxiliaryData();
-      setDebtSuccess("Đã xóa khoản nợ. Trạng thái xác minh thông tin đã được đưa về chờ xác minh.");
-    } catch (err) {
-      setDebtError(err.message || "Không xóa được khoản nợ");
-    } finally {
-      setDebtSubmitting(false);
+      setDownloadingIdentityCard("");
     }
   };
 
@@ -425,7 +513,7 @@ export default function CustomerProfilePage() {
     <Stack spacing={2}>
       <Typography variant="h4">Hồ sơ của tôi</Typography>
       <Typography color="text.secondary">
-        Cập nhật thông tin cá nhân, phiếu lương gần nhất và danh sách khoản nợ để nhân viên đối chiếu trước khi bạn tạo hồ sơ vay mới.
+        Cập nhật thông tin cá nhân, tài khoản nhận giải ngân và phiếu lương gần nhất để dữ liệu thẩm định hồ sơ vay được đối chiếu chính xác hơn.
       </Typography>
 
       <Paper sx={{ p: 3 }}>
@@ -446,13 +534,35 @@ export default function CustomerProfilePage() {
               label={`Điểm thanh toán: ${paymentRating}`}
               color={paymentRating >= 20 ? "success" : paymentRating >= 0 ? "info" : "error"}
             />
+            <Chip
+              size="small"
+              label={`Điểm tín dụng: ${creditHistoryScore ?? "-"}`}
+              color={creditHistoryScore != null && creditHistoryScore >= 70 ? "success" : creditHistoryScore != null && creditHistoryScore >= 50 ? "warning" : "default"}
+            />
             <Chip size="small" label={`DTI: ${dtiDisplay}`} color="default" />
             <Chip
               size="small"
               label={`Xác minh: ${labelVerificationStatus(informationVerification?.status || "PENDING")}`}
               color={verificationChipColor(informationVerification?.status || "PENDING")}
             />
+            {creditCheck && (
+              <Chip
+                size="small"
+                label={`Tra cứu tín dụng: ${labelCreditBureauStatus(creditCheck.bureauStatus)}`}
+                color={creditCheckChipColor(creditCheck)}
+              />
+            )}
           </Stack>
+
+          {creditCheck && (
+            <Alert severity={creditCheckSeverity(creditCheck)}>
+              Kết quả tra cứu tín dụng nội bộ theo CCCD: {labelCreditBureauStatus(creditCheck.bureauStatus)}.
+              {creditCheck.creditScore != null ? ` Điểm tín dụng nội bộ hiện tại: ${creditCheck.creditScore}.` : ""}
+              {creditCheck.manualReviewRequired ? " Hồ sơ này sẽ bị đẩy sang thẩm định thủ công." : ""}
+              {creditCheck.hardReject ? " Dữ liệu tín dụng đang có cờ từ chối cứng." : ""}
+              {creditCheck.riskNote ? ` Ghi chú: ${creditCheck.riskNote}` : ""}
+            </Alert>
+          )}
 
           <TextField
             label="Họ và tên"
@@ -470,6 +580,20 @@ export default function CustomerProfilePage() {
             fullWidth
             disabled={loading || saving}
             {...fieldErrorProps(profileFieldErrors, "phone")}
+          />
+          <TextField
+            label="Số CCCD"
+            value={form.identityNumber}
+            onChange={handleChange("identityNumber")}
+            required
+            fullWidth
+            disabled={loading || saving}
+            inputProps={{ inputMode: "numeric", maxLength: 12 }}
+            {...fieldErrorProps(
+              profileFieldErrors,
+              "identityNumber",
+              "Nhập đúng 12 chữ số, dùng để tra cứu dữ liệu tín dụng nội bộ."
+            )}
           />
           <TextField
             label="Ngày sinh"
@@ -520,12 +644,148 @@ export default function CustomerProfilePage() {
             InputLabelProps={{ shrink: true }}
             {...fieldErrorProps(profileFieldErrors, "employmentStartDate")}
           />
+          <TextField
+            label="Số tài khoản ngân hàng nhận giải ngân"
+            value={form.bankAccountNumber}
+            onChange={handleChange("bankAccountNumber")}
+            fullWidth
+            disabled={loading || saving}
+            inputProps={{ inputMode: "numeric", maxLength: 30 }}
+            {...fieldErrorProps(
+              profileFieldErrors,
+              "bankAccountNumber",
+              "Có thể để trống lúc này, nhưng bắt buộc phải có trước khi nhân viên giải ngân."
+            )}
+          />
+          <TextField
+            label="Tên ngân hàng"
+            value={form.bankName}
+            onChange={handleChange("bankName")}
+            fullWidth
+            disabled={loading || saving}
+            {...fieldErrorProps(
+              profileFieldErrors,
+              "bankName",
+              "Ví dụ: Vietcombank, BIDV, Techcombank."
+            )}
+          />
+          {!(form.bankAccountNumber.trim() && form.bankName.trim()) && (
+            <Alert severity="warning">
+              Bạn chưa khai báo đầy đủ thông tin tài khoản nhận giải ngân. Hồ sơ vẫn lưu được, nhưng khoản vay sẽ chưa thể giải ngân cho tới khi bổ sung đủ số tài khoản và tên ngân hàng.
+            </Alert>
+          )}
           {form.verifiedMonthlyIncome != null && (
             <Alert severity="info">
               Thu nhập đã xác minh bởi nhân viên: {formatVnd(form.verifiedMonthlyIncome)}.
               Giá trị này sẽ được ưu tiên dùng khi tính hạn mức vay.
             </Alert>
           )}
+
+          <Paper
+            variant="outlined"
+            sx={{
+              p: 2,
+              borderStyle: "dashed",
+              borderColor:
+                profileFieldErrors.idCardFront || profileFieldErrors.idCardBack ? "error.main" : "divider",
+              borderWidth: profileFieldErrors.idCardFront || profileFieldErrors.idCardBack ? 2 : 1
+            }}
+          >
+            <Stack spacing={1.5}>
+              <Typography variant="subtitle1">Ảnh CCCD đã đăng ký</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Chấp nhận JPG, JPEG, PNG, WEBP. Hệ thống dùng dữ liệu này làm hồ sơ định danh gốc và tái sử dụng ở các lần tạo hồ sơ vay sau.
+              </Typography>
+
+              <Stack spacing={2}>
+                <Stack spacing={1}>
+                  <Typography variant="subtitle2">CCCD mặt trước</Typography>
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "center" }}>
+                    <Button component="label" variant="outlined" disabled={loading || saving}>
+                      {selectedIdentityCardFront ? "Đổi ảnh" : currentIdentityCardFront ? "Chọn ảnh mới" : "Chọn ảnh"}
+                      <input
+                        ref={idCardFrontInputRef}
+                        hidden
+                        type="file"
+                        accept={IDENTITY_CARD_ACCEPT}
+                        onChange={handleIdentityCardChange("front")}
+                      />
+                    </Button>
+                    {selectedIdentityCardFront && (
+                      <Button variant="text" color="inherit" onClick={() => clearSelectedIdentityCard("front")} disabled={loading || saving}>
+                        Bỏ chọn
+                      </Button>
+                    )}
+                    {currentIdentityCardFront?.fileName && (
+                      <Button
+                        variant="text"
+                        onClick={() => handleDownloadIdentityCard("front")}
+                        disabled={loading || saving || downloadingIdentityCard === "front"}
+                      >
+                        {downloadingIdentityCard === "front" ? "Đang tải..." : "Tải ảnh đã nộp"}
+                      </Button>
+                    )}
+                  </Stack>
+                  {selectedIdentityCardFront && (
+                    <Alert severity="info">
+                      Đã chọn: {selectedIdentityCardFront.name} ({formatFileSize(selectedIdentityCardFront.size)})
+                    </Alert>
+                  )}
+                  {!selectedIdentityCardFront && currentIdentityCardFront?.fileName && (
+                    <Alert severity="info">
+                      File hiện tại: {currentIdentityCardFront.fileName}
+                      {currentIdentityCardFront.fileSize != null ? ` (${formatFileSize(currentIdentityCardFront.fileSize)})` : ""}
+                      {currentIdentityCardFront.uploadedAt ? ` - tải lên lúc ${new Date(currentIdentityCardFront.uploadedAt).toLocaleString()}` : ""}
+                    </Alert>
+                  )}
+                  {profileFieldErrors.idCardFront && <Alert severity="error">{profileFieldErrors.idCardFront}</Alert>}
+                </Stack>
+
+                <Stack spacing={1}>
+                  <Typography variant="subtitle2">CCCD mặt sau</Typography>
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "center" }}>
+                    <Button component="label" variant="outlined" disabled={loading || saving}>
+                      {selectedIdentityCardBack ? "Đổi ảnh" : currentIdentityCardBack ? "Chọn ảnh mới" : "Chọn ảnh"}
+                      <input
+                        ref={idCardBackInputRef}
+                        hidden
+                        type="file"
+                        accept={IDENTITY_CARD_ACCEPT}
+                        onChange={handleIdentityCardChange("back")}
+                      />
+                    </Button>
+                    {selectedIdentityCardBack && (
+                      <Button variant="text" color="inherit" onClick={() => clearSelectedIdentityCard("back")} disabled={loading || saving}>
+                        Bỏ chọn
+                      </Button>
+                    )}
+                    {currentIdentityCardBack?.fileName && (
+                      <Button
+                        variant="text"
+                        onClick={() => handleDownloadIdentityCard("back")}
+                        disabled={loading || saving || downloadingIdentityCard === "back"}
+                      >
+                        {downloadingIdentityCard === "back" ? "Đang tải..." : "Tải ảnh đã nộp"}
+                      </Button>
+                    )}
+                  </Stack>
+                  {selectedIdentityCardBack && (
+                    <Alert severity="info">
+                      Đã chọn: {selectedIdentityCardBack.name} ({formatFileSize(selectedIdentityCardBack.size)})
+                    </Alert>
+                  )}
+                  {!selectedIdentityCardBack && currentIdentityCardBack?.fileName && (
+                    <Alert severity="info">
+                      File hiện tại: {currentIdentityCardBack.fileName}
+                      {currentIdentityCardBack.fileSize != null ? ` (${formatFileSize(currentIdentityCardBack.fileSize)})` : ""}
+                      {currentIdentityCardBack.uploadedAt ? ` - tải lên lúc ${new Date(currentIdentityCardBack.uploadedAt).toLocaleString()}` : ""}
+                    </Alert>
+                  )}
+                  {profileFieldErrors.idCardBack && <Alert severity="error">{profileFieldErrors.idCardBack}</Alert>}
+                </Stack>
+              </Stack>
+            </Stack>
+          </Paper>
 
           <Paper
             variant="outlined"
@@ -591,128 +851,6 @@ export default function CustomerProfilePage() {
           </Button>
         </Stack>
       </Paper>
-
-      <Paper sx={{ p: 3 }}>
-        <Stack spacing={2}>
-          <Typography variant="h6">Các khoản nợ hiện tại</Typography>
-          <Typography variant="body2" color="text.secondary">
-            Tổng nợ hàng tháng: {formatVnd(debtMetrics?.totalMonthlyDebt || 0)}. DTI hiện tại: {dtiDisplay}.
-          </Typography>
-
-          {debtError && <Alert severity="error">{debtError}</Alert>}
-          {debtSuccess && <Alert severity="success">{debtSuccess}</Alert>}
-
-          <Paper component="form" variant="outlined" onSubmit={handleCreateDebt} sx={{ p: 2 }}>
-            <Grid container spacing={2}>
-              <Grid item xs={12} md={4}>
-                <TextField
-                  label="Tên khoản nợ"
-                  value={debtForm.debtType}
-                  onChange={handleDebtChange("debtType")}
-                  fullWidth
-                  required
-                  disabled={debtSubmitting}
-                  {...fieldErrorProps(debtFieldErrors, "debtType")}
-                />
-              </Grid>
-              <Grid item xs={12} md={3}>
-                <TextField
-                  label="Trả hàng tháng"
-                  type="text"
-                  value={debtForm.monthlyPayment}
-                  onChange={handleDebtMoneyChange("monthlyPayment")}
-                  fullWidth
-                  required
-                  disabled={debtSubmitting}
-                  inputProps={{ inputMode: "numeric" }}
-                  {...fieldErrorProps(debtFieldErrors, "monthlyPayment")}
-                />
-              </Grid>
-              <Grid item xs={12} md={3}>
-                <TextField
-                  label="Dư nợ còn lại"
-                  type="text"
-                  value={debtForm.remainingBalance}
-                  onChange={handleDebtMoneyChange("remainingBalance")}
-                  fullWidth
-                  disabled={debtSubmitting}
-                  inputProps={{ inputMode: "numeric" }}
-                  {...fieldErrorProps(debtFieldErrors, "remainingBalance")}
-                />
-              </Grid>
-              <Grid item xs={12} md={2}>
-                <TextField
-                  label="Đơn vị cho vay"
-                  value={debtForm.lenderName}
-                  onChange={handleDebtChange("lenderName")}
-                  fullWidth
-                  disabled={debtSubmitting}
-                  {...fieldErrorProps(debtFieldErrors, "lenderName")}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <Button type="submit" variant="contained" disabled={debtSubmitting}>
-                  {debtSubmitting ? "Đang thêm..." : "Thêm khoản nợ"}
-                </Button>
-              </Grid>
-            </Grid>
-          </Paper>
-
-          <Paper sx={{ overflowX: "auto" }}>
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableCell>Tên khoản nợ</TableCell>
-                  <TableCell>Trả hàng tháng</TableCell>
-                  <TableCell>Dư nợ còn lại</TableCell>
-                  <TableCell>Đơn vị cho vay</TableCell>
-                  <TableCell align="right">Thao tác</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {debts.map((debt) => (
-                  <TableRow key={debt.id} hover>
-                    <TableCell>{debt.debtType}</TableCell>
-                    <TableCell>{formatVnd(debt.monthlyPayment)}</TableCell>
-                    <TableCell>{formatVnd(debt.remainingBalance)}</TableCell>
-                    <TableCell>{debt.lenderName || "-"}</TableCell>
-                    <TableCell align="right">
-                      <Button
-                        size="small"
-                        color="error"
-                        variant="outlined"
-                        disabled={debtSubmitting}
-                        onClick={() => handleDeleteDebt(debt)}
-                      >
-                        Xóa
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {debts.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={5}>
-                      <Typography variant="body2" color="text.secondary">
-                        Chưa có khoản nợ nào.
-                      </Typography>
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </Paper>
-        </Stack>
-      </Paper>
-
-      <ConfirmDialog
-        open={confirmDeleteDebt != null}
-        title="Xóa khoản nợ"
-        message={confirmDeleteDebt ? `Bạn có chắc muốn xóa khoản nợ "${confirmDeleteDebt.debtType}"?` : ""}
-        confirmText="Xóa"
-        cancelText="Hủy"
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setConfirmDeleteDebt(null)}
-      />
     </Stack>
   );
 }

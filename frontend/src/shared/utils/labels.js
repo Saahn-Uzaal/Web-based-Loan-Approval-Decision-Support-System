@@ -79,7 +79,8 @@ const RISK_LEVEL_LABELS = {
 const CONTRACT_STATUS_LABELS = {
   PENDING_ACCEPTANCE: "Chờ khách hàng chấp nhận",
   ACTIVE: "Đang hiệu lực",
-  CLOSED: "Đã đóng"
+  CLOSED: "Đã đóng",
+  CANCELLED: "Đã hủy"
 };
 
 const EMPLOYMENT_STATUS_LABELS = {
@@ -124,6 +125,14 @@ const PAYMENT_CONFIRMATION_STATUS_LABELS = {
   CANCELLED_BY_CUSTOMER: "Đã hủy bởi khách hàng",
   CONFIRMED: "Đã xác nhận",
   REJECTED: "Bị từ chối"
+};
+
+const CREDIT_BUREAU_STATUS_LABELS = {
+  NO_HIT: "Không có dữ liệu xấu",
+  CLEAR: "Lịch sử sạch",
+  WATCHLIST: "Danh sách cần rà soát",
+  BAD_DEBT: "Có nợ xấu",
+  FRAUD_SUSPECT: "Nghi ngờ gian lận"
 };
 
 function fallback(value) {
@@ -200,4 +209,8 @@ export function labelSecuredProcedureStatus(value) {
 
 export function labelAppointmentStatus(value) {
   return APPOINTMENT_STATUS_LABELS[value] || fallback(value);
+}
+
+export function labelCreditBureauStatus(value) {
+  return CREDIT_BUREAU_STATUS_LABELS[value] || fallback(value);
 }

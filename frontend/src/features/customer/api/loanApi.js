@@ -1,7 +1,7 @@
 import { apiRequest, downloadFile } from "@/shared/api/http";
 import { buildQueryString, fetchAllPageResponse } from "@/shared/api/paged";
 
-export function createLoanApi(token, payload, files = {}) {
+function buildLoanRequestBody(payload, files = {}) {
   const hasFiles = Object.values(files).some(Boolean);
   if (hasFiles) {
     const formData = new FormData();
@@ -18,17 +18,53 @@ export function createLoanApi(token, payload, files = {}) {
       }
     });
 
-    return apiRequest("/api/customer/loans", {
-      method: "POST",
-      token,
-      body: formData
-    });
+    return formData;
   }
 
-  return apiRequest("/api/customer/loans", {
+  return payload;
+}
+
+function mutateLoan(path, { method = "POST", token, payload, files } = {}) {
+  return apiRequest(path, {
+    method,
+    token,
+    body: buildLoanRequestBody(payload, files)
+  });
+}
+
+export function createLoanApi(token, payload, files = {}) {
+  return mutateLoan("/api/customer/loans", {
     method: "POST",
     token,
-    body: payload
+    payload,
+    files
+  });
+}
+
+export function createLoanDraftApi(token, payload, files = {}) {
+  return mutateLoan("/api/customer/loans/drafts", {
+    method: "POST",
+    token,
+    payload,
+    files
+  });
+}
+
+export function updateLoanDraftApi(token, id, payload, files = {}) {
+  return mutateLoan(`/api/customer/loans/${id}/draft`, {
+    method: "PUT",
+    token,
+    payload,
+    files
+  });
+}
+
+export function submitLoanDraftApi(token, id, payload, files = {}) {
+  return mutateLoan(`/api/customer/loans/${id}/submit`, {
+    method: "POST",
+    token,
+    payload,
+    files
   });
 }
 

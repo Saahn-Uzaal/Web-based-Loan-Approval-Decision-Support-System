@@ -1,9 +1,11 @@
 package com.loanapproval.dss.staff;
 
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckService;
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckSummary;
 import com.loanapproval.dss.compliance.ComplianceAuditService;
 import com.loanapproval.dss.compliance.ComplianceOutcome;
 import com.loanapproval.dss.contract.LoanContractService;
-import com.loanapproval.dss.customerinfo.CustomerInformationVerificationService;
+import com.loanapproval.dss.loan.LoanApplicationVerificationService;
 import com.loanapproval.dss.loan.LoanDocumentDownload;
 import com.loanapproval.dss.loan.LoanDocumentRecord;
 import com.loanapproval.dss.loan.LoanDocumentRepository;
@@ -17,6 +19,8 @@ import com.loanapproval.dss.loan.LoanStatusHistoryService;
 import com.loanapproval.dss.loan.LoanType;
 import com.loanapproval.dss.loan.dto.LoanDocumentResponse;
 import com.loanapproval.dss.notification.NotificationService;
+import com.loanapproval.dss.profile.CustomerProfile;
+import com.loanapproval.dss.profile.CustomerProfileRepository;
 import com.loanapproval.dss.shared.PageResponse;
 import com.loanapproval.dss.staff.dto.StaffDecisionRequest;
 import com.loanapproval.dss.staff.dto.StaffDecisionResponse;
@@ -25,8 +29,6 @@ import com.loanapproval.dss.staff.dto.StaffRequestSummaryResponse;
 import com.loanapproval.dss.verification.CustomerVerification;
 import com.loanapproval.dss.verification.dto.CustomerVerificationResponse;
 import com.loanapproval.dss.verification.dto.UpdateCustomerVerificationRequest;
-import com.loanapproval.dss.verification.CustomerVerificationService;
-import com.loanapproval.dss.verification.VerificationStatus;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.List;
@@ -71,8 +73,9 @@ public class StaffReviewService {
     private final LoanDocumentRepository loanDocumentRepository;
     private final LoanDocumentStorageService loanDocumentStorageService;
     private final LoanContractService loanContractService;
-    private final CustomerInformationVerificationService customerInformationVerificationService;
-    private final CustomerVerificationService customerVerificationService;
+    private final LoanApplicationVerificationService loanApplicationVerificationService;
+    private final CustomerCreditCheckService customerCreditCheckService;
+    private final CustomerProfileRepository customerProfileRepository;
     private final ComplianceAuditService complianceAuditService;
     private final LoanApprovalReassessmentService loanApprovalReassessmentService;
     private final NotificationService notificationService;
@@ -84,8 +87,9 @@ public class StaffReviewService {
             LoanDocumentRepository loanDocumentRepository,
             LoanDocumentStorageService loanDocumentStorageService,
             LoanContractService loanContractService,
-            CustomerInformationVerificationService customerInformationVerificationService,
-            CustomerVerificationService customerVerificationService,
+            LoanApplicationVerificationService loanApplicationVerificationService,
+            CustomerCreditCheckService customerCreditCheckService,
+            CustomerProfileRepository customerProfileRepository,
             ComplianceAuditService complianceAuditService,
             LoanApprovalReassessmentService loanApprovalReassessmentService,
             NotificationService notificationService,
@@ -95,8 +99,9 @@ public class StaffReviewService {
         this.loanDocumentRepository = loanDocumentRepository;
         this.loanDocumentStorageService = loanDocumentStorageService;
         this.loanContractService = loanContractService;
-        this.customerInformationVerificationService = customerInformationVerificationService;
-        this.customerVerificationService = customerVerificationService;
+        this.loanApplicationVerificationService = loanApplicationVerificationService;
+        this.customerCreditCheckService = customerCreditCheckService;
+        this.customerProfileRepository = customerProfileRepository;
         this.complianceAuditService = complianceAuditService;
         this.loanApprovalReassessmentService = loanApprovalReassessmentService;
         this.notificationService = notificationService;
@@ -136,6 +141,9 @@ public class StaffReviewService {
     public StaffRequestDetailResponse getRequestDetail(Long loanRequestId) {
         StaffRequestDetailResponse detail = staffReviewRepository.findRequestDetailById(loanRequestId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
+        CustomerCreditCheckSummary creditCheck = detail.customer() != null
+                ? customerCreditCheckService.findLatestByCustomerId(detail.customer().id()).orElse(null)
+                : null;
 
         List<StaffRequestDetailResponse.DecisionAuditEntry> audits =
                 staffReviewRepository.findDecisionAuditsByLoanRequestId(loanRequestId);
@@ -143,7 +151,7 @@ public class StaffReviewService {
                 .map(this::toDocumentResponse)
                 .toList();
 
-        return withReviewData(detail, documents, audits);
+        return withReviewData(detail, withCreditCheck(detail.customerProfile(), creditCheck), documents, audits);
     }
 
     @Transactional
@@ -208,17 +216,14 @@ public class StaffReviewService {
 
         CustomerVerification approvalVerification = null;
         if (request.action() == StaffDecisionAction.APPROVE) {
-            CustomerVerification verification = customerVerificationService.getOrDefault(loan.customerId());
-            if (!verification.hasHardRejectFlag() && !isFullyVerified(verification)) {
-                verification = customerInformationVerificationService
-                        .syncLoanApprovalVerificationFromCurrentStatus(loan.customerId());
-            }
+            CustomerVerification verification =
+                    loanApplicationVerificationService.getOrDefault(loanRequestId, loan.customerId());
             if (verification.hasHardRejectFlag()) {
                 throw new ResponseStatusException(
                         HttpStatus.CONFLICT,
                         "Không thể duyệt hồ sơ này vì khách hàng không đạt kiểm tra KYC/AML/gian lận");
             }
-            if (!isFullyVerified(verification)) {
+            if (!loanApplicationVerificationService.isFullyVerified(loan.loanType(), verification)) {
                 throw new ResponseStatusException(
                         HttpStatus.BAD_REQUEST,
                         "Không thể duyệt trước khi tất cả bước xác minh đều ở trạng thái đạt");
@@ -340,6 +345,7 @@ public class StaffReviewService {
                     HttpStatus.BAD_REQUEST,
                     "Không thể giải ngân khi chưa có hợp đồng vay");
         }
+        ensureDisbursementAccountAvailable(loan.customerId());
 
         loanRepository.updateStatus(loanRequestId, LoanStatus.ACTIVE);
         loanStatusHistoryService.recordTransition(
@@ -376,7 +382,7 @@ public class StaffReviewService {
                     HttpStatus.CONFLICT,
                     "Chỉ được cập nhật xác minh khi hồ sơ còn ở bước thẩm định hoặc đang chờ khách hàng bổ sung.");
         }
-        return customerVerificationService.upsert(loan.customerId(), staffUserId, request);
+        return loanApplicationVerificationService.update(loanRequestId, loan.customerId(), staffUserId, request);
     }
 
     public LoanDocumentDownload downloadDocument(Long loanRequestId, Long documentId) {
@@ -416,18 +422,9 @@ public class StaffReviewService {
         };
     }
 
-    private boolean isFullyVerified(CustomerVerification verification) {
-        return verification.documentStatus() == VerificationStatus.PASSED
-                && verification.identityStatus() == VerificationStatus.PASSED
-                && verification.faceMatchStatus() == VerificationStatus.PASSED
-                && verification.incomeStatus() == VerificationStatus.PASSED
-                && verification.kycStatus() == VerificationStatus.PASSED
-                && verification.amlStatus() == VerificationStatus.PASSED
-                && !verification.fraudFlag();
-    }
-
     private StaffRequestDetailResponse withReviewData(
             StaffRequestDetailResponse detail,
+            StaffRequestDetailResponse.CustomerProfileSummary customerProfile,
             List<LoanDocumentResponse> documents,
             List<StaffRequestDetailResponse.DecisionAuditEntry> audits) {
         return new StaffRequestDetailResponse(
@@ -450,7 +447,7 @@ public class StaffReviewService {
                 detail.updatedAt(),
                 detail.customer(),
                 detail.assignment(),
-                detail.customerProfile(),
+                customerProfile,
                 detail.dss(),
                 detail.verification(),
                 detail.risk(),
@@ -460,6 +457,36 @@ public class StaffReviewService {
                 audits);
     }
 
+    private StaffRequestDetailResponse.CustomerProfileSummary withCreditCheck(
+            StaffRequestDetailResponse.CustomerProfileSummary customerProfile,
+            CustomerCreditCheckSummary creditCheck) {
+        if (customerProfile == null) {
+            return null;
+        }
+        return new StaffRequestDetailResponse.CustomerProfileSummary(
+                customerProfile.fullName(),
+                customerProfile.phone(),
+                customerProfile.identityNumber(),
+                customerProfile.monthlyIncome(),
+                customerProfile.verifiedMonthlyIncome(),
+                customerProfile.debtToIncomeRatio(),
+                customerProfile.employmentStatus(),
+                customerProfile.employmentStartDate(),
+                customerProfile.bankAccountNumber(),
+                customerProfile.bankName(),
+                customerProfile.creditHistoryScore(),
+                creditCheck,
+                customerProfile.payslipFileName(),
+                customerProfile.payslipFileSize(),
+                customerProfile.payslipUploadedAt(),
+                customerProfile.identityCardFrontFileName(),
+                customerProfile.identityCardFrontFileSize(),
+                customerProfile.identityCardFrontUploadedAt(),
+                customerProfile.identityCardBackFileName(),
+                customerProfile.identityCardBackFileSize(),
+                customerProfile.identityCardBackUploadedAt());
+    }
+
     private void ensureCaseAssignedTo(Long staffUserId, Long loanRequestId, LoanStatus currentStatus) {
         assertAssignableStatus(currentStatus);
         int updated = staffReviewRepository.assignCase(loanRequestId, staffUserId);
@@ -467,6 +494,19 @@ public class StaffReviewService {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
                     "Hồ sơ này đang được nhân viên khác phụ trách. Bạn không thể chỉnh sửa khi chưa được bàn giao.");
+        }
+    }
+
+    private void ensureDisbursementAccountAvailable(Long customerId) {
+        CustomerProfile profile = customerProfileRepository.findByUserId(customerId).orElse(null);
+        if (profile == null
+                || profile.bankAccountNumber() == null
+                || profile.bankAccountNumber().isBlank()
+                || profile.bankName() == null
+                || profile.bankName().isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Khách hàng chưa cập nhật đầy đủ số tài khoản và tên ngân hàng để giải ngân");
         }
     }
 

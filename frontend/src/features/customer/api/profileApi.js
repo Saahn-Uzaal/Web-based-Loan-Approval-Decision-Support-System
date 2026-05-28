@@ -6,7 +6,7 @@ export function getMyProfileApi(token) {
   });
 }
 
-export function upsertMyProfileApi(token, payload, payslipFile) {
+export function upsertMyProfileApi(token, payload, payslipFile, idCardFrontFile, idCardBackFile) {
   const formData = new FormData();
 
   formData.append(
@@ -19,6 +19,12 @@ export function upsertMyProfileApi(token, payload, payslipFile) {
   if (payslipFile) {
     formData.append("payslip", payslipFile);
   }
+  if (idCardFrontFile) {
+    formData.append("idCardFront", idCardFrontFile);
+  }
+  if (idCardBackFile) {
+    formData.append("idCardBack", idCardBackFile);
+  }
 
   return apiRequest("/api/customer/profile", {
     method: "PUT",
@@ -29,6 +35,13 @@ export function upsertMyProfileApi(token, payload, payslipFile) {
 
 export function downloadMyPayslipApi(token, fileName) {
   return downloadFile("/api/customer/profile/payslip", {
+    token,
+    fileName
+  });
+}
+
+export function downloadMyIdentityCardApi(token, side, fileName) {
+  return downloadFile(`/api/customer/profile/id-card/${side}`, {
     token,
     fileName
   });

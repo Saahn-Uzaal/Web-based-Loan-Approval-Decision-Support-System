@@ -1,89 +1,25 @@
 package com.loanapproval.dss.debt;
 
-import com.loanapproval.dss.customerinfo.CustomerInformationVerificationService;
-import com.loanapproval.dss.debt.dto.CreateDebtRequest;
-import com.loanapproval.dss.debt.dto.CustomerDebtResponse;
-import com.loanapproval.dss.debt.dto.DebtMetricsResponse;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.List;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class CustomerDebtService {
 
     private final CustomerDebtRepository customerDebtRepository;
     private final CustomerProfileRepository customerProfileRepository;
-    private final CustomerInformationVerificationService customerInformationVerificationService;
+    private final com.loanapproval.dss.loan.LoanRepository loanRepository;
 
     public CustomerDebtService(
         CustomerDebtRepository customerDebtRepository,
         CustomerProfileRepository customerProfileRepository,
-        CustomerInformationVerificationService customerInformationVerificationService
+        com.loanapproval.dss.loan.LoanRepository loanRepository
     ) {
         this.customerDebtRepository = customerDebtRepository;
         this.customerProfileRepository = customerProfileRepository;
-        this.customerInformationVerificationService = customerInformationVerificationService;
-    }
-
-    public List<CustomerDebtResponse> listMine(Long customerId) {
-        return customerDebtRepository.findByCustomerId(customerId).stream()
-            .map(this::toResponse)
-            .toList();
-    }
-
-    @Transactional
-    public CustomerDebtResponse create(Long customerId, CreateDebtRequest request) {
-        CustomerDebt created = customerDebtRepository.create(
-            customerId,
-            request.debtType().trim(),
-            request.monthlyPayment(),
-            request.remainingBalance(),
-            sanitizeLenderName(request.lenderName())
-        );
-        recalculateAndSyncDti(customerId);
-        customerInformationVerificationService.markPending(customerId);
-        return toResponse(created);
-    }
-
-    @Transactional
-    public void delete(Long customerId, Long debtId) {
-        int deleted = customerDebtRepository.deleteOwned(debtId, customerId);
-        if (deleted == 0) {
-            CustomerDebt existing = customerDebtRepository.findOwnedById(debtId, customerId).orElse(null);
-            if (existing != null && existing.status() != DebtStatus.PENDING_VERIFICATION) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        "Khoản nợ đã được nhân viên xác minh nên không thể xóa. Vui lòng liên hệ nhân viên nếu cần điều chỉnh.");
-            }
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy khoản nợ");
-        }
-        recalculateAndSyncDti(customerId);
-        customerInformationVerificationService.markPending(customerId);
-    }
-
-    public DebtMetricsResponse metrics(Long customerId, BigDecimal newLoanMonthlyPayment) {
-        BigDecimal income = customerProfileRepository.findEffectiveMonthlyIncomeByUserId(customerId).orElse(BigDecimal.ZERO);
-        BigDecimal activeDebt = customerDebtRepository.sumActiveMonthlyDebt(customerId);
-        BigDecimal baseDti = calculateDtiPercent(activeDebt, income);
-        BigDecimal baseDscr = calculateDscr(income, activeDebt);
-
-        BigDecimal projectedDebt = activeDebt.add(nonNegative(newLoanMonthlyPayment));
-        BigDecimal projectedDti = calculateDtiPercent(projectedDebt, income);
-        BigDecimal projectedDscr = calculateDscr(income, projectedDebt);
-
-        return new DebtMetricsResponse(
-            income,
-            activeDebt,
-            baseDti,
-            baseDscr,
-            nonNegative(newLoanMonthlyPayment),
-            projectedDti,
-            projectedDscr
-        );
+        this.loanRepository = loanRepository;
     }
 
     public BigDecimal recalculateAndSyncDti(Long customerId) {
@@ -91,14 +27,14 @@ public class CustomerDebtService {
         if (income == null || income.compareTo(BigDecimal.ZERO) <= 0) {
             return null;
         }
-        BigDecimal activeDebt = customerDebtRepository.sumActiveMonthlyDebt(customerId);
+        BigDecimal activeDebt = totalMonthlyObligations(customerId);
         BigDecimal dti = calculateDtiPercent(activeDebt, income);
         customerProfileRepository.updateDebtToIncomeRatio(customerId, dti);
         return dti;
     }
 
     public BigDecimal sumActiveMonthlyDebt(Long customerId) {
-        return customerDebtRepository.sumActiveMonthlyDebt(customerId);
+        return totalMonthlyObligations(customerId);
     }
 
     public int countActiveDebts(Long customerId) {
@@ -113,19 +49,6 @@ public class CustomerDebtService {
         customerDebtRepository.markPendingAsRejected(customerId, staffUserId, note);
     }
 
-    private CustomerDebtResponse toResponse(CustomerDebt debt) {
-        return new CustomerDebtResponse(
-            debt.id(),
-            debt.debtType(),
-            debt.monthlyPayment(),
-            debt.remainingBalance(),
-            debt.lenderName(),
-            debt.status(),
-            debt.createdAt(),
-            debt.updatedAt()
-        );
-    }
-
     private BigDecimal calculateDtiPercent(BigDecimal totalDebt, BigDecimal monthlyIncome) {
         if (monthlyIncome == null || monthlyIncome.compareTo(BigDecimal.ZERO) <= 0) {
             return null;
@@ -135,27 +58,9 @@ public class CustomerDebtService {
             .divide(monthlyIncome, 2, RoundingMode.HALF_UP);
     }
 
-    private BigDecimal calculateDscr(BigDecimal monthlyIncome, BigDecimal monthlyDebt) {
-        if (monthlyDebt == null || monthlyDebt.compareTo(BigDecimal.ZERO) <= 0) {
-            return null;
-        }
-        if (monthlyIncome == null || monthlyIncome.compareTo(BigDecimal.ZERO) <= 0) {
-            return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
-        }
-        return monthlyIncome.divide(monthlyDebt, 2, RoundingMode.HALF_UP);
-    }
-
-    private String sanitizeLenderName(String lenderName) {
-        if (lenderName == null || lenderName.isBlank()) {
-            return null;
-        }
-        return lenderName.trim();
-    }
-
-    private BigDecimal nonNegative(BigDecimal value) {
-        if (value == null || value.compareTo(BigDecimal.ZERO) < 0) {
-            return BigDecimal.ZERO;
-        }
-        return value;
+    private BigDecimal totalMonthlyObligations(Long customerId) {
+        return customerDebtRepository
+            .sumActiveMonthlyDebt(customerId)
+            .add(loanRepository.sumCommittedMonthlyPaymentByCustomerId(customerId));
     }
 }

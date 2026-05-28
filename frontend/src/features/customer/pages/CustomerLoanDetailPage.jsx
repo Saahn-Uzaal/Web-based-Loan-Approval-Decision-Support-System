@@ -18,7 +18,7 @@ import {
 } from "@mui/material";
 import { useEffect, useMemo, useState } from "react";
 import { getMyLoanContractApi } from "@/features/customer/api/contractApi";
-import { useParams } from "react-router-dom";
+import { Link as RouterLink, useParams } from "react-router-dom";
 import {
   acceptLoanApi,
   downloadLoanDocumentApi,
@@ -326,6 +326,11 @@ export default function CustomerLoanDetailPage() {
                 <KeyValue label="Tài sản bảo đảm" value={labelCollateralType(loan.collateralType)} />
               </Grid>
             )}
+            {loan.collateralValue != null && (
+              <Grid item xs={12} md={4}>
+                <KeyValue label="Giá trị tài sản kê khai" value={formatVnd(loan.collateralValue)} />
+              </Grid>
+            )}
             <Grid item xs={12} md={4}>
               <KeyValue
                 label="Số tiền phê duyệt"
@@ -518,6 +523,16 @@ export default function CustomerLoanDetailPage() {
                 </Stack>
               )}
               <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                {loan.status === "DRAFT" && (
+                  <Button
+                    component={RouterLink}
+                    to={`/customer/loans/${loan.id}/edit`}
+                    variant="contained"
+                    disabled={Boolean(actionLoading)}
+                  >
+                    Tiếp tục chỉnh sửa bản nháp
+                  </Button>
+                )}
                 {loan.status === "APPROVED" && (
                   <Button
                     variant="contained"

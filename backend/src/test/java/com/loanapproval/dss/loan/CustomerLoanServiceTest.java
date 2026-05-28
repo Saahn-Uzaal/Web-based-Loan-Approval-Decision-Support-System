@@ -13,8 +13,11 @@ import static org.mockito.Mockito.when;
 
 import com.loanapproval.dss.compliance.ComplianceAuditService;
 import com.loanapproval.dss.contract.LoanContract;
-import com.loanapproval.dss.contract.LoanContractStatus;
 import com.loanapproval.dss.contract.LoanContractService;
+import com.loanapproval.dss.contract.LoanContractStatus;
+import com.loanapproval.dss.creditcheck.CreditBureauStatus;
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckService;
+import com.loanapproval.dss.creditcheck.CustomerCreditCheckSummary;
 import com.loanapproval.dss.customerinfo.CustomerInformationVerificationService;
 import com.loanapproval.dss.debt.CustomerDebtService;
 import com.loanapproval.dss.dss.CustomerSegment;
@@ -75,6 +78,9 @@ class CustomerLoanServiceTest {
 
     @Mock
     private DssResultRepository dssResultRepository;
+
+    @Mock
+    private CustomerCreditCheckService customerCreditCheckService;
 
     @Mock
     private CustomerVerificationService customerVerificationService;
@@ -147,6 +153,8 @@ class CustomerLoanServiceTest {
         when(loanContractService.calculateProjectedMonthlyPayment(LoanType.UNSECURED, request.amount(), request.termMonths()))
                 .thenReturn(BigDecimal.valueOf(5_000_000));
         when(customerVerificationService.getOrDefault(customerId)).thenReturn(fullyVerified(customerId));
+        when(customerCreditCheckService.findLatestByCustomerId(customerId))
+                .thenReturn(Optional.of(creditCheck("012345678901", 74, false, false)));
         when(decisionEngineService.evaluate(any(DecisionInput.class))).thenReturn(dssResult);
         when(loanEligibilityService.evaluate(
                         eq(profile),
@@ -170,7 +178,7 @@ class CustomerLoanServiceTest {
         DecisionInput capturedInput = decisionInputCaptor.getValue();
         assertThat(capturedInput.monthlyIncome()).isEqualByComparingTo("20000000");
         assertThat(capturedInput.debtToIncomeRatio()).isEqualByComparingTo("50.00");
-        assertThat(capturedInput.creditHistoryScore()).isNull();
+        assertThat(capturedInput.creditHistoryScore()).isEqualTo(74);
         assertThat(response.status()).isEqualTo(LoanStatus.PENDING);
         verify(notificationService).notifyStaffLoanApplicationSubmitted(createdLoan.id(), customerId, LoanType.UNSECURED);
         verify(loanRepository, never()).updateCollateralValue(anyLong(), any());
@@ -208,6 +216,8 @@ class CustomerLoanServiceTest {
         when(loanContractService.calculateProjectedMonthlyPayment(LoanType.SECURED, request.amount(), request.termMonths()))
                 .thenReturn(BigDecimal.valueOf(9_500_000));
         when(customerVerificationService.getOrDefault(customerId)).thenReturn(fullyVerified(customerId));
+        when(customerCreditCheckService.findLatestByCustomerId(customerId))
+                .thenReturn(Optional.of(creditCheck("012345678901", 82, false, false)));
         when(decisionEngineService.evaluate(any(DecisionInput.class))).thenReturn(dssResult);
         when(loanEligibilityService.evaluate(
                         eq(profile),
@@ -274,6 +284,8 @@ class CustomerLoanServiceTest {
         when(loanContractService.calculateProjectedMonthlyPayment(LoanType.SECURED, request.amount(), request.termMonths()))
                 .thenReturn(BigDecimal.valueOf(11_000_000));
         when(customerVerificationService.getOrDefault(customerId)).thenReturn(fullyVerified(customerId));
+        when(customerCreditCheckService.findLatestByCustomerId(customerId))
+                .thenReturn(Optional.of(creditCheck("012345678901", 58, false, false)));
         when(decisionEngineService.evaluate(any(DecisionInput.class))).thenReturn(dssResult);
         when(loanEligibilityService.evaluate(
                         eq(profile),
@@ -336,6 +348,39 @@ class CustomerLoanServiceTest {
     }
 
     @Test
+    void shouldCreateDraftWithoutRequiringLoanDocuments() {
+        Long customerId = 45L;
+        CreateLoanRequest request = new CreateLoanRequest(
+                LoanType.UNSECURED,
+                BigDecimal.valueOf(60_000_000),
+                12,
+                LoanPurpose.PERSONAL,
+                null,
+                null);
+        LoanRecord draftLoan = loanRecord(450L, customerId, LoanType.UNSECURED, LoanStatus.DRAFT);
+
+        when(loanRepository.existsOpenApplicationByCustomerId(customerId)).thenReturn(false);
+        when(loanRepository.create(
+                        customerId,
+                        LoanType.UNSECURED,
+                        request.amount(),
+                        request.termMonths(),
+                        request.purpose(),
+                        null,
+                        LoanStatus.DRAFT,
+                        null,
+                        "Bản nháp hồ sơ vay đã được lưu. Bạn có thể quay lại bổ sung chứng từ rồi gửi thẩm định sau."))
+                .thenReturn(draftLoan);
+        when(loanRepository.findOwnedById(draftLoan.id(), customerId)).thenReturn(Optional.of(draftLoan));
+        when(loanDocumentRepository.findByLoanRequestId(draftLoan.id())).thenReturn(List.of());
+
+        LoanDetailResponse response = customerLoanService.createDraft(customerId, request);
+
+        assertThat(response.status()).isEqualTo(LoanStatus.DRAFT);
+        verify(notificationService, never()).notifyStaffLoanApplicationSubmitted(anyLong(), anyLong(), any());
+    }
+
+    @Test
     void shouldRequireSupplementalDocumentsWhenResubmittingLoan() {
         Long customerId = 50L;
         LoanRecord loan = loanRecord(500L, customerId, LoanType.SECURED, LoanStatus.NEEDS_MORE_INFO);
@@ -347,6 +392,84 @@ class CustomerLoanServiceTest {
 
         assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(exception.getReason()).contains("ít nhất một giấy tờ bổ sung");
+    }
+
+    @Test
+    void shouldSubmitDraftUsingExistingDocuments() {
+        Long customerId = 55L;
+        CreateLoanRequest request = new CreateLoanRequest(
+                LoanType.UNSECURED,
+                BigDecimal.valueOf(100_000_000),
+                24,
+                LoanPurpose.PERSONAL,
+                null,
+                null);
+        CustomerProfile profile = profile(BigDecimal.valueOf(50_000_000), BigDecimal.valueOf(20_000_000));
+        LoanRecord draftLoan = loanRecord(550L, customerId, LoanType.UNSECURED, LoanStatus.DRAFT);
+        LoanRecord pendingLoan = loanRecord(550L, customerId, LoanType.UNSECURED, LoanStatus.PENDING);
+        DssResult dssResult = new DssResult(
+                720,
+                RiskRank.A,
+                CustomerSegment.LOW_RISK_LOW_VALUE,
+                DssRecommendation.APPROVE_RECOMMENDED,
+                "eligible");
+        LoanEligibilityResult eligibility = new LoanEligibilityResult(
+                BigDecimal.valueOf(180_000_000),
+                BigDecimal.valueOf(100_000_000),
+                24,
+                BigDecimal.valueOf(0.120000).setScale(6),
+                BigDecimal.valueOf(5_000_000),
+                LoanEligibilityService.POLICY_VERSION,
+                "policy");
+
+        when(customerProfileRepository.findByUserId(customerId)).thenReturn(Optional.of(profile));
+        when(customerDebtService.sumActiveMonthlyDebt(customerId)).thenReturn(BigDecimal.valueOf(5_000_000));
+        when(loanContractService.calculateProjectedMonthlyPayment(LoanType.UNSECURED, request.amount(), request.termMonths()))
+                .thenReturn(BigDecimal.valueOf(5_000_000));
+        when(customerVerificationService.getOrDefault(customerId)).thenReturn(fullyVerified(customerId));
+        when(customerCreditCheckService.findLatestByCustomerId(customerId))
+                .thenReturn(Optional.of(creditCheck("012345678901", 74, false, false)));
+        when(decisionEngineService.evaluate(any(DecisionInput.class))).thenReturn(dssResult);
+        when(loanEligibilityService.evaluate(
+                        eq(profile),
+                        eq(BigDecimal.valueOf(5_000_000)),
+                        eq(LoanType.UNSECURED),
+                        eq(request.amount()),
+                        eq(request.termMonths()),
+                        eq(request.collateralValue()),
+                        eq(dssResult.riskRank())))
+                .thenReturn(eligibility);
+        when(loanRepository.findOwnedById(draftLoan.id(), customerId))
+                .thenReturn(Optional.of(draftLoan), Optional.of(pendingLoan), Optional.of(pendingLoan));
+        when(loanRepository.submitOwnedDraftForReview(
+                        draftLoan.id(),
+                        customerId,
+                        LoanType.UNSECURED,
+                        request.amount(),
+                        request.termMonths(),
+                        request.purpose(),
+                        null,
+                        eligibility.eligibleLimit(),
+                        "Hồ sơ vay tín chấp đã được gửi thẩm định. Nhân viên sẽ dùng CCCD đã lưu trong hồ sơ gốc, ảnh khuôn mặt hiện tại, thông tin tín dụng nội bộ và DTI để đối chiếu."))
+                .thenReturn(1);
+        when(loanDocumentRepository.findByLoanRequestId(draftLoan.id()))
+                .thenReturn(List.of(
+                        loanDocument(1L, draftLoan.id(), LoanDocumentType.ID_CARD_FRONT),
+                        loanDocument(2L, draftLoan.id(), LoanDocumentType.ID_CARD_BACK),
+                        loanDocument(3L, draftLoan.id(), LoanDocumentType.FACE_CAPTURE)));
+        when(riskAssessmentService.evaluateAndSave(anyLong(), any(), eq(dssResult), any()))
+                .thenReturn(riskAssessment(draftLoan.id(), RiskLevel.MEDIUM));
+
+        LoanDetailResponse response = customerLoanService.submitDraft(customerId, draftLoan.id(), request);
+
+        assertThat(response.status()).isEqualTo(LoanStatus.PENDING);
+        verify(notificationService).notifyStaffLoanApplicationSubmitted(draftLoan.id(), customerId, LoanType.UNSECURED);
+        verify(loanStatusHistoryService).recordTransition(
+                eq(draftLoan),
+                eq(LoanStatus.PENDING),
+                eq(customerId),
+                eq("CUSTOMER_SUBMIT_DRAFT"),
+                eq("Customer submitted draft loan application for review"));
     }
 
     @Test
@@ -397,6 +520,7 @@ class CustomerLoanServiceTest {
         LoanDetailResponse response = customerLoanService.withdrawLoan(customerId, loanRequestId);
 
         assertThat(response.status()).isEqualTo(LoanStatus.WITHDRAWN);
+        verify(loanContractService).cancelPendingAcceptance(loanRequestId);
         verify(notificationService).notifyStaffLoanWithdrawn(
                 loanRequestId,
                 customerId,
@@ -404,24 +528,82 @@ class CustomerLoanServiceTest {
                 LoanType.SECURED);
     }
 
+    @Test
+    void shouldCancelPendingContractWhenApprovedLoanIsWithdrawn() {
+        Long customerId = 71L;
+        Long loanRequestId = 701L;
+        Long assignedStaffUserId = 11L;
+        LoanRecord approvedLoan = loanRecord(loanRequestId, customerId, LoanType.UNSECURED, LoanStatus.APPROVED);
+        LoanRecord withdrawnLoan = loanRecord(loanRequestId, customerId, LoanType.UNSECURED, LoanStatus.WITHDRAWN);
+
+        when(loanRepository.findOwnedById(loanRequestId, customerId))
+                .thenReturn(Optional.of(approvedLoan), Optional.of(withdrawnLoan));
+        when(loanRepository.findAssignedStaffUserId(loanRequestId)).thenReturn(Optional.of(assignedStaffUserId));
+        when(loanRepository.updateOwnedStatusAndReason(
+                        loanRequestId,
+                        customerId,
+                        LoanStatus.WITHDRAWN,
+                        "Khách hàng đã rút hồ sơ trước khi ký hợp đồng"))
+                .thenReturn(1);
+        when(loanDocumentRepository.findByLoanRequestId(loanRequestId)).thenReturn(List.of());
+
+        LoanDetailResponse response = customerLoanService.withdrawLoan(customerId, loanRequestId);
+
+        assertThat(response.status()).isEqualTo(LoanStatus.WITHDRAWN);
+        verify(loanContractService).cancelPendingAcceptance(loanRequestId);
+    }
+
     private CustomerProfile profile(BigDecimal monthlyIncome, BigDecimal verifiedMonthlyIncome) {
+        Instant uploadedAt = Instant.parse("2026-01-01T00:00:00Z");
         return new CustomerProfile(
                 1L,
                 "Nguyễn Văn A",
                 "0900000000",
+                "012345678901",
                 LocalDate.of(1990, 1, 1),
                 monthlyIncome,
                 verifiedMonthlyIncome,
                 BigDecimal.valueOf(20),
                 "Permanent",
                 LocalDate.of(2015, 1, 1),
+                "19036866889922",
+                "Vietcombank",
                 90,
                 0,
-                null,
-                null,
-                null,
-                null,
-                null);
+                "payslip.pdf",
+                "stored-payslip.pdf",
+                "application/pdf",
+                1024L,
+                uploadedAt,
+                "id-front.jpg",
+                "stored-front.jpg",
+                "image/jpeg",
+                2048L,
+                uploadedAt,
+                "id-back.jpg",
+                "stored-back.jpg",
+                "image/jpeg",
+                2048L,
+                uploadedAt);
+    }
+
+    private CustomerCreditCheckSummary creditCheck(
+            String identityNumber,
+            Integer creditScore,
+            boolean manualReviewRequired,
+            boolean hardReject) {
+        return new CustomerCreditCheckSummary(
+                identityNumber,
+                true,
+                manualReviewRequired ? CreditBureauStatus.WATCHLIST : CreditBureauStatus.CLEAR,
+                creditScore,
+                1,
+                0,
+                manualReviewRequired,
+                hardReject,
+                manualReviewRequired ? "Manual review required" : "Clear",
+                "INTERNAL_BUREAU",
+                Instant.parse("2026-01-01T00:00:00Z"));
     }
 
     private CustomerVerification fullyVerified(Long customerId) {
@@ -452,6 +634,7 @@ class CustomerLoanServiceTest {
                 24,
                 LoanPurpose.PERSONAL,
                 loanType == LoanType.SECURED ? CollateralType.VEHICLE_REGISTRATION : null,
+                loanType == LoanType.SECURED ? BigDecimal.valueOf(150_000_000) : null,
                 status,
                 null,
                 null,
@@ -488,5 +671,17 @@ class CustomerLoanServiceTest {
 
     private RiskAssessment riskAssessment(Long loanRequestId, RiskLevel riskLevel) {
         return new RiskAssessment(loanRequestId, 20, 10, 10, riskLevel, "risk", Instant.now());
+    }
+
+    private LoanDocumentRecord loanDocument(Long id, Long loanRequestId, LoanDocumentType documentType) {
+        return new LoanDocumentRecord(
+                id,
+                loanRequestId,
+                documentType,
+                documentType.name().toLowerCase(),
+                documentType.name().toLowerCase() + ".jpg",
+                "image/jpeg",
+                2048L,
+                Instant.now());
     }
 }
