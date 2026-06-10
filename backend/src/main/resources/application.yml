@@ -17,6 +17,20 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+  mail:
+    host: ${APP_MAIL_HOST:smtp.gmail.com}
+    port: ${APP_MAIL_PORT:587}
+    username: ${APP_MAIL_USERNAME:}
+    password: ${APP_MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+          connectiontimeout: ${APP_MAIL_CONNECTION_TIMEOUT_MS:5000}
+          timeout: ${APP_MAIL_TIMEOUT_MS:5000}
+          writetimeout: ${APP_MAIL_WRITE_TIMEOUT_MS:5000}
   servlet:
     multipart:
       max-file-size: ${SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE:10MB}
@@ -48,6 +62,12 @@ app:
       max-attempts: ${APP_AUTH_LOGIN_RATE_LIMIT_MAX_ATTEMPTS:5}
       window-minutes: ${APP_AUTH_LOGIN_RATE_LIMIT_WINDOW_MINUTES:15}
       lock-minutes: ${APP_AUTH_LOGIN_RATE_LIMIT_LOCK_MINUTES:15}
+    email-verification:
+      enabled: ${APP_AUTH_EMAIL_VERIFICATION_ENABLED:false}
+      expires-minutes: ${APP_AUTH_EMAIL_VERIFICATION_EXPIRES_MINUTES:30}
+      resend-cooldown-seconds: ${APP_AUTH_EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS:60}
+      frontend-url: ${APP_AUTH_EMAIL_VERIFICATION_FRONTEND_URL:http://localhost:5173/verify-email}
+      from: ${APP_AUTH_EMAIL_VERIFICATION_FROM:${APP_MAIL_USERNAME:}}
   bootstrap:
     admin:
       enabled: ${APP_BOOTSTRAP_ADMIN_ENABLED:false}
@@ -62,3 +82,7 @@ app:
     customer-payslips-path: ${APP_STORAGE_CUSTOMER_PAYSLIPS_PATH:./storage/profile-documents}
     loan-documents-path: ${APP_STORAGE_LOAN_DOCUMENTS_PATH:./storage/loan-documents}
     payment-proofs-path: ${APP_STORAGE_PAYMENT_PROOFS_PATH:./storage/payment-proofs}
+  loan:
+    pending-review-timeout-hours: ${APP_LOAN_PENDING_REVIEW_TIMEOUT_HOURS:72}
+    contract-acceptance-timeout-hours: ${APP_LOAN_CONTRACT_ACCEPTANCE_TIMEOUT_HOURS:48}
+    contract-acceptance-captcha-expiration-minutes: ${APP_LOAN_CONTRACT_ACCEPTANCE_CAPTCHA_EXPIRATION_MINUTES:5}

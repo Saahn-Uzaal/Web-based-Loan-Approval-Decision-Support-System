@@ -1,7 +1,11 @@
 package com.loanapproval.dss.auth;
 
 import com.loanapproval.dss.shared.Role;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
@@ -17,7 +21,7 @@ public class UserRepository {
         this.jdbcTemplate = jdbcTemplate;
         this.insertUser = new SimpleJdbcInsert(jdbcTemplate)
             .withTableName("users")
-            .usingColumns("email", "password_hash", "role")
+            .usingColumns("email", "password_hash", "role", "email_verified_at")
             .usingGeneratedKeyColumns("id");
     }
 
@@ -65,14 +69,83 @@ public class UserRepository {
     }
 
     public UserAccount create(String email, String passwordHash, Role role) {
-        Number id = insertUser.executeAndReturnKey(
-            java.util.Map.of(
-                "email", email,
-                "password_hash", passwordHash,
-                "role", role.name()
-            )
-        );
+        return create(email, passwordHash, role, true);
+    }
+
+    public UserAccount create(String email, String passwordHash, Role role, boolean emailVerified) {
+        Map<String, Object> values = new HashMap<>();
+        values.put("email", email);
+        values.put("password_hash", passwordHash);
+        values.put("role", role.name());
+        values.put("email_verified_at", emailVerified ? Timestamp.from(Instant.now()) : null);
+
+        Number id = insertUser.executeAndReturnKey(values);
         return new UserAccount(id.longValue(), email, passwordHash, role);
+    }
+
+    public boolean isEmailVerified(Long id) {
+        Integer count = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM users WHERE id = ? AND disabled_at IS NULL AND email_verified_at IS NOT NULL",
+            Integer.class,
+            id
+        );
+        return count != null && count > 0;
+    }
+
+    public Optional<UserEmailVerificationRecord> findEmailVerificationByEmail(String email) {
+        return jdbcTemplate.query(
+            """
+                SELECT id, email, role, email_verified_at, verification_email_sent_at
+                FROM users
+                WHERE email = ? AND disabled_at IS NULL
+                """,
+            (rs, rowNum) -> new UserEmailVerificationRecord(
+                rs.getLong("id"),
+                rs.getString("email"),
+                Role.valueOf(rs.getString("role")),
+                toInstant(rs.getTimestamp("email_verified_at")),
+                toInstant(rs.getTimestamp("verification_email_sent_at"))
+            ),
+            email
+        ).stream().findFirst();
+    }
+
+    public Optional<UserEmailVerificationRecord> findEmailVerificationById(Long id) {
+        return jdbcTemplate.query(
+            """
+                SELECT id, email, role, email_verified_at, verification_email_sent_at
+                FROM users
+                WHERE id = ? AND disabled_at IS NULL
+                """,
+            (rs, rowNum) -> new UserEmailVerificationRecord(
+                rs.getLong("id"),
+                rs.getString("email"),
+                Role.valueOf(rs.getString("role")),
+                toInstant(rs.getTimestamp("email_verified_at")),
+                toInstant(rs.getTimestamp("verification_email_sent_at"))
+            ),
+            id
+        ).stream().findFirst();
+    }
+
+    public int markVerificationEmailSent(Long id, Instant sentAt) {
+        return jdbcTemplate.update(
+            "UPDATE users SET verification_email_sent_at = ? WHERE id = ? AND disabled_at IS NULL",
+            Timestamp.from(sentAt),
+            id
+        );
+    }
+
+    public int markEmailVerified(Long id, Instant verifiedAt) {
+        return jdbcTemplate.update(
+            """
+                UPDATE users
+                SET email_verified_at = ?, verification_email_sent_at = NULL
+                WHERE id = ? AND disabled_at IS NULL AND email_verified_at IS NULL
+                """,
+            Timestamp.from(verifiedAt),
+            id
+        );
     }
 
     public int updateEmailAndPassword(Long id, String email, String passwordHash) {
@@ -82,5 +155,9 @@ public class UserRepository {
             passwordHash,
             id
         );
+    }
+
+    private Instant toInstant(Timestamp value) {
+        return value != null ? value.toInstant() : null;
     }
 }

@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
@@ -32,8 +33,42 @@ public class LoanRepository {
                         rs.getBigDecimal("approved_monthly_payment"),
                         rs.getString("decision_policy_version"),
                         rs.getString("intake_note"),
+                        rs.getString("additional_info_request_note"),
+                        toInstant(rs.getTimestamp("additional_info_last_requested_at")),
+                        toInstant(rs.getTimestamp("additional_info_request_deadline")),
+                        (Integer) rs.getObject("additional_info_request_count"),
+                        toInstant(rs.getTimestamp("review_deadline_at")),
+                        toInstant(rs.getTimestamp("contract_acceptance_deadline_at")),
                         toInstant(rs.getTimestamp("created_at")),
                         toInstant(rs.getTimestamp("updated_at")));
+
+        private static final String LOAN_SELECT_COLUMNS = """
+                        id,
+                        customer_id,
+                        loan_type,
+                        amount,
+                        term_months,
+                        purpose,
+                        collateral_type,
+                        collateral_value,
+                        status,
+                        final_reason,
+                        eligible_limit,
+                        approved_amount,
+                        approved_term_months,
+                        approved_annual_rate,
+                        approved_monthly_payment,
+                        decision_policy_version,
+                        intake_note,
+                        additional_info_request_note,
+                        additional_info_last_requested_at,
+                        additional_info_request_deadline,
+                        additional_info_request_count,
+                        review_deadline_at,
+                        contract_acceptance_deadline_at,
+                        created_at,
+                        updated_at
+                """;
 
         private final JdbcTemplate jdbcTemplate;
         private final SimpleJdbcInsert insertLoan;
@@ -108,14 +143,11 @@ public class LoanRepository {
         public List<LoanRecord> findByCustomerId(Long customerId) {
                 return jdbcTemplate.query(
                                 """
-                                                SELECT id, customer_id, loan_type, amount, term_months, purpose, collateral_type, collateral_value,
-                                                       status, final_reason, eligible_limit, approved_amount, approved_term_months,
-                                                       approved_annual_rate, approved_monthly_payment, decision_policy_version,
-                                                       intake_note, created_at, updated_at
+                                                SELECT %s
                                                 FROM loan_requests
                                                 WHERE customer_id = ?
                                                 ORDER BY created_at DESC, id DESC
-                                                """,
+                                                """.formatted(LOAN_SELECT_COLUMNS),
                                 LOAN_ROW_MAPPER,
                                 customerId);
         }
@@ -134,15 +166,8 @@ public class LoanRepository {
                                                 SELECT COUNT(*)
                                                 FROM loan_requests
                                                 WHERE customer_id = ?
-                                                  AND status IN (
-                                                      'DRAFT',
-                                                      'PENDING',
-                                                      'NEEDS_MORE_INFO',
-                                                      'APPOINTMENT_SCHEDULED',
-                                                      'APPROVED',
-                                                      'CONTRACTED'
-                                                  )
-                                                """,
+                                                  AND status IN (%s)
+                                                """.formatted(statusListSql(LoanApplicationPolicy.BLOCKING_APPLICATION_STATUSES)),
                                 Integer.class,
                                 customerId);
                 return count != null && count > 0;
@@ -151,15 +176,12 @@ public class LoanRepository {
         public List<LoanRecord> findByCustomerIdPaged(Long customerId, int offset, int limit) {
                 return jdbcTemplate.query(
                                 """
-                                                SELECT id, customer_id, loan_type, amount, term_months, purpose, collateral_type, collateral_value,
-                                                       status, final_reason, eligible_limit, approved_amount, approved_term_months,
-                                                       approved_annual_rate, approved_monthly_payment, decision_policy_version,
-                                                       intake_note, created_at, updated_at
+                                                SELECT %s
                                                 FROM loan_requests
                                                 WHERE customer_id = ?
                                                 ORDER BY created_at DESC, id DESC
                                                 LIMIT ? OFFSET ?
-                                                """,
+                                                """.formatted(LOAN_SELECT_COLUMNS),
                                 LOAN_ROW_MAPPER,
                                 customerId, limit, offset);
         }
@@ -167,13 +189,10 @@ public class LoanRepository {
         public Optional<LoanRecord> findOwnedById(Long id, Long customerId) {
                 return jdbcTemplate.query(
                                 """
-                                                SELECT id, customer_id, loan_type, amount, term_months, purpose, collateral_type, collateral_value,
-                                                       status, final_reason, eligible_limit, approved_amount, approved_term_months,
-                                                       approved_annual_rate, approved_monthly_payment, decision_policy_version,
-                                                       intake_note, created_at, updated_at
+                                                SELECT %s
                                                 FROM loan_requests
                                                 WHERE id = ? AND customer_id = ?
-                                                """,
+                                                """.formatted(LOAN_SELECT_COLUMNS),
                                 LOAN_ROW_MAPPER,
                                 id,
                                 customerId).stream().findFirst();
@@ -182,13 +201,10 @@ public class LoanRepository {
         public Optional<LoanRecord> findById(Long id) {
                 return jdbcTemplate.query(
                                 """
-                                                SELECT id, customer_id, loan_type, amount, term_months, purpose, collateral_type, collateral_value,
-                                                       status, final_reason, eligible_limit, approved_amount, approved_term_months,
-                                                       approved_annual_rate, approved_monthly_payment, decision_policy_version,
-                                                       intake_note, created_at, updated_at
+                                                SELECT %s
                                                 FROM loan_requests
                                                 WHERE id = ?
-                                                """,
+                                                """.formatted(LOAN_SELECT_COLUMNS),
                                 LOAN_ROW_MAPPER,
                                 id).stream().findFirst();
         }
@@ -197,25 +213,51 @@ public class LoanRepository {
                 jdbcTemplate.update(
                                 """
                                                 UPDATE loan_requests
-                                                SET status = ?, updated_at = CURRENT_TIMESTAMP
+                                                SET status = ?,
+                                                    review_deadline_at = NULL,
+                                                    contract_acceptance_deadline_at = NULL,
+                                                    updated_at = CURRENT_TIMESTAMP
                                                 WHERE id = ?
                                                 """,
                                 status.name(),
                                 id);
         }
 
-        public int updateOwnedStatusAndReason(Long id, Long customerId, LoanStatus status, String reason) {
+        public int withdrawOwnedApplication(Long id, Long customerId, String reason) {
                 return jdbcTemplate.update(
                                 """
                                                 UPDATE loan_requests
-                                                SET status = ?,
+                                                SET status = 'WITHDRAWN',
                                                     final_reason = ?,
+                                                    additional_info_request_note = NULL,
+                                                    additional_info_request_deadline = NULL,
+                                                    review_deadline_at = NULL,
+                                                    contract_acceptance_deadline_at = NULL,
                                                     updated_at = CURRENT_TIMESTAMP
                                                 WHERE id = ?
                                                   AND customer_id = ?
-                                                  AND status IN ('DRAFT', 'PENDING', 'NEEDS_MORE_INFO', 'APPOINTMENT_SCHEDULED', 'APPROVED')
+                                                  AND status IN (%s)
+                                                """.formatted(statusListSql(LoanApplicationPolicy.CUSTOMER_WITHDRAWABLE_STATUSES)),
+                                reason,
+                                id,
+                                customerId);
+        }
+
+        public int resubmitOwnedApplication(Long id, Long customerId, String reason) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET status = 'PENDING',
+                                                    final_reason = ?,
+                                                    additional_info_request_note = NULL,
+                                                    additional_info_request_deadline = NULL,
+                                                    review_deadline_at = NULL,
+                                                    contract_acceptance_deadline_at = NULL,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                                  AND customer_id = ?
+                                                  AND status = 'NEEDS_MORE_INFO'
                                                 """,
-                                status.name(),
                                 reason,
                                 id,
                                 customerId);
@@ -281,6 +323,10 @@ public class LoanRepository {
                                                     approved_monthly_payment = NULL,
                                                     decision_policy_version = NULL,
                                                     intake_note = ?,
+                                                    additional_info_request_note = NULL,
+                                                    additional_info_request_deadline = NULL,
+                                                    review_deadline_at = NULL,
+                                                    contract_acceptance_deadline_at = NULL,
                                                     updated_at = CURRENT_TIMESTAMP
                                                 WHERE id = ?
                                                   AND customer_id = ?
@@ -304,6 +350,7 @@ public class LoanRepository {
                                                 SET status = 'CONTRACTED',
                                                     accepted_at = CURRENT_TIMESTAMP,
                                                     accepted_terms_version = ?,
+                                                    contract_acceptance_deadline_at = NULL,
                                                     updated_at = CURRENT_TIMESTAMP
                                                 WHERE id = ?
                                                   AND customer_id = ?
@@ -318,7 +365,11 @@ public class LoanRepository {
                 return jdbcTemplate.update(
                                 """
                                                 UPDATE loan_requests
-                                                SET status = ?, final_reason = ?, updated_at = CURRENT_TIMESTAMP
+                                                SET status = ?,
+                                                    final_reason = ?,
+                                                    review_deadline_at = NULL,
+                                                    contract_acceptance_deadline_at = NULL,
+                                                    updated_at = CURRENT_TIMESTAMP
                                                 WHERE id = ?
                                                 """,
                                 status.name(),
@@ -347,6 +398,36 @@ public class LoanRepository {
                                                 WHERE id = ?
                                                 """,
                                 reason,
+                                id);
+        }
+
+        public int requestAdditionalInfo(
+                        Long id,
+                        String reason,
+                        String requestNote,
+                        Timestamp deadlineAt) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET status = 'NEEDS_MORE_INFO',
+                                                    final_reason = ?,
+                                                    additional_info_request_note = ?,
+                                                    additional_info_last_requested_at = CURRENT_TIMESTAMP,
+                                                    additional_info_request_deadline = ?,
+                                                    additional_info_request_count = COALESCE(additional_info_request_count, 0) + 1,
+                                                    approved_amount = NULL,
+                                                    approved_term_months = NULL,
+                                                    approved_annual_rate = NULL,
+                                                    approved_monthly_payment = NULL,
+                                                    decision_policy_version = NULL,
+                                                    review_deadline_at = NULL,
+                                                    contract_acceptance_deadline_at = NULL,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                """,
+                                reason,
+                                requestNote,
+                                deadlineAt,
                                 id);
         }
 
@@ -392,6 +473,10 @@ public class LoanRepository {
                                                     approved_annual_rate = ?,
                                                     approved_monthly_payment = ?,
                                                     decision_policy_version = ?,
+                                                    additional_info_request_note = NULL,
+                                                    additional_info_request_deadline = NULL,
+                                                    review_deadline_at = NULL,
+                                                    contract_acceptance_deadline_at = NULL,
                                                     updated_at = CURRENT_TIMESTAMP
                                                 WHERE id = ?
                                 """,
@@ -404,6 +489,141 @@ public class LoanRepository {
                                 approvedMonthlyPayment,
                                 decisionPolicyVersion,
                                 id);
+        }
+
+        public List<LoanRecord> findExpiredAdditionalInfoRequests(Timestamp cutoff) {
+                return jdbcTemplate.query(
+                                """
+                                                SELECT %s
+                                                FROM loan_requests
+                                                WHERE status = 'NEEDS_MORE_INFO'
+                                                  AND additional_info_request_deadline IS NOT NULL
+                                                  AND additional_info_request_deadline <= ?
+                                                ORDER BY additional_info_request_deadline ASC, id ASC
+                                                """.formatted(LOAN_SELECT_COLUMNS),
+                                LOAN_ROW_MAPPER,
+                                cutoff);
+        }
+
+        public int updateReviewDeadline(Long id, Timestamp reviewDeadlineAt) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET review_deadline_at = ?,
+                                                    contract_acceptance_deadline_at = NULL,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                """,
+                                reviewDeadlineAt,
+                                id);
+        }
+
+        public int updateContractAcceptanceDeadline(Long id, Timestamp contractAcceptanceDeadlineAt) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET review_deadline_at = NULL,
+                                                    contract_acceptance_deadline_at = ?,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                """,
+                                contractAcceptanceDeadlineAt,
+                                id);
+        }
+
+        public int clearSlaDeadlines(Long id) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET review_deadline_at = NULL,
+                                                    contract_acceptance_deadline_at = NULL,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                """,
+                                id);
+        }
+
+        public int expireAdditionalInfoRequest(Long id, String reason, Timestamp cutoff) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET status = 'REJECTED',
+                                                    final_reason = ?,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                                  AND status = 'NEEDS_MORE_INFO'
+                                                  AND additional_info_request_deadline IS NOT NULL
+                                                  AND additional_info_request_deadline <= ?
+                                                """,
+                                reason,
+                                id,
+                                cutoff);
+        }
+
+        public List<LoanRecord> findExpiredPendingReviews(Timestamp cutoff) {
+                return jdbcTemplate.query(
+                                """
+                                                SELECT %s
+                                                FROM loan_requests
+                                                WHERE status = 'PENDING'
+                                                  AND review_deadline_at IS NOT NULL
+                                                  AND review_deadline_at <= ?
+                                                ORDER BY review_deadline_at ASC, id ASC
+                                                """.formatted(LOAN_SELECT_COLUMNS),
+                                LOAN_ROW_MAPPER,
+                                cutoff);
+        }
+
+        public int expirePendingReview(Long id, String reason, Timestamp cutoff) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET status = 'REJECTED',
+                                                    final_reason = ?,
+                                                    review_deadline_at = NULL,
+                                                    contract_acceptance_deadline_at = NULL,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                                  AND status = 'PENDING'
+                                                  AND review_deadline_at IS NOT NULL
+                                                  AND review_deadline_at <= ?
+                                                """,
+                                reason,
+                                id,
+                                cutoff);
+        }
+
+        public List<LoanRecord> findExpiredApprovedAcceptances(Timestamp cutoff) {
+                return jdbcTemplate.query(
+                                """
+                                                SELECT %s
+                                                FROM loan_requests
+                                                WHERE status = 'APPROVED'
+                                                  AND contract_acceptance_deadline_at IS NOT NULL
+                                                  AND contract_acceptance_deadline_at <= ?
+                                                ORDER BY contract_acceptance_deadline_at ASC, id ASC
+                                                """.formatted(LOAN_SELECT_COLUMNS),
+                                LOAN_ROW_MAPPER,
+                                cutoff);
+        }
+
+        public int expireApprovedAcceptance(Long id, String reason, Timestamp cutoff) {
+                return jdbcTemplate.update(
+                                """
+                                                UPDATE loan_requests
+                                                SET status = 'REJECTED',
+                                                    final_reason = ?,
+                                                    review_deadline_at = NULL,
+                                                    contract_acceptance_deadline_at = NULL,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                WHERE id = ?
+                                                  AND status = 'APPROVED'
+                                                  AND contract_acceptance_deadline_at IS NOT NULL
+                                                  AND contract_acceptance_deadline_at <= ?
+                                                """,
+                                reason,
+                                id,
+                                cutoff);
         }
 
         public int assignCaseIfUnassignedOrOwned(Long id, Long staffUserId) {
@@ -464,6 +684,13 @@ public class LoanRepository {
 
         private static java.time.Instant toInstant(Timestamp timestamp) {
                 return timestamp != null ? timestamp.toInstant() : null;
+        }
+
+        private static String statusListSql(Set<LoanStatus> statuses) {
+                return statuses.stream()
+                        .map(LoanStatus::name)
+                        .map(status -> "'" + status + "'")
+                        .collect(java.util.stream.Collectors.joining(", "));
         }
 
         private static <T extends Enum<T>> T parseEnum(Class<T> enumType, String value) {

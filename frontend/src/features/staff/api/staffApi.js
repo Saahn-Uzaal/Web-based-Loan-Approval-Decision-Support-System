@@ -64,6 +64,14 @@ export function disburseStaffLoanApi(token, id) {
   });
 }
 
+export function resolveOverdueLoanApi(token, id, payload) {
+  return apiRequest(`/api/staff/requests/${id}/overdue-resolution`, {
+    method: "POST",
+    token,
+    body: payload
+  });
+}
+
 export function assignStaffCaseApi(token, id) {
   return apiRequest(`/api/staff/requests/${id}/assign`, {
     method: "POST",

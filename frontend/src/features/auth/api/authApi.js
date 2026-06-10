@@ -14,6 +14,17 @@ export function registerApi(payload) {
   });
 }
 
+export function verifyEmailApi(token) {
+  return apiRequest(`/api/auth/verify-email?token=${encodeURIComponent(token)}`);
+}
+
+export function resendVerificationApi(payload) {
+  return apiRequest("/api/auth/resend-verification", {
+    method: "POST",
+    body: payload
+  });
+}
+
 export function meApi(token) {
   return apiRequest("/api/auth/me", {
     token

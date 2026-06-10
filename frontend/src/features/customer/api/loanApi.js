@@ -1,9 +1,9 @@
 import { apiRequest, downloadFile } from "@/shared/api/http";
 import { buildQueryString, fetchAllPageResponse } from "@/shared/api/paged";
 
-function buildLoanRequestBody(payload, files = {}) {
+function buildLoanRequestBody(payload, files = {}, options = {}) {
   const hasFiles = Object.values(files).some(Boolean);
-  if (hasFiles) {
+  if (hasFiles || options.forceMultipart) {
     const formData = new FormData();
     formData.append(
       "loan",
@@ -24,11 +24,11 @@ function buildLoanRequestBody(payload, files = {}) {
   return payload;
 }
 
-function mutateLoan(path, { method = "POST", token, payload, files } = {}) {
+function mutateLoan(path, { method = "POST", token, payload, files, forceMultipart = false } = {}) {
   return apiRequest(path, {
     method,
     token,
-    body: buildLoanRequestBody(payload, files)
+    body: buildLoanRequestBody(payload, files, { forceMultipart })
   });
 }
 
@@ -37,7 +37,8 @@ export function createLoanApi(token, payload, files = {}) {
     method: "POST",
     token,
     payload,
-    files
+    files,
+    forceMultipart: true
   });
 }
 
@@ -64,7 +65,8 @@ export function submitLoanDraftApi(token, id, payload, files = {}) {
     method: "POST",
     token,
     payload,
-    files
+    files,
+    forceMultipart: true
   });
 }
 
@@ -85,10 +87,17 @@ export function getLoanDetailApi(token, id) {
   });
 }
 
-export function acceptLoanApi(token, id) {
+export function getLoanAcceptanceChallengeApi(token, id) {
+  return apiRequest(`/api/customer/loans/${id}/acceptance-challenge`, {
+    token
+  });
+}
+
+export function acceptLoanApi(token, id, payload) {
   return apiRequest(`/api/customer/loans/${id}/accept`, {
     method: "POST",
-    token
+    token,
+    body: payload
   });
 }
 

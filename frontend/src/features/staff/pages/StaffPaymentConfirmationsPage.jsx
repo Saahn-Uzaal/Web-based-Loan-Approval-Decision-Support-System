@@ -571,7 +571,7 @@ export default function StaffPaymentConfirmationsPage() {
                       {...fieldErrorProps(
                         fieldErrors,
                         "confirmedAmount",
-                        "Có thể xác nhận thanh toán một phần, trả đủ kỳ, trả trước hoặc tất toán; không vượt dư nợ còn lại."
+                        "Có thể xác nhận thanh toán một phần, trả đủ kỳ, trả trước nhiều kỳ hoặc tất toán; hệ thống sẽ phân bổ từ kỳ hiện tại sang các kỳ tiếp theo và không vượt dư nợ còn lại."
                       )}
                     />
                   </Grid>

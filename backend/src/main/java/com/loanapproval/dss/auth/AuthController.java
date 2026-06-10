@@ -2,8 +2,11 @@ package com.loanapproval.dss.auth;
 
 import com.loanapproval.dss.auth.dto.AuthRequest;
 import com.loanapproval.dss.auth.dto.AuthResponse;
+import com.loanapproval.dss.auth.dto.EmailVerificationResponse;
 import com.loanapproval.dss.auth.dto.RefreshTokenRequest;
 import com.loanapproval.dss.auth.dto.RegisterRequest;
+import com.loanapproval.dss.auth.dto.RegisterResponse;
+import com.loanapproval.dss.auth.dto.ResendVerificationRequest;
 import com.loanapproval.dss.auth.dto.UserResponse;
 import com.loanapproval.dss.security.AuthenticatedUser;
 import jakarta.servlet.http.HttpServletRequest;
@@ -12,6 +15,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -30,8 +34,18 @@ public class AuthController {
 
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
-    public AuthResponse register(@Valid @RequestBody RegisterRequest request) {
+    public RegisterResponse register(@Valid @RequestBody RegisterRequest request) {
         return authService.register(request);
+    }
+
+    @GetMapping("/verify-email")
+    public EmailVerificationResponse verifyEmail(@RequestParam("token") String token) {
+        return authService.verifyEmail(token);
+    }
+
+    @PostMapping("/resend-verification")
+    public EmailVerificationResponse resendVerification(@Valid @RequestBody ResendVerificationRequest request) {
+        return authService.resendVerificationEmail(request.email());
     }
 
     @PostMapping("/login")

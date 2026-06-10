@@ -16,6 +16,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.server.ResponseStatusException;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -36,6 +37,9 @@ class AuthServiceTest {
     @Mock
     private LoginRateLimitService loginRateLimitService;
 
+    @Mock
+    private EmailVerificationService emailVerificationService;
+
     @InjectMocks
     private AuthService authService;
 
@@ -48,26 +52,43 @@ class AuthServiceTest {
                 () -> authService.register(request));
 
         Assertions.assertEquals(HttpStatus.FORBIDDEN, exception.getStatusCode());
-        verify(userRepository, never()).create(any(), any(), any());
+        verify(userRepository, never()).create(any(), any(), any(), anyBoolean());
     }
 
     @Test
-    void publicRegisterShouldCreateCustomerOnly() {
+    void publicRegisterShouldCreateCustomerAndRequireVerificationWhenEnabled() {
         RegisterRequest request = new RegisterRequest(" Customer@Example.com ", "secret123", Role.CUSTOMER);
         UserAccount account = new UserAccount(10L, "customer@example.com", "encoded", Role.CUSTOMER);
 
-        when(userRepository.existsByEmail("customer@example.com")).thenReturn(false);
+        when(userRepository.findEmailVerificationByEmail("customer@example.com")).thenReturn(java.util.Optional.empty());
         when(passwordEncoder.encode("secret123")).thenReturn("encoded");
-        when(userRepository.create("customer@example.com", "encoded", Role.CUSTOMER)).thenReturn(account);
-        when(jwtService.generateAccessToken(account)).thenReturn("token");
-        when(jwtService.generateRefreshToken(account)).thenReturn("refresh");
+        when(emailVerificationService.isEnabled()).thenReturn(true);
+        when(userRepository.create("customer@example.com", "encoded", Role.CUSTOMER, false)).thenReturn(account);
 
         var response = authService.register(request);
 
-        Assertions.assertEquals("token", response.accessToken());
-        Assertions.assertEquals("refresh", response.refreshToken());
-        Assertions.assertEquals(Role.CUSTOMER, response.user().role());
-        verify(userRepository).create(eq("customer@example.com"), eq("encoded"), eq(Role.CUSTOMER));
+        Assertions.assertEquals("customer@example.com", response.email());
+        Assertions.assertTrue(response.verificationRequired());
+        verify(emailVerificationService).assertReady();
+        verify(emailVerificationService).sendVerificationEmail(account);
+        verify(userRepository).create(eq("customer@example.com"), eq("encoded"), eq(Role.CUSTOMER), eq(false));
+    }
+
+    @Test
+    void publicRegisterShouldCreateVerifiedCustomerWhenVerificationDisabled() {
+        RegisterRequest request = new RegisterRequest("customer@example.com", "secret123", Role.CUSTOMER);
+        UserAccount account = new UserAccount(10L, "customer@example.com", "encoded", Role.CUSTOMER);
+
+        when(userRepository.findEmailVerificationByEmail("customer@example.com")).thenReturn(java.util.Optional.empty());
+        when(passwordEncoder.encode("secret123")).thenReturn("encoded");
+        when(emailVerificationService.isEnabled()).thenReturn(false);
+        when(userRepository.create("customer@example.com", "encoded", Role.CUSTOMER, true)).thenReturn(account);
+
+        var response = authService.register(request);
+
+        Assertions.assertFalse(response.verificationRequired());
+        verify(emailVerificationService, never()).sendVerificationEmail(any());
+        verify(userRepository).create(eq("customer@example.com"), eq("encoded"), eq(Role.CUSTOMER), eq(true));
     }
 
     @Test
@@ -86,6 +107,24 @@ class AuthServiceTest {
         Assertions.assertEquals(HttpStatus.UNAUTHORIZED, exception.getStatusCode());
         verify(loginRateLimitService).assertAllowed("customer@example.com", "127.0.0.1");
         verify(loginRateLimitService).recordFailure("customer@example.com", "127.0.0.1");
+    }
+
+    @Test
+    void loginShouldRejectUnverifiedEmail() {
+        AuthRequest request = new AuthRequest("customer@example.com", "secret123");
+        UserAccount account = new UserAccount(10L, "customer@example.com", "encoded", Role.CUSTOMER);
+
+        when(userRepository.findByEmail("customer@example.com")).thenReturn(java.util.Optional.of(account));
+        when(passwordEncoder.matches("secret123", "encoded")).thenReturn(true);
+        when(userRepository.isEmailVerified(10L)).thenReturn(false);
+
+        ResponseStatusException exception = Assertions.assertThrows(
+            ResponseStatusException.class,
+            () -> authService.login(request, "127.0.0.1")
+        );
+
+        Assertions.assertEquals(HttpStatus.FORBIDDEN, exception.getStatusCode());
+        verify(loginRateLimitService, never()).recordSuccess(any(), any());
     }
 
     @Test

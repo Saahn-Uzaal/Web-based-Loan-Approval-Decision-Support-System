@@ -28,10 +28,15 @@ import {
   downloadStaffLoanDocumentApi,
   getStaffRequestDetailApi,
   releaseStaffCaseApi,
+  resolveOverdueLoanApi,
   submitStaffDecisionApi,
   updateStaffRequestVerificationApi
 } from "@/features/staff/api/staffApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
+import {
+  DEFAULT_ADDITIONAL_INFO_DEADLINE_DAYS,
+  MAX_ADDITIONAL_INFO_REQUESTS
+} from "@/shared/constants/loanApplicationPolicy";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
 import { clearFieldError, fieldErrorProps, mapFieldErrors } from "@/shared/utils/formErrors";
 import { formatFileSize } from "@/shared/utils/files";
@@ -85,8 +90,23 @@ function defaultAppointmentInputValue() {
   return toDateTimeLocalValue(date);
 }
 
+function defaultAdditionalInfoDeadlineInputValue() {
+  const date = new Date();
+  date.setDate(date.getDate() + DEFAULT_ADDITIONAL_INFO_DEADLINE_DAYS);
+  date.setHours(17, 0, 0, 0);
+  return toDateTimeLocalValue(date);
+}
+
 function toIsoInstant(localDateTime) {
   return localDateTime ? new Date(localDateTime).toISOString() : null;
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString("vi-VN");
 }
 
 const VERIFICATION_STATUSES = ["PENDING", "PASSED", "FAILED"];
@@ -100,6 +120,8 @@ const decisionFieldKeywords = {
   approvedAnnualRate: ["lãi suất", "approvedAnnualRate"],
   scheduledAt: ["lịch hẹn", "thời điểm", "scheduledAt"],
   appointmentNote: ["ghi chú lịch hẹn", "appointmentNote"],
+  additionalInfoRequestNote: ["nội dung bổ sung", "bổ sung hồ sơ", "additionalInfoRequestNote"],
+  additionalInfoDeadlineAt: ["hạn bổ sung", "deadline", "additionalInfoDeadlineAt"],
   rejectionReason: ["lý do từ chối", "từ chối", "rejectionReason"]
 };
 
@@ -112,6 +134,12 @@ const verificationStepFieldKeywords = {
   kycStatus: ["kyc"],
   amlStatus: ["aml"],
   note: ["ghi chú xác minh", "note"]
+};
+
+const overdueResolutionFieldKeywords = {
+  extensionDays: ["gia hạn", "số ngày", "extensionDays"],
+  waivedLateFeeAmount: ["phí chậm trả", "late fee", "waivedLateFeeAmount"],
+  reason: ["lý do xử lý", "reason"]
 };
 
 function resolveWorkflowStage(status) {
@@ -142,7 +170,7 @@ function resolveWorkflowStage(status) {
   if (status === "OVERDUE") {
     return {
       title: "Xử lý khoản vay quá hạn",
-      description: "Khoản vay đã quá hạn. Màn hình này hỗ trợ tra cứu hồ sơ gốc và dữ liệu thẩm định trước đó."
+      description: "Khoản vay đã quá hạn. Nhân viên có thể xem hồ sơ gốc, snapshot công nợ hiện tại và thực hiện gia hạn hoặc miễn phí chậm trả ngay tại đây."
     };
   }
   return {
@@ -161,6 +189,7 @@ export default function StaffRequestDetailPage() {
   const [submitSuccess, setSubmitSuccess] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submittingDisbursement, setSubmittingDisbursement] = useState(false);
+  const [submittingOverdueResolution, setSubmittingOverdueResolution] = useState(false);
   const [submittingVerification, setSubmittingVerification] = useState(false);
   const [claimingCase, setClaimingCase] = useState(false);
   const [releasingCase, setReleasingCase] = useState(false);
@@ -169,10 +198,13 @@ export default function StaffRequestDetailPage() {
   const [downloadingDocument, setDownloadingDocument] = useState("");
   const [decisionFieldErrors, setDecisionFieldErrors] = useState({});
   const [verificationFieldErrors, setVerificationFieldErrors] = useState({});
+  const [overdueResolutionFieldErrors, setOverdueResolutionFieldErrors] = useState({});
   const [decision, setDecision] = useState({
     action: "",
     scheduledAt: defaultAppointmentInputValue(),
     appointmentNote: "",
+    additionalInfoRequestNote: "",
+    additionalInfoDeadlineAt: defaultAdditionalInfoDeadlineInputValue(),
     rejectionReason: "",
     approvedAmount: "",
     approvedTermMonths: "",
@@ -189,6 +221,11 @@ export default function StaffRequestDetailPage() {
     fraudFlag: false,
     note: ""
   });
+  const [overdueResolution, setOverdueResolution] = useState({
+    extensionDays: "",
+    waivedLateFeeAmount: "",
+    reason: ""
+  });
 
   useEffect(() => {
     let active = true;
@@ -201,6 +238,7 @@ export default function StaffRequestDetailPage() {
       setError("");
       setDecisionFieldErrors({});
       setVerificationFieldErrors({});
+      setOverdueResolutionFieldErrors({});
       try {
         const response = await getStaffRequestDetailApi(accessToken, id);
         if (!active) {
@@ -226,7 +264,7 @@ export default function StaffRequestDetailPage() {
           note: response?.verification?.note || ""
         });
         setDecision((prev) => {
-          if (prev.action || prev.appointmentNote || prev.rejectionReason) {
+          if (prev.action || prev.appointmentNote || prev.additionalInfoRequestNote || prev.rejectionReason) {
             return prev;
           }
           return {
@@ -272,9 +310,12 @@ export default function StaffRequestDetailPage() {
   const showRejectReasonField = decision.action === "REJECT";
   const showMoreInfoReasonField = decision.action === "REQUEST_MORE_INFO";
   const hasSelectedAction = ["APPROVE", "REJECT", "REQUEST_MORE_INFO"].includes(decision.action);
+  const additionalInfoRequestCount = Number(detail?.additionalInfoRequestCount || 0);
+  const additionalInfoRequestLimitReached = additionalInfoRequestCount >= MAX_ADDITIONAL_INFO_REQUESTS;
   const hasDisbursementAccount = Boolean(
     detail?.customerProfile?.bankAccountNumber && detail?.customerProfile?.bankName
   );
+  const repayment = detail?.repayment || null;
   const verificationStepFields = [
     ["documentStatus", "Giấy tờ"],
     ["identityStatus", "Định danh"],
@@ -318,6 +359,16 @@ export default function StaffRequestDetailPage() {
     setVerificationForm((prev) => ({
       ...prev,
       [field]: value
+    }));
+  };
+
+  const handleOverdueResolutionChange = (field) => (event) => {
+    setOverdueResolutionFieldErrors((prev) => clearFieldError(prev, field));
+    setOverdueResolution((prev) => ({
+      ...prev,
+      [field]: field === "waivedLateFeeAmount"
+        ? formatVndInput(event.target.value)
+        : event.target.value
     }));
   };
 
@@ -385,10 +436,21 @@ export default function StaffRequestDetailPage() {
       setDecisionFieldErrors({ rejectionReason: message });
       return;
     }
-    if (showMoreInfoReasonField && !decision.appointmentNote.trim()) {
+    if (showMoreInfoReasonField && !decision.additionalInfoRequestNote.trim()) {
       const message = "Vui lòng nhập nội dung cần khách hàng bổ sung.";
       setSubmitError(message);
-      setDecisionFieldErrors({ appointmentNote: message });
+      setDecisionFieldErrors({ additionalInfoRequestNote: message });
+      return;
+    }
+    if (showMoreInfoReasonField && !decision.additionalInfoDeadlineAt) {
+      const message = "Vui lòng chọn hạn bổ sung hồ sơ.";
+      setSubmitError(message);
+      setDecisionFieldErrors({ additionalInfoDeadlineAt: message });
+      return;
+    }
+    if (showMoreInfoReasonField && additionalInfoRequestLimitReached) {
+      const message = `Hồ sơ này đã đạt giới hạn ${MAX_ADDITIONAL_INFO_REQUESTS} lần yêu cầu bổ sung.`;
+      setSubmitError(message);
       return;
     }
     if (showAppointmentFields && !decision.scheduledAt) {
@@ -407,9 +469,17 @@ export default function StaffRequestDetailPage() {
         action: decision.action,
         scheduledAt: shouldSchedule ? toIsoInstant(decision.scheduledAt) : null,
         appointmentLocation: "",
-        appointmentNote: shouldSchedule || decision.action === "REQUEST_MORE_INFO"
+        appointmentNote: shouldSchedule
           ? decision.appointmentNote.trim()
-          : decision.rejectionReason.trim(),
+          : decision.action === "REJECT"
+            ? decision.rejectionReason.trim()
+            : null,
+        additionalInfoRequestNote: decision.action === "REQUEST_MORE_INFO"
+          ? decision.additionalInfoRequestNote.trim()
+          : null,
+        additionalInfoDeadlineAt: decision.action === "REQUEST_MORE_INFO"
+          ? toIsoInstant(decision.additionalInfoDeadlineAt)
+          : null,
         approvedAmount: decision.action === "APPROVE" ? parseVndInput(decision.approvedAmount) : null,
         approvedTermMonths: decision.action === "APPROVE" && decision.approvedTermMonths !== "" ? Number(decision.approvedTermMonths) : null,
         approvedAnnualRate: decision.action === "APPROVE" ? percentInputToFraction(decision.approvedAnnualRate) : null
@@ -420,6 +490,8 @@ export default function StaffRequestDetailPage() {
       setDecision((prev) => ({
         ...prev,
         appointmentNote: "",
+        additionalInfoRequestNote: "",
+        additionalInfoDeadlineAt: defaultAdditionalInfoDeadlineInputValue(),
         rejectionReason: ""
       }));
     } catch (err) {
@@ -537,6 +609,41 @@ export default function StaffRequestDetailPage() {
     }
   };
 
+  const handleResolveOverdueLoan = async (event) => {
+    event.preventDefault();
+    if (!detail?.id) {
+      return;
+    }
+    setSubmittingOverdueResolution(true);
+    setSubmitError("");
+    setSubmitSuccess("");
+    setOverdueResolutionFieldErrors({});
+    try {
+      const refreshed = await resolveOverdueLoanApi(accessToken, detail.id, {
+        extensionDays: overdueResolution.extensionDays !== "" ? Number(overdueResolution.extensionDays) : 0,
+        waivedLateFeeAmount: parseVndInput(overdueResolution.waivedLateFeeAmount) || 0,
+        reason: overdueResolution.reason.trim()
+      });
+      setDetail(refreshed);
+      setOverdueResolution({
+        extensionDays: "",
+        waivedLateFeeAmount: "",
+        reason: ""
+      });
+      setSubmitSuccess(
+        refreshed.status === "OVERDUE"
+          ? "Đã cập nhật phương án xử lý nợ quá hạn. Khoản vay vẫn còn quá hạn và sẽ tiếp tục được theo dõi."
+          : `Đã xử lý khoản vay quá hạn. Trạng thái hiện tại: ${labelLoanStatus(refreshed.status)}.`
+      );
+    } catch (err) {
+      const message = err.message || "Không xử lý được khoản vay quá hạn";
+      setSubmitError(message);
+      setOverdueResolutionFieldErrors(mapFieldErrors(message, overdueResolutionFieldKeywords));
+    } finally {
+      setSubmittingOverdueResolution(false);
+    }
+  };
+
   const statusColorMap = {
     DRAFT: "default",
     NEEDS_MORE_INFO: "warning",
@@ -574,7 +681,20 @@ export default function StaffRequestDetailPage() {
         </Paper>
       )}
       {detail && (
-        <Grid container spacing={2}>
+        <>
+          {(detail.status === "PENDING" && detail.reviewDeadlineAt) && (
+            <Alert severity="info">
+              SLA thẩm định của hồ sơ này đến {formatDateTime(detail.reviewDeadlineAt)}. Quá hạn này mà chưa có quyết định,
+              hệ thống sẽ tự hủy hồ sơ.
+            </Alert>
+          )}
+          {(detail.status === "APPROVED" && detail.contractAcceptanceDeadlineAt) && (
+            <Alert severity="warning">
+              Hồ sơ đang chờ khách hàng chấp nhận hợp đồng đến {formatDateTime(detail.contractAcceptanceDeadlineAt)}.
+              Nếu khách hàng không xác nhận trước hạn, hệ thống sẽ tự hủy hồ sơ và đóng hợp đồng chờ ký.
+            </Alert>
+          )}
+          <Grid container spacing={2}>
           <Grid item xs={12}>
             <Paper sx={{ p: 2 }}>
               <Stack
@@ -737,7 +857,26 @@ export default function StaffRequestDetailPage() {
                 Lãi suất phê duyệt: {detail.approvedAnnualRate != null ? `${(Number(detail.approvedAnnualRate) * 100).toFixed(2)}%/năm` : "-"}
               </Typography>
               <Typography variant="body2">Phiên bản chính sách: {detail.decisionPolicyVersion || "-"}</Typography>
+              <Typography variant="body2">
+                Số lần yêu cầu bổ sung: {additionalInfoRequestCount}/{MAX_ADDITIONAL_INFO_REQUESTS}
+              </Typography>
+              <Typography variant="body2">
+                Yêu cầu bổ sung gần nhất: {detail.additionalInfoLastRequestedAt ? new Date(detail.additionalInfoLastRequestedAt).toLocaleString() : "-"}
+              </Typography>
+              <Typography variant="body2">
+                Hạn bổ sung hiện tại: {detail.additionalInfoRequestDeadline ? new Date(detail.additionalInfoRequestDeadline).toLocaleString() : "-"}
+              </Typography>
               {detail.intakeNote && <Alert severity="info">{detail.intakeNote}</Alert>}
+              {detail.additionalInfoRequestNote && (
+                <Alert severity="warning">
+                  Nội dung yêu cầu bổ sung hiện tại: {detail.additionalInfoRequestNote}
+                </Alert>
+              )}
+              {additionalInfoRequestLimitReached && (
+                <Alert severity="warning">
+                  Hồ sơ đã đạt giới hạn {MAX_ADDITIONAL_INFO_REQUESTS} lần yêu cầu bổ sung. Lần tiếp theo nên chuyển sang từ chối hoặc luồng xử lý khác.
+                </Alert>
+              )}
               <Typography variant="body2">Ngày nộp: {new Date(detail.createdAt).toLocaleString()}</Typography>
               <Typography variant="body2">Ghi chú quyết định: {detail.finalReason || "-"}</Typography>
               {detail.appointment && (
@@ -857,12 +996,104 @@ export default function StaffRequestDetailPage() {
                 <>
                   <Divider />
                   <Alert severity="warning">
-                    Khoản vay đang quá hạn. Màn hình này chỉ dùng để tra cứu hồ sơ gốc, hợp đồng và kết quả thẩm định ban đầu.
+                    Khoản vay đang quá hạn. Bạn có thể xử lý trực tiếp ở card công nợ bên dưới bằng cách gia hạn các kỳ còn mở và/hoặc miễn một phần phí chậm trả.
                   </Alert>
                 </>
               )}
             </InfoCard>
           </Grid>
+          {repayment && (
+            <Grid item xs={12} md={6}>
+              <InfoCard title={detail.status === "OVERDUE" ? "Xử lý khoản vay quá hạn" : "Trạng thái trả nợ hiện tại"}>
+                <Typography variant="body2">
+                  Dư nợ còn lại: {formatVnd(repayment.remainingRepayableAmount)}
+                </Typography>
+                <Typography variant="body2">
+                  Đã thanh toán: {formatVnd(repayment.totalPaidAmount)}
+                </Typography>
+                <Typography variant="body2">
+                  Kỳ đang mở: {repayment.installmentNumber != null ? `#${repayment.installmentNumber}` : "-"}
+                </Typography>
+                <Typography variant="body2">
+                  Đến hạn: {repayment.dueDate || "-"}
+                </Typography>
+                <Typography variant="body2">
+                  Số tiền phải xử lý hiện tại: {formatVnd(repayment.currentAmountDue)}
+                </Typography>
+                <Typography variant="body2">
+                  Gốc hiện tại: {formatVnd(repayment.currentPrincipalDue)}
+                </Typography>
+                <Typography variant="body2">
+                  Lãi hiện tại: {formatVnd(repayment.currentInterestDue)}
+                </Typography>
+                <Typography variant="body2">
+                  Phí chậm trả còn lại: {formatVnd(repayment.currentLateFeeDue)}
+                </Typography>
+                <Typography variant="body2">
+                  Trạng thái: {repayment.overdue ? `Quá hạn ${repayment.overdueDays} ngày` : repayment.fullyPaid ? "Đã tất toán" : "Đang theo dõi bình thường"}
+                </Typography>
+                {detail.status === "OVERDUE" && (
+                  <>
+                    <Divider />
+                    {submitError && <Alert severity="error">{submitError}</Alert>}
+                    {submitSuccess && <Alert severity="success">{submitSuccess}</Alert>}
+                    {assignmentBlockedByOtherStaff && (
+                      <Alert severity="info">
+                        Hồ sơ này đang do nhân viên khác phụ trách nên bạn chỉ có thể tra cứu, chưa thể xử lý gia hạn hoặc miễn phí chậm trả.
+                      </Alert>
+                    )}
+                    <Stack spacing={2} component="form" onSubmit={handleResolveOverdueLoan}>
+                      <TextField
+                        label="Gia hạn thêm (ngày)"
+                        type="number"
+                        value={overdueResolution.extensionDays}
+                        onChange={handleOverdueResolutionChange("extensionDays")}
+                        fullWidth
+                        inputProps={{ min: 0, max: 180, step: 1 }}
+                        disabled={submittingOverdueResolution || assignmentBlockedByOtherStaff}
+                        {...fieldErrorProps(
+                          overdueResolutionFieldErrors,
+                          "extensionDays",
+                          "Nếu nhập lớn hơn 0, hệ thống sẽ dời ngày đến hạn của kỳ đang mở và các kỳ chưa thanh toán phía sau."
+                        )}
+                      />
+                      <TextField
+                        label="Miễn / giảm phí chậm trả"
+                        value={overdueResolution.waivedLateFeeAmount}
+                        onChange={handleOverdueResolutionChange("waivedLateFeeAmount")}
+                        fullWidth
+                        inputProps={{ inputMode: "numeric" }}
+                        disabled={submittingOverdueResolution || assignmentBlockedByOtherStaff}
+                        {...fieldErrorProps(
+                          overdueResolutionFieldErrors,
+                          "waivedLateFeeAmount",
+                          `Tối đa phần phí chậm trả còn lại của kỳ hiện tại: ${formatVnd(repayment.currentLateFeeDue || 0)}.`
+                        )}
+                      />
+                      <TextField
+                        label="Lý do xử lý"
+                        value={overdueResolution.reason}
+                        onChange={handleOverdueResolutionChange("reason")}
+                        fullWidth
+                        multiline
+                        minRows={3}
+                        disabled={submittingOverdueResolution || assignmentBlockedByOtherStaff}
+                        placeholder="Ví dụ: gia hạn do khách hàng bổ sung hồ sơ chứng minh khó khăn tài chính, miễn một phần phí theo phê duyệt nội bộ"
+                        {...fieldErrorProps(overdueResolutionFieldErrors, "reason")}
+                      />
+                      <Button
+                        type="submit"
+                        variant="contained"
+                        disabled={submittingOverdueResolution || assignmentBlockedByOtherStaff}
+                      >
+                        {submittingOverdueResolution ? "Đang xử lý..." : "Lưu phương án xử lý quá hạn"}
+                      </Button>
+                    </Stack>
+                  </>
+                )}
+              </InfoCard>
+            </Grid>
+          )}
           <Grid item xs={12} md={6}>
             <InfoCard title="Chứng từ hồ sơ vay">
               {!detail.documents?.length && (
@@ -1073,6 +1304,11 @@ export default function StaffRequestDetailPage() {
                     Hồ sơ này đang do nhân viên khác phụ trách nên bạn không thể gửi quyết định ở màn hình này.
                   </Alert>
                 )}
+                {additionalInfoRequestLimitReached && !finalized && (
+                  <Alert severity="warning">
+                    Hồ sơ đã dùng hết {MAX_ADDITIONAL_INFO_REQUESTS} lần yêu cầu bổ sung. Vui lòng chuyển sang quyết định khác.
+                  </Alert>
+                )}
                 <TextField
                   select
                   label="Hành động"
@@ -1086,7 +1322,9 @@ export default function StaffRequestDetailPage() {
                   </MenuItem>
                   <MenuItem value="APPROVE">Duyệt</MenuItem>
                   <MenuItem value="REJECT">Từ chối</MenuItem>
-                  <MenuItem value="REQUEST_MORE_INFO">Yêu cầu bổ sung hồ sơ</MenuItem>
+                  <MenuItem value="REQUEST_MORE_INFO" disabled={additionalInfoRequestLimitReached}>
+                    Yêu cầu bổ sung hồ sơ
+                  </MenuItem>
                 </TextField>
                 {showApprovalFields && (
                   <>
@@ -1155,17 +1393,29 @@ export default function StaffRequestDetailPage() {
                   </>
                 )}
                 {showMoreInfoReasonField && (
-                  <TextField
-                    label="Nội dung cần bổ sung"
-                    multiline
-                    rows={3}
-                    required
-                    value={decision.appointmentNote}
-                    onChange={handleDecisionChange("appointmentNote")}
-                    disabled={submitting || finalized || assignmentBlockedByOtherStaff}
-                    placeholder="Nhập danh sách giấy tờ/thông tin khách hàng cần bổ sung."
-                    {...fieldErrorProps(decisionFieldErrors, "appointmentNote")}
-                  />
+                  <>
+                    <TextField
+                      label="Nội dung cần bổ sung"
+                      multiline
+                      rows={3}
+                      required
+                      value={decision.additionalInfoRequestNote}
+                      onChange={handleDecisionChange("additionalInfoRequestNote")}
+                      disabled={submitting || finalized || assignmentBlockedByOtherStaff || additionalInfoRequestLimitReached}
+                      placeholder="Nhập danh sách giấy tờ/thông tin khách hàng cần bổ sung."
+                      {...fieldErrorProps(decisionFieldErrors, "additionalInfoRequestNote")}
+                    />
+                    <TextField
+                      label="Hạn bổ sung"
+                      type="datetime-local"
+                      required
+                      value={decision.additionalInfoDeadlineAt}
+                      onChange={handleDecisionChange("additionalInfoDeadlineAt")}
+                      disabled={submitting || finalized || assignmentBlockedByOtherStaff || additionalInfoRequestLimitReached}
+                      InputLabelProps={{ shrink: true }}
+                      {...fieldErrorProps(decisionFieldErrors, "additionalInfoDeadlineAt", "Quá hạn này hệ thống sẽ tự từ chối hồ sơ nếu khách hàng chưa gửi lại.")}
+                    />
+                  </>
                 )}
                 {showRejectReasonField && (
                   <TextField
@@ -1183,7 +1433,7 @@ export default function StaffRequestDetailPage() {
                 <Button
                   type="submit"
                   variant="contained"
-                  disabled={submitting || finalized || assignmentBlockedByOtherStaff || !hasSelectedAction}
+                  disabled={submitting || finalized || assignmentBlockedByOtherStaff || !hasSelectedAction || (showMoreInfoReasonField && additionalInfoRequestLimitReached)}
                 >
                   {submitting ? "Đang gửi..." : "Gửi quyết định"}
                 </Button>
@@ -1223,7 +1473,8 @@ export default function StaffRequestDetailPage() {
               )}
             </InfoCard>
           </Grid>
-        </Grid>
+          </Grid>
+        </>
       )}
       <Divider />
     </Stack>

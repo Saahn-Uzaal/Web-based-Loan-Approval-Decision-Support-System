@@ -4,8 +4,10 @@ import com.loanapproval.dss.creditcheck.CustomerCreditCheckService;
 import com.loanapproval.dss.creditcheck.CustomerCreditCheckSummary;
 import com.loanapproval.dss.compliance.ComplianceAuditService;
 import com.loanapproval.dss.compliance.ComplianceOutcome;
+import com.loanapproval.dss.contract.LoanContract;
 import com.loanapproval.dss.contract.LoanContractService;
 import com.loanapproval.dss.loan.LoanApplicationVerificationService;
+import com.loanapproval.dss.loan.LoanApplicationPolicy;
 import com.loanapproval.dss.loan.LoanDocumentDownload;
 import com.loanapproval.dss.loan.LoanDocumentRecord;
 import com.loanapproval.dss.loan.LoanDocumentRepository;
@@ -14,6 +16,7 @@ import com.loanapproval.dss.loan.LoanDocumentType;
 import com.loanapproval.dss.loan.LoanApprovalReassessmentService;
 import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
+import com.loanapproval.dss.loan.LoanSlaService;
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.loan.LoanStatusHistoryService;
 import com.loanapproval.dss.loan.LoanType;
@@ -21,9 +24,13 @@ import com.loanapproval.dss.loan.dto.LoanDocumentResponse;
 import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.profile.CustomerProfile;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
+import com.loanapproval.dss.repayment.LoanRepaymentSnapshot;
+import com.loanapproval.dss.repayment.OverdueLoanResolutionService;
+import com.loanapproval.dss.repayment.RepaymentScheduleService;
 import com.loanapproval.dss.shared.PageResponse;
 import com.loanapproval.dss.staff.dto.StaffDecisionRequest;
 import com.loanapproval.dss.staff.dto.StaffDecisionResponse;
+import com.loanapproval.dss.staff.dto.ResolveOverdueLoanRequest;
 import com.loanapproval.dss.staff.dto.StaffRequestDetailResponse;
 import com.loanapproval.dss.staff.dto.StaffRequestSummaryResponse;
 import com.loanapproval.dss.verification.CustomerVerification;
@@ -80,6 +87,9 @@ public class StaffReviewService {
     private final LoanApprovalReassessmentService loanApprovalReassessmentService;
     private final NotificationService notificationService;
     private final LoanStatusHistoryService loanStatusHistoryService;
+    private final RepaymentScheduleService repaymentScheduleService;
+    private final OverdueLoanResolutionService overdueLoanResolutionService;
+    private final LoanSlaService loanSlaService;
 
     public StaffReviewService(
             StaffReviewRepository staffReviewRepository,
@@ -93,7 +103,10 @@ public class StaffReviewService {
             ComplianceAuditService complianceAuditService,
             LoanApprovalReassessmentService loanApprovalReassessmentService,
             NotificationService notificationService,
-            LoanStatusHistoryService loanStatusHistoryService) {
+            LoanStatusHistoryService loanStatusHistoryService,
+            RepaymentScheduleService repaymentScheduleService,
+            OverdueLoanResolutionService overdueLoanResolutionService,
+            LoanSlaService loanSlaService) {
         this.staffReviewRepository = staffReviewRepository;
         this.loanRepository = loanRepository;
         this.loanDocumentRepository = loanDocumentRepository;
@@ -106,6 +119,9 @@ public class StaffReviewService {
         this.loanApprovalReassessmentService = loanApprovalReassessmentService;
         this.notificationService = notificationService;
         this.loanStatusHistoryService = loanStatusHistoryService;
+        this.repaymentScheduleService = repaymentScheduleService;
+        this.overdueLoanResolutionService = overdueLoanResolutionService;
+        this.loanSlaService = loanSlaService;
     }
 
     public List<StaffRequestSummaryResponse> listReviewQueue(LoanStatus status) {
@@ -139,6 +155,13 @@ public class StaffReviewService {
     }
 
     public StaffRequestDetailResponse getRequestDetail(Long loanRequestId) {
+        LoanRecord loan = loanRepository.findById(loanRequestId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
+        if (loanSlaService.expirePendingReviewIfPastDeadline(loan, Instant.now())
+                || loanSlaService.expireContractAcceptanceIfPastDeadline(loan, Instant.now())) {
+            loan = loanRepository.findById(loanRequestId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
+        }
         StaffRequestDetailResponse detail = staffReviewRepository.findRequestDetailById(loanRequestId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
         CustomerCreditCheckSummary creditCheck = detail.customer() != null
@@ -151,13 +174,19 @@ public class StaffReviewService {
                 .map(this::toDocumentResponse)
                 .toList();
 
-        return withReviewData(detail, withCreditCheck(detail.customerProfile(), creditCheck), documents, audits);
+        return withReviewData(
+                detail,
+                withCreditCheck(detail.customerProfile(), creditCheck),
+                documents,
+                audits,
+                resolveRepaymentSummary(loan));
     }
 
     @Transactional
     public StaffRequestDetailResponse assignCase(Long staffUserId, Long loanRequestId) {
         LoanRecord loan = loanRepository.findById(loanRequestId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
+        assertNoSelfServicing(staffUserId, loan);
         assertAssignableStatus(loan.status());
         int updated = staffReviewRepository.assignCase(loanRequestId, staffUserId);
         if (updated == 0) {
@@ -185,8 +214,14 @@ public class StaffReviewService {
     public StaffDecisionResponse submitDecision(Long staffUserId, Long loanRequestId, StaffDecisionRequest request) {
         LoanRecord loan = loanRepository.findById(loanRequestId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
+        assertNoSelfServicing(staffUserId, loan);
         LoanStatus currentStatus = loan.status();
         assertCaseAlreadyAssignedTo(staffUserId, loanRequestId);
+        if (loanSlaService.expirePendingReviewIfPastDeadline(loan, Instant.now())) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Hồ sơ này đã quá SLA thẩm định và vừa bị tự động hủy.");
+        }
 
         if (!DECISION_STATUSES.contains(currentStatus)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Hồ sơ vay này đã có kết quả cuối cùng");
@@ -204,15 +239,26 @@ public class StaffReviewService {
         Instant scheduledAt = requiresAppointment ? request.scheduledAt() : null;
         String appointmentLocation = requiresAppointment ? normalize(request.appointmentLocation()) : null;
         String appointmentNote = normalize(request.appointmentNote());
+        String additionalInfoRequestNote = normalize(request.additionalInfoRequestNote());
+        Instant additionalInfoDeadlineAt =
+                request.action() == StaffDecisionAction.REQUEST_MORE_INFO ? request.additionalInfoDeadlineAt() : null;
         if (requiresAppointment) {
             validateAppointment(scheduledAt);
         }
-        if (request.action() == StaffDecisionAction.REQUEST_MORE_INFO && appointmentNote == null) {
+        if (request.action() == StaffDecisionAction.REQUEST_MORE_INFO) {
+            validateAdditionalInfoRequest(loan, additionalInfoRequestNote, additionalInfoDeadlineAt);
+        }
+        if (request.action() == StaffDecisionAction.REQUEST_MORE_INFO && additionalInfoRequestNote == null) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "Vui lòng nhập nội dung cần khách hàng bổ sung");
         }
-        String reason = buildDecisionNote(request.action(), scheduledAt, appointmentLocation, appointmentNote);
+        String reason = buildDecisionNote(
+                request.action(),
+                scheduledAt,
+                appointmentLocation,
+                appointmentNote,
+                additionalInfoRequestNote);
 
         CustomerVerification approvalVerification = null;
         if (request.action() == StaffDecisionAction.APPROVE) {
@@ -253,16 +299,25 @@ public class StaffReviewService {
                                 false)
                         : null;
 
-        int updatedRows = loanRepository.updateDecision(
-                loanRequestId,
-                nextStatus,
-                reason,
-                approvedTerms != null ? approvedTerms.eligibleLimit() : null,
-                approvedTerms != null ? approvedTerms.approvedAmount() : null,
-                approvedTerms != null ? approvedTerms.approvedTermMonths() : null,
-                approvedTerms != null ? approvedTerms.approvedAnnualRate() : null,
-                approvedTerms != null ? approvedTerms.approvedMonthlyPayment() : null,
-                approvedTerms != null ? approvedTerms.decisionPolicyVersion() : null);
+        int updatedRows;
+        if (request.action() == StaffDecisionAction.REQUEST_MORE_INFO) {
+            updatedRows = loanRepository.requestAdditionalInfo(
+                    loanRequestId,
+                    reason,
+                    additionalInfoRequestNote,
+                    java.sql.Timestamp.from(additionalInfoDeadlineAt));
+        } else {
+            updatedRows = loanRepository.updateDecision(
+                    loanRequestId,
+                    nextStatus,
+                    reason,
+                    approvedTerms != null ? approvedTerms.eligibleLimit() : null,
+                    approvedTerms != null ? approvedTerms.approvedAmount() : null,
+                    approvedTerms != null ? approvedTerms.approvedTermMonths() : null,
+                    approvedTerms != null ? approvedTerms.approvedAnnualRate() : null,
+                    approvedTerms != null ? approvedTerms.approvedMonthlyPayment() : null,
+                    approvedTerms != null ? approvedTerms.decisionPolicyVersion() : null);
+        }
         if (updatedRows == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay");
         }
@@ -286,6 +341,9 @@ public class StaffReviewService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
         if (request.action() == StaffDecisionAction.APPROVE && updatedLoan.loanType() == LoanType.UNSECURED) {
             loanContractService.createIfMissingFromApprovedLoan(updatedLoan, staffUserId);
+            loanSlaService.scheduleContractAcceptanceDeadline(
+                    updatedLoan.id(),
+                    updatedLoan.updatedAt() != null ? updatedLoan.updatedAt() : Instant.now());
         }
         complianceAuditService.log(
                 updatedLoan.customerId(),
@@ -301,7 +359,8 @@ public class StaffReviewService {
                 updatedLoan.loanType(),
                 nextStatus,
                 reason,
-                false);
+                false,
+                additionalInfoDeadlineAt);
         if (requiresAppointment && scheduledAt != null) {
             notificationService.notifyCustomerAppointmentScheduled(
                     loanRequestId,
@@ -334,6 +393,7 @@ public class StaffReviewService {
     public StaffRequestDetailResponse disburseLoan(Long staffUserId, Long loanRequestId) {
         LoanRecord loan = loanRepository.findById(loanRequestId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
+        assertNoSelfServicing(staffUserId, loan);
         ensureCaseAssignedTo(staffUserId, loanRequestId, loan.status());
         if (loan.status() != LoanStatus.CONTRACTED) {
             throw new ResponseStatusException(
@@ -366,6 +426,19 @@ public class StaffReviewService {
                 loan.customerId(),
                 staffUserId,
                 loan.approvedAmount() != null ? loan.approvedAmount() : loan.amount());
+        return getRequestDetail(loanRequestId);
+    }
+
+    @Transactional
+    public StaffRequestDetailResponse resolveOverdueLoan(
+            Long staffUserId,
+            Long loanRequestId,
+            ResolveOverdueLoanRequest request) {
+        LoanRecord loan = loanRepository.findById(loanRequestId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
+        assertNoSelfServicing(staffUserId, loan);
+        ensureCaseAssignedTo(staffUserId, loanRequestId, loan.status());
+        overdueLoanResolutionService.resolve(staffUserId, loan, request);
         return getRequestDetail(loanRequestId);
     }
 
@@ -426,7 +499,8 @@ public class StaffReviewService {
             StaffRequestDetailResponse detail,
             StaffRequestDetailResponse.CustomerProfileSummary customerProfile,
             List<LoanDocumentResponse> documents,
-            List<StaffRequestDetailResponse.DecisionAuditEntry> audits) {
+            List<StaffRequestDetailResponse.DecisionAuditEntry> audits,
+            StaffRequestDetailResponse.RepaymentSummary repayment) {
         return new StaffRequestDetailResponse(
                 detail.id(),
                 detail.loanType(),
@@ -443,6 +517,12 @@ public class StaffReviewService {
                 detail.approvedMonthlyPayment(),
                 detail.decisionPolicyVersion(),
                 detail.intakeNote(),
+                detail.additionalInfoRequestNote(),
+                detail.additionalInfoLastRequestedAt(),
+                detail.additionalInfoRequestDeadline(),
+                detail.additionalInfoRequestCount(),
+                detail.reviewDeadlineAt(),
+                detail.contractAcceptanceDeadlineAt(),
                 detail.createdAt(),
                 detail.updatedAt(),
                 detail.customer(),
@@ -452,9 +532,44 @@ public class StaffReviewService {
                 detail.verification(),
                 detail.risk(),
                 detail.contract(),
+                repayment,
                 detail.appointment(),
                 documents,
                 audits);
+    }
+
+    private StaffRequestDetailResponse.RepaymentSummary resolveRepaymentSummary(LoanRecord loan) {
+        if (loan == null) {
+            return null;
+        }
+        if (loan.status() != LoanStatus.ACTIVE
+                && loan.status() != LoanStatus.OVERDUE
+                && loan.status() != LoanStatus.CLOSED) {
+            return null;
+        }
+        LoanContract contract = loanContractService.findByLoanRequestId(loan.id());
+        if (contract == null) {
+            return null;
+        }
+        LoanRepaymentSnapshot snapshot = repaymentScheduleService.snapshot(loan, contract, loan.customerId());
+        if (snapshot == null) {
+            return null;
+        }
+        return new StaffRequestDetailResponse.RepaymentSummary(
+                snapshot.totalRepayable(),
+                snapshot.totalPaid(),
+                snapshot.outstandingAmount(),
+                snapshot.currentAmountDue(),
+                snapshot.currentPrincipalDue(),
+                snapshot.currentInterestDue(),
+                snapshot.currentFeeDue(),
+                snapshot.currentLateFeeDue(),
+                snapshot.scheduledInstallmentAmount(),
+                snapshot.installmentNumber(),
+                snapshot.dueDate(),
+                snapshot.fullyPaid(),
+                snapshot.overdue(),
+                snapshot.overdueDays());
     }
 
     private StaffRequestDetailResponse.CustomerProfileSummary withCreditCheck(
@@ -537,6 +652,15 @@ public class StaffReviewService {
                 "Chỉ có thể nhận phụ trách các hồ sơ còn trong quá trình xử lý.");
     }
 
+    private void assertNoSelfServicing(Long staffUserId, LoanRecord loan) {
+        if (staffUserId == null || loan == null || !staffUserId.equals(loan.customerId())) {
+            return;
+        }
+        throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Không thể nhận hoặc xử lý hồ sơ vay của chính tài khoản nhân viên.");
+    }
+
     private void validateAppointment(Instant scheduledAt) {
         if (scheduledAt == null) {
             throw new ResponseStatusException(
@@ -550,13 +674,45 @@ public class StaffReviewService {
         }
     }
 
-    private String buildDecisionNote(StaffDecisionAction action, Instant scheduledAt, String location, String note) {
+    private void validateAdditionalInfoRequest(
+            LoanRecord loan,
+            String requestNote,
+            Instant deadlineAt) {
+        if (requestNote == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Vui lòng nhập nội dung cần khách hàng bổ sung");
+        }
+        if (deadlineAt == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Vui lòng chọn hạn bổ sung hồ sơ");
+        }
+        if (deadlineAt.isBefore(Instant.now().minusSeconds(60))) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Hạn bổ sung hồ sơ không được nằm trong quá khứ");
+        }
+        int currentCount = loan.additionalInfoRequestCount() != null ? loan.additionalInfoRequestCount() : 0;
+        if (currentCount >= LoanApplicationPolicy.MAX_ADDITIONAL_INFO_REQUESTS) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Hồ sơ này đã dùng hết số lần yêu cầu bổ sung cho phép và không thể yêu cầu thêm.");
+        }
+    }
+
+    private String buildDecisionNote(
+            StaffDecisionAction action,
+            Instant scheduledAt,
+            String location,
+            String appointmentNote,
+            String additionalInfoRequestNote) {
         if (scheduledAt == null) {
             return switch (action) {
-                case REQUEST_MORE_INFO -> "Yêu cầu khách hàng bổ sung hồ sơ: " + note;
+                case REQUEST_MORE_INFO -> "Yêu cầu khách hàng bổ sung hồ sơ: " + additionalInfoRequestNote;
                 case APPROVE -> "Đã duyệt hồ sơ";
-                case REJECT -> note != null
-                        ? "Từ chối theo kết quả thẩm định: " + note
+                case REJECT -> appointmentNote != null
+                        ? "Từ chối theo kết quả thẩm định: " + appointmentNote
                         : "Từ chối theo kết quả thẩm định";
             };
         }
@@ -565,8 +721,8 @@ public class StaffReviewService {
         if (location != null) {
             builder.append("; địa điểm: ").append(location);
         }
-        if (note != null) {
-            builder.append("; ghi chú: ").append(note);
+        if (appointmentNote != null) {
+            builder.append("; ghi chú: ").append(appointmentNote);
         }
         return builder.toString();
     }

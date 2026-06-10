@@ -162,7 +162,8 @@ Customer:
 - `GET /api/customer/debts/metrics`
 - `POST /api/customer/debts`
 - `DELETE /api/customer/debts/{id}`
-- `POST /api/customer/loans`
+- `POST /api/customer/loans` (multipart submit hồ sơ)
+- `POST /api/customer/loans/drafts`
 - `GET /api/customer/loans`
 - `GET /api/customer/loans/paged`
 - `GET /api/customer/loans/{id}`

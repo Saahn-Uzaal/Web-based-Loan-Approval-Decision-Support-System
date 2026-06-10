@@ -18,6 +18,7 @@ import com.loanapproval.dss.loan.CollateralType;
 import com.loanapproval.dss.loan.LoanApprovalReassessmentService;
 import com.loanapproval.dss.loan.LoanApplicationVerificationService;
 import com.loanapproval.dss.loan.LoanStatusHistoryService;
+import com.loanapproval.dss.loan.LoanSlaService;
 import com.loanapproval.dss.loan.LoanPurpose;
 import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
@@ -68,6 +69,9 @@ class SecuredLoanProcedureServiceTest {
 
     @Mock
     private NotificationService notificationService;
+
+    @Mock
+    private LoanSlaService loanSlaService;
 
     @InjectMocks
     private SecuredLoanProcedureService securedLoanProcedureService;

@@ -117,7 +117,8 @@ public class NotificationService {
         LoanType loanType,
         LoanStatus status,
         String reason,
-        boolean automated
+        boolean automated,
+        Instant additionalInfoDeadlineAt
     ) {
         String loanLabel = loanType == LoanType.SECURED ? "vay thế chấp" : "vay tín chấp";
         String title;
@@ -135,7 +136,15 @@ public class NotificationService {
             title = "Hồ sơ " + loanLabel + " cần bổ sung";
             message = "Nhân viên yêu cầu bổ sung hồ sơ vay #" + loanRequestId + ".";
             if (reason != null && !reason.isBlank()) {
-                message = message + " Nội dung: " + reason;
+                String normalizedReason = reason;
+                String prefix = "Yêu cầu khách hàng bổ sung hồ sơ: ";
+                if (normalizedReason.startsWith(prefix)) {
+                    normalizedReason = normalizedReason.substring(prefix.length());
+                }
+                message = message + " Nội dung: " + normalizedReason;
+            }
+            if (additionalInfoDeadlineAt != null) {
+                message = message + " Hạn bổ sung: " + formatDateTime(additionalInfoDeadlineAt) + ".";
             }
         } else if (status == LoanStatus.APPOINTMENT_SCHEDULED) {
             title = "Hồ sơ vay thế chấp đã được duyệt sơ bộ";
@@ -157,6 +166,27 @@ public class NotificationService {
             title,
             message,
             "/customer/loans/" + loanRequestId
+        );
+    }
+
+    public void notifyCustomerLoanDecisionUpdated(
+        Long loanRequestId,
+        Long customerId,
+        Long actorUserId,
+        LoanType loanType,
+        LoanStatus status,
+        String reason,
+        boolean automated
+    ) {
+        notifyCustomerLoanDecisionUpdated(
+            loanRequestId,
+            customerId,
+            actorUserId,
+            loanType,
+            status,
+            reason,
+            automated,
+            null
         );
     }
 
@@ -406,6 +436,41 @@ public class NotificationService {
             "Khoản vay đã quá hạn thanh toán",
             message.toString(),
             "/customer/payments"
+        );
+    }
+
+    public void notifyCustomerOverdueResolutionApplied(
+        Long loanRequestId,
+        Long customerId,
+        Long staffUserId,
+        Integer extensionDays,
+        BigDecimal waivedLateFeeAmount,
+        boolean stillOverdue,
+        String reason
+    ) {
+        StringBuilder message = new StringBuilder("Nhân viên vừa cập nhật phương án xử lý nợ quá hạn cho khoản vay #")
+            .append(loanRequestId)
+            .append(".");
+        if (extensionDays != null && extensionDays > 0) {
+            message.append(" Gia hạn thêm ").append(extensionDays).append(" ngày.");
+        }
+        if (waivedLateFeeAmount != null && waivedLateFeeAmount.compareTo(BigDecimal.ZERO) > 0) {
+            message.append(" Miễn/giảm phí chậm trả: ").append(formatMoney(waivedLateFeeAmount)).append(".");
+        }
+        if (reason != null && !reason.isBlank()) {
+            message.append(" Ghi chú xử lý: ").append(reason.trim()).append(".");
+        }
+        message.append(stillOverdue
+            ? " Khoản vay vẫn đang ở trạng thái quá hạn và cần tiếp tục theo dõi thanh toán."
+            : " Khoản vay đã được đưa về trạng thái theo dõi bình thường sau khi xử lý.");
+
+        createForRecipients(
+            List.of(customerId),
+            staffUserId,
+            NotificationCategory.LOAN_OVERDUE_RESOLVED,
+            "Khoản vay quá hạn đã được cập nhật xử lý",
+            message.toString(),
+            "/customer/loans/" + loanRequestId
         );
     }
 

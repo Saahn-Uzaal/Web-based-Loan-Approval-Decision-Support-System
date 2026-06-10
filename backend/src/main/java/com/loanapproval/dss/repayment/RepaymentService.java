@@ -186,12 +186,6 @@ public class RepaymentService {
                     HttpStatus.BAD_REQUEST,
                     "Payment amount cannot exceed the remaining outstanding balance");
         }
-        if (amountPaid.compareTo(snapshot.currentAmountDue()) > 0
-                && amountPaid.compareTo(snapshot.outstandingAmount()) < 0) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Chỉ hỗ trợ thanh toán kỳ hiện tại hoặc tất toán toàn bộ khoản vay. Trả trước một phần nhiều kỳ chưa được hỗ trợ.");
-        }
 
         if (snapshot.overdue()) {
             loanDelinquencyService.assessLoan(loan.id(), paidDate);

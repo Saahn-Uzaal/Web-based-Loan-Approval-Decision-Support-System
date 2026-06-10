@@ -231,7 +231,7 @@ class RepaymentServiceTest {
     }
 
     @Test
-    void shouldRejectPartialPrepaymentAboveCurrentInstallmentWhenNotFullSettlement() {
+    void shouldAllowPartialPrepaymentAboveCurrentInstallmentWhenOutstandingRemains() {
         when(loanRepository.findById(100L)).thenReturn(Optional.of(loan(LoanStatus.ACTIVE)));
         when(loanContractService.findByLoanRequestId(100L)).thenReturn(contract());
         when(customerProfileRepository.findPaymentRatingByUserId(1L)).thenReturn(Optional.of(10));
@@ -245,18 +245,32 @@ class RepaymentServiceTest {
                 3,
                 LocalDate.now().plusDays(2),
                 false));
-
-        ResponseStatusException exception = Assertions.assertThrows(
-                ResponseStatusException.class,
-                () -> repaymentService.createByStaff(
+        when(repaymentRepository.create(any(), any(), any(), any(), any(), any(), any(), anyInt(), any()))
+                .thenAnswer(invocation -> new RepaymentRecord(
+                        2L,
                         100L,
                         1L,
-                        BigDecimal.valueOf(5_000_000),
-                        Instant.now(),
-                        null));
+                        invocation.getArgument(2),
+                        invocation.getArgument(3),
+                        invocation.getArgument(4),
+                        invocation.getArgument(5),
+                        invocation.getArgument(6),
+                        invocation.getArgument(7),
+                        invocation.getArgument(8),
+                        Instant.now()));
+        when(customerProfileRepository.adjustPaymentRating(1L, 4)).thenReturn(Optional.of(14));
 
-        Assertions.assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
-        verify(repaymentRepository, never()).create(any(), any(), any(), any(), any(), any(), any(), anyInt(), any());
+        var response = repaymentService.createByStaff(
+                100L,
+                1L,
+                BigDecimal.valueOf(5_000_000),
+                Instant.now(),
+                null);
+
+        Assertions.assertEquals(BigDecimal.valueOf(4_500_000), response.repayment().amountDue());
+        Assertions.assertEquals(BigDecimal.valueOf(5_000_000), response.repayment().amountPaid());
+        Assertions.assertEquals(RepaymentStatus.EARLY, response.repayment().repaymentStatus());
+        Assertions.assertEquals(14, response.currentRating());
     }
 
     @Test

@@ -74,7 +74,7 @@ function dueStateLabel(loan) {
     return "-";
   }
   if (loan.nextPaymentOverdue) {
-    const days = Number(loan.nextPaymentOverdueDays || 0);
+    const days = Number(loan.daysPastDue ?? loan.nextPaymentOverdueDays ?? 0);
     return days > 0 ? `Trễ hạn ${days} ngày` : "Trễ hạn";
   }
   return "Chưa quá hạn";
@@ -466,8 +466,8 @@ export default function CustomerPaymentsPage() {
           <Paper component="form" onSubmit={handleSubmit} sx={{ p: 3 }}>
             <Stack spacing={2}>
               <Alert severity="info">
-                Có thể gửi biên lai thanh toán một phần hoặc trả đủ cho kỳ hiện tại, hoặc tất toán toàn bộ dư nợ còn lại.
-                Hệ thống chưa hỗ trợ trả trước một phần cho nhiều kỳ tương lai trong một lần đối chiếu.
+                Hệ thống đang hỗ trợ đối soát trả một phần kỳ hiện tại, trả đủ kỳ, trả trước nhiều kỳ liên tiếp hoặc tất toán toàn bộ dư nợ.
+                Khoản tiền xác nhận sẽ được phân bổ vào kỳ đang mở trước, rồi tự động chạy tiếp sang các kỳ chưa thanh toán kế tiếp.
               </Alert>
               {selectedLoanHasPendingConfirmation && (
                 <Alert severity="warning">
@@ -479,7 +479,7 @@ export default function CustomerPaymentsPage() {
 
               {selectedLoan?.nextPaymentOverdue && (
                 <Alert severity="warning">
-                  Kỳ thanh toán hiện tại đã quá hạn {Number(selectedLoan.nextPaymentOverdueDays || 0)} ngày. Hệ thống chỉ clear quá hạn khi biên lai được xác nhận đủ phần còn thiếu của kỳ.
+                  Kỳ thanh toán hiện tại đã quá hạn {Number(selectedLoan.daysPastDue ?? selectedLoan.nextPaymentOverdueDays ?? 0)} ngày. Hệ thống chỉ clear quá hạn khi biên lai được xác nhận đủ phần còn thiếu của kỳ.
                 </Alert>
               )}
 
@@ -546,8 +546,8 @@ export default function CustomerPaymentsPage() {
                           </Grid>
                         </Grid>
                         <Alert severity="info">
-                          QR đang điền sẵn số tiền đến hạn của kỳ hiện tại. Nếu bạn muốn trả số tiền khác như trả một phần hoặc tất toán,
-                          hãy chuyển khoản thủ công nhưng vẫn giữ nguyên nội dung chuyển khoản mẫu để nhân viên đối chiếu nhanh.
+                          QR đang điền sẵn số tiền đến hạn của kỳ hiện tại. Nếu bạn muốn trả số tiền khác như trả một phần, trả trước nhiều kỳ
+                          hoặc tất toán, hãy chuyển khoản thủ công nhưng vẫn giữ nguyên nội dung chuyển khoản mẫu để nhân viên đối chiếu nhanh.
                         </Alert>
                       </Stack>
                     </Grid>
@@ -645,6 +645,47 @@ export default function CustomerPaymentsPage() {
                     fullWidth
                     color={selectedLoan?.nextPaymentOverdue ? "warning" : "primary"}
                     helperText={selectedLoan ? dueStateLabel(selectedLoan) : " "}
+                    InputProps={{ readOnly: true }}
+                  />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    label="Gốc đến hạn"
+                    value={selectedLoan ? formatVnd(selectedLoan.nextPrincipalDue || 0) : ""}
+                    fullWidth
+                    InputProps={{ readOnly: true }}
+                  />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    label="Lãi đến hạn"
+                    value={selectedLoan ? formatVnd(selectedLoan.nextInterestDue || 0) : ""}
+                    fullWidth
+                    InputProps={{ readOnly: true }}
+                  />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    label="Tổng phí đến hạn"
+                    value={selectedLoan ? formatVnd(selectedLoan.nextFeeDue || 0) : ""}
+                    fullWidth
+                    InputProps={{ readOnly: true }}
+                  />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    label="Phí trễ hạn"
+                    value={selectedLoan ? formatVnd(selectedLoan.lateFeeDue || 0) : ""}
+                    fullWidth
+                    color={Number(selectedLoan?.lateFeeDue || 0) > 0 ? "warning" : "primary"}
+                    InputProps={{ readOnly: true }}
+                  />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    label="Tổng phải trả kỳ này"
+                    value={selectedLoan ? formatVnd(selectedLoan.nextAmountDue || 0) : ""}
+                    fullWidth
                     InputProps={{ readOnly: true }}
                   />
                 </Grid>

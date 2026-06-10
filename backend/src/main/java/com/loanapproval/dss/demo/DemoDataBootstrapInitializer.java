@@ -1020,7 +1020,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
 
     private StoredDemoFile writeIdentityCard(Long userId, String side, String originalFileName) {
         return writeFile(
-            payslipStorageRoot.resolve(String.valueOf(userId)),
+            payslipStorageRoot.resolve(String.valueOf(userId)).resolve("identity-card"),
             "demo-id-card-" + side + "-" + userId + ".png",
             originalFileName,
             "image/png",

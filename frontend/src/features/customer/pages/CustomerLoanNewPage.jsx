@@ -26,6 +26,7 @@ import {
 } from "@/features/customer/api/loanApi";
 import { getMyProfileApi } from "@/features/customer/api/profileApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
+import { BLOCKING_APPLICATION_STATUSES } from "@/shared/constants/loanApplicationPolicy";
 import { formatVnd, formatVndInput, parseVndInput } from "@/shared/utils/currency";
 import { clearFieldError, fieldErrorProps, mapFieldErrors } from "@/shared/utils/formErrors";
 import { LOAN_IMAGE_ACCEPT, formatFileSize, isAcceptedLoanImageFile } from "@/shared/utils/files";
@@ -60,15 +61,6 @@ const loanFieldKeywords = {
   licensePlateImage: ["biển số xe", "license plate"],
   faceCapture: ["ảnh khuôn mặt", "khuôn mặt", "face"]
 };
-
-const BLOCKING_APPLICATION_STATUSES = [
-  "DRAFT",
-  "PENDING",
-  "NEEDS_MORE_INFO",
-  "APPOINTMENT_SCHEDULED",
-  "APPROVED",
-  "CONTRACTED"
-];
 
 function FilePicker({ label, file, currentFileName, disabled, onChange, error, helperText }) {
   return (

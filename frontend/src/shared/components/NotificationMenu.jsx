@@ -162,6 +162,11 @@ function typeConfig(type) {
         icon: <PaymentRoundedIcon sx={{ fontSize: 14 }} />,
         color: "#b71c1c"
       };
+    case "LOAN_OVERDUE_RESOLVED":
+      return {
+        icon: <TaskAltRoundedIcon sx={{ fontSize: 14 }} />,
+        color: "#2e7d32"
+      };
     case "LOAN_CLOSED":
       return {
         icon: <TaskAltRoundedIcon sx={{ fontSize: 14 }} />,

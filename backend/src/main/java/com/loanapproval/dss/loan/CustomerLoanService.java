@@ -14,8 +14,10 @@ import com.loanapproval.dss.dss.DecisionInput;
 import com.loanapproval.dss.dss.DssRecommendation;
 import com.loanapproval.dss.dss.DssResult;
 import com.loanapproval.dss.dss.DssResultRepository;
+import com.loanapproval.dss.loan.dto.AcceptApprovedLoanRequest;
 import com.loanapproval.dss.loan.dto.CreateLoanRequest;
 import com.loanapproval.dss.loan.dto.LoanDetailResponse;
+import com.loanapproval.dss.loan.dto.LoanContractAcceptanceChallengeResponse;
 import com.loanapproval.dss.loan.dto.LoanDocumentResponse;
 import com.loanapproval.dss.loan.dto.LoanSummaryResponse;
 import com.loanapproval.dss.notification.NotificationService;
@@ -32,6 +34,7 @@ import com.loanapproval.dss.verification.CustomerVerificationService;
 import com.loanapproval.dss.verification.VerificationStatus;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -57,8 +60,10 @@ public class CustomerLoanService {
     private final RiskAssessmentService riskAssessmentService;
     private final ComplianceAuditService complianceAuditService;
     private final LoanContractService loanContractService;
+    private final LoanContractAcceptanceCaptchaService loanContractAcceptanceCaptchaService;
     private final CustomerInformationVerificationService customerInformationVerificationService;
     private final LoanEligibilityService loanEligibilityService;
+    private final LoanSlaService loanSlaService;
     private final RepaymentScheduleService repaymentScheduleService;
     private final NotificationService notificationService;
     private final LoanApplicationSnapshotRepository loanApplicationSnapshotRepository;
@@ -78,8 +83,10 @@ public class CustomerLoanService {
             RiskAssessmentService riskAssessmentService,
             ComplianceAuditService complianceAuditService,
             LoanContractService loanContractService,
+            LoanContractAcceptanceCaptchaService loanContractAcceptanceCaptchaService,
             CustomerInformationVerificationService customerInformationVerificationService,
             LoanEligibilityService loanEligibilityService,
+            LoanSlaService loanSlaService,
             RepaymentScheduleService repaymentScheduleService,
             NotificationService notificationService,
             LoanApplicationSnapshotRepository loanApplicationSnapshotRepository,
@@ -97,8 +104,10 @@ public class CustomerLoanService {
         this.riskAssessmentService = riskAssessmentService;
         this.complianceAuditService = complianceAuditService;
         this.loanContractService = loanContractService;
+        this.loanContractAcceptanceCaptchaService = loanContractAcceptanceCaptchaService;
         this.customerInformationVerificationService = customerInformationVerificationService;
         this.loanEligibilityService = loanEligibilityService;
+        this.loanSlaService = loanSlaService;
         this.repaymentScheduleService = repaymentScheduleService;
         this.notificationService = notificationService;
         this.loanApplicationSnapshotRepository = loanApplicationSnapshotRepository;
@@ -285,9 +294,27 @@ public class CustomerLoanService {
     }
 
     public LoanDetailResponse getMineById(Long customerId, Long id) {
-        LoanRecord loan = loanRepository.findOwnedById(id, customerId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
+        LoanRecord loan = reloadOwnedLoan(customerId, id);
+        if (loanSlaService.expirePendingReviewIfPastDeadline(loan, Instant.now())
+                || loanSlaService.expireContractAcceptanceIfPastDeadline(loan, Instant.now())) {
+            loan = reloadOwnedLoan(customerId, id);
+        }
         return toDetailResponse(loan);
+    }
+
+    public LoanContractAcceptanceChallengeResponse getAcceptanceChallenge(Long customerId, Long id) {
+        LoanRecord loan = reloadOwnedLoan(customerId, id);
+        if (loanSlaService.expireContractAcceptanceIfPastDeadline(loan, Instant.now())) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Hồ sơ đã quá hạn chấp nhận hợp đồng và vừa bị tự động hủy.");
+        }
+        if (loan.status() != LoanStatus.APPROVED) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Chỉ có thể lấy CAPTCHA xác nhận khi hồ sơ đang ở trạng thái đã duyệt.");
+        }
+        return loanContractAcceptanceCaptchaService.generateChallenge(customerId, id);
     }
 
     private LoanAssessmentData buildLoanAssessment(Long customerId, CreateLoanRequest request, LoanType loanType) {
@@ -389,6 +416,12 @@ public class CustomerLoanService {
                 assessment.verification(),
                 assessment.creditCheck());
         LoanRecord refreshedLoan = loanRepository.findOwnedById(loan.id(), customerId).orElse(loan);
+        if (refreshedLoan.status() == LoanStatus.PENDING) {
+            loanSlaService.schedulePendingReviewDeadline(
+                    refreshedLoan.id(),
+                    refreshedLoan.updatedAt() != null ? refreshedLoan.updatedAt() : Instant.now());
+            refreshedLoan = loanRepository.findOwnedById(loan.id(), customerId).orElse(refreshedLoan);
+        }
 
         complianceAuditService.log(
                 customerId,
@@ -416,15 +449,30 @@ public class CustomerLoanService {
     }
 
     @Transactional
-    public LoanDetailResponse acceptApprovedLoan(Long customerId, Long id) {
+    public LoanDetailResponse acceptApprovedLoan(Long customerId, Long id, AcceptApprovedLoanRequest request) {
         LoanRecord loan = loanRepository.findOwnedById(id, customerId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
         Long assignedStaffUserId = loanRepository.findAssignedStaffUserId(id).orElse(null);
+        if (!Boolean.TRUE.equals(request.reviewConfirmed())) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Bạn cần xác nhận đã đọc kỹ điều khoản trước khi chấp nhận hợp đồng");
+        }
+        if (loanSlaService.expireContractAcceptanceIfPastDeadline(loan, Instant.now())) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Hồ sơ đã quá hạn chấp nhận hợp đồng và vừa bị tự động hủy.");
+        }
         if (loan.status() != LoanStatus.APPROVED) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
                     "Chỉ có thể chấp nhận điều khoản khi hồ sơ đã được phê duyệt và chưa ký hợp đồng");
         }
+        loanContractAcceptanceCaptchaService.validateChallenge(
+                customerId,
+                id,
+                request.captchaToken(),
+                request.captchaAnswer());
 
         LoanContract contract = loanContractService.activateForCustomer(customerId, id);
         int updated = loanRepository.markAcceptedAndContracted(
@@ -457,20 +505,14 @@ public class CustomerLoanService {
         LoanRecord loan = loanRepository.findOwnedById(id, customerId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay"));
         Long assignedStaffUserId = loanRepository.findAssignedStaffUserId(id).orElse(null);
-        if (loan.status() == LoanStatus.CONTRACTED
-                || loan.status() == LoanStatus.ACTIVE
-                || loan.status() == LoanStatus.OVERDUE
-                || loan.status() == LoanStatus.CLOSED
-                || loan.status() == LoanStatus.REJECTED
-                || loan.status() == LoanStatus.WITHDRAWN) {
+        if (!LoanApplicationPolicy.canCustomerWithdraw(loan.status())) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
-                    "Không thể rút hồ sơ khi hồ sơ đã ký hợp đồng, giải ngân hoặc đã có kết quả cuối");
+                    "Chỉ có thể rút hồ sơ khi hồ sơ đang là bản nháp, chờ thẩm định hoặc đang chờ bổ sung.");
         }
-        int updated = loanRepository.updateOwnedStatusAndReason(
+        int updated = loanRepository.withdrawOwnedApplication(
                 id,
                 customerId,
-                LoanStatus.WITHDRAWN,
                 "Khách hàng đã rút hồ sơ trước khi ký hợp đồng");
         if (updated == 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Hồ sơ vay đã thay đổi trạng thái trong lúc xử lý");
@@ -506,6 +548,7 @@ public class CustomerLoanService {
         if (loan.status() != LoanStatus.NEEDS_MORE_INFO) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Chỉ gửi lại hồ sơ khi nhân viên yêu cầu bổ sung");
         }
+        assertAdditionalInfoRequestStillOpen(loan);
         LoanApplicationFiles safeFiles = files != null ? files : LoanApplicationFiles.empty();
         if (!hasSupplementalDocuments(safeFiles)) {
             throw new ResponseStatusException(
@@ -513,14 +556,14 @@ public class CustomerLoanService {
                     "Vui lòng đính kèm ít nhất một giấy tờ bổ sung trước khi gửi lại hồ sơ");
         }
         storeSupplementalDocuments(id, safeFiles.supplementalDocuments());
-        int updated = loanRepository.updateOwnedStatusAndReason(
+        int updated = loanRepository.resubmitOwnedApplication(
                 id,
                 customerId,
-                LoanStatus.PENDING,
                 "Khách hàng đã gửi lại hồ sơ sau khi bổ sung thông tin");
         if (updated == 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Hồ sơ vay đã thay đổi trạng thái trong lúc xử lý");
         }
+        loanSlaService.schedulePendingReviewDeadline(id, Instant.now());
         loanStatusHistoryService.recordTransition(
                 loan,
                 LoanStatus.PENDING,
@@ -705,7 +748,8 @@ public class CustomerLoanService {
                     loan.loanType(),
                     LoanStatus.REJECTED,
                     reason,
-                    true);
+                    true,
+                    null);
             return;
         }
 
@@ -732,7 +776,8 @@ public class CustomerLoanService {
                     loan.loanType(),
                     LoanStatus.REJECTED,
                     reason,
-                    true);
+                    true,
+                    null);
             return;
         }
 
@@ -759,7 +804,8 @@ public class CustomerLoanService {
                     loan.loanType(),
                     LoanStatus.REJECTED,
                     reason,
-                    true);
+                    true,
+                    null);
             return;
         }
 
@@ -861,10 +907,15 @@ public class CustomerLoanService {
                 snapshot != null ? snapshot.totalRepayable() : null,
                 snapshot != null ? snapshot.totalPaid() : null,
                 snapshot != null ? snapshot.outstandingAmount() : null,
+                snapshot != null ? snapshot.currentPrincipalDue() : null,
+                snapshot != null ? snapshot.currentInterestDue() : null,
+                snapshot != null ? snapshot.currentFeeDue() : null,
+                snapshot != null ? snapshot.currentLateFeeDue() : null,
                 snapshot != null ? snapshot.currentAmountDue() : null,
                 snapshot != null ? snapshot.installmentNumber() : null,
                 snapshot != null ? snapshot.dueDate() : null,
                 snapshot != null ? snapshot.overdue() : null,
+                snapshot != null ? snapshot.overdueDays() : null,
                 snapshot != null ? snapshot.overdueDays() : null,
                 loan.createdAt());
     }
@@ -897,6 +948,12 @@ public class CustomerLoanService {
                 loan.approvedMonthlyPayment(),
                 loan.decisionPolicyVersion(),
                 loan.intakeNote(),
+                loan.additionalInfoRequestNote(),
+                loan.additionalInfoLastRequestedAt(),
+                loan.additionalInfoRequestDeadline(),
+                loan.additionalInfoRequestCount(),
+                loan.reviewDeadlineAt(),
+                loan.contractAcceptanceDeadlineAt(),
                 loanAppointmentRepository.findLatestByLoanRequestId(loan.id()).orElse(null),
                 loanDocumentRepository.findByLoanRequestId(loan.id()).stream()
                         .map(this::toDocumentResponse)
@@ -969,6 +1026,45 @@ public class CustomerLoanService {
         throw new ResponseStatusException(
                 HttpStatus.CONFLICT,
                 "Mỗi khách hàng chỉ được phép có 1 hồ sơ vay tại một thời điểm. Vui lòng hoàn tất hoặc rút hồ sơ hiện tại trước khi tạo mới.");
+    }
+
+    private void assertAdditionalInfoRequestStillOpen(LoanRecord loan) {
+        Instant deadline = loan.additionalInfoRequestDeadline();
+        if (deadline == null || !deadline.isBefore(Instant.now())) {
+            return;
+        }
+
+        String reason = buildAdditionalInfoExpiredReason(deadline);
+        loanRepository.updateStatusAndReason(loan.id(), LoanStatus.REJECTED, reason);
+        loanStatusHistoryService.recordTransition(
+                loan,
+                LoanStatus.REJECTED,
+                null,
+                "ADDITIONAL_INFO_DEADLINE",
+                reason);
+        complianceAuditService.log(
+                loan.customerId(),
+                loan.id(),
+                null,
+                "LOAN_APPLICATION_AUTO_REJECTED",
+                ComplianceOutcome.FAILED,
+                reason);
+        notificationService.notifyCustomerLoanDecisionUpdated(
+                loan.id(),
+                loan.customerId(),
+                null,
+                loan.loanType(),
+                LoanStatus.REJECTED,
+                reason,
+                true,
+                null);
+        throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Yêu cầu bổ sung hồ sơ này đã quá hạn và hồ sơ đã bị từ chối tự động.");
+    }
+
+    private String buildAdditionalInfoExpiredReason(Instant deadline) {
+        return "Tự động từ chối vì khách hàng không bổ sung hồ sơ trước hạn " + deadline + ".";
     }
 
     private record LoanAssessmentData(

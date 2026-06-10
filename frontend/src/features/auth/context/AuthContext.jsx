@@ -1,5 +1,10 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { loginApi, meApi, registerApi } from "@/features/auth/api/authApi";
+import {
+  loginApi,
+  meApi,
+  registerApi,
+  resendVerificationApi
+} from "@/features/auth/api/authApi";
 
 const STORAGE_KEY = "loan_dss_auth";
 const AuthContext = createContext(null);
@@ -71,10 +76,11 @@ export function AuthProvider({ children }) {
   };
 
   const register = async ({ email, password, role }) => {
-    const payload = await registerApi({ email, password, role });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-    setSession(payload);
-    return payload.user;
+    return registerApi({ email, password, role });
+  };
+
+  const resendVerification = async ({ email }) => {
+    return resendVerificationApi({ email });
   };
 
   const logout = () => {
@@ -91,6 +97,7 @@ export function AuthProvider({ children }) {
       isInitializing,
       login,
       register,
+      resendVerification,
       logout
     }),
     [session, isInitializing]

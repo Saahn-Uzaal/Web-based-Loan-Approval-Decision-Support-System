@@ -38,6 +38,8 @@ public class SecurityConfig {
                     "/actuator/health",
                     "/actuator/info",
                     "/api/auth/register",
+                    "/api/auth/verify-email",
+                    "/api/auth/resend-verification",
                     "/api/auth/login",
                     "/api/auth/refresh"
                 ).permitAll()

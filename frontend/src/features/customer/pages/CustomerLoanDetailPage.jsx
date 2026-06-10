@@ -14,6 +14,7 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  TextField,
   Typography
 } from "@mui/material";
 import { useEffect, useMemo, useState } from "react";
@@ -23,10 +24,12 @@ import {
   acceptLoanApi,
   downloadLoanDocumentApi,
   getLoanDetailApi,
+  getLoanAcceptanceChallengeApi,
   resubmitLoanApi,
   withdrawLoanApi
 } from "@/features/customer/api/loanApi";
 import { useAuth } from "@/features/auth/context/AuthContext";
+import { CUSTOMER_WITHDRAWABLE_STATUSES } from "@/shared/constants/loanApplicationPolicy";
 import { formatVnd } from "@/shared/utils/currency";
 import {
   formatFileSize,
@@ -75,6 +78,14 @@ function formatFinalReason(reason) {
   return tail.length > 0 ? [formattedFirstPart, ...tail].join("; ") : formattedFirstPart;
 }
 
+function formatDateTime(value) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString("vi-VN");
+}
+
 export default function CustomerLoanDetailPage() {
   const { id } = useParams();
   const { accessToken } = useAuth();
@@ -89,6 +100,10 @@ export default function CustomerLoanDetailPage() {
   const [contractLoading, setContractLoading] = useState(false);
   const [contractError, setContractError] = useState("");
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
+  const [acceptanceChallenge, setAcceptanceChallenge] = useState(null);
+  const [acceptanceCaptchaAnswer, setAcceptanceCaptchaAnswer] = useState("");
+  const [challengeLoading, setChallengeLoading] = useState(false);
+  const [challengeError, setChallengeError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -169,7 +184,45 @@ export default function CustomerLoanDetailPage() {
 
   useEffect(() => {
     setReviewConfirmed(false);
+    setAcceptanceCaptchaAnswer("");
   }, [loan?.id, loan?.status, contract?.id]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadChallenge() {
+      if (!accessToken || !loan?.id || !contract || loan.status !== "APPROVED") {
+        setAcceptanceChallenge(null);
+        setChallengeError("");
+        setChallengeLoading(false);
+        return;
+      }
+      setChallengeLoading(true);
+      setChallengeError("");
+      try {
+        const response = await getLoanAcceptanceChallengeApi(accessToken, loan.id);
+        if (!active) {
+          return;
+        }
+        setAcceptanceChallenge(response);
+      } catch (err) {
+        if (!active) {
+          return;
+        }
+        setAcceptanceChallenge(null);
+        setChallengeError(err.message || "Không tải được CAPTCHA xác nhận hợp đồng");
+      } finally {
+        if (active) {
+          setChallengeLoading(false);
+        }
+      }
+    }
+
+    loadChallenge();
+    return () => {
+      active = false;
+    };
+  }, [accessToken, contract, loan?.id, loan?.status]);
 
   const statusColorMap = {
     DRAFT: "default",
@@ -217,19 +270,35 @@ export default function CustomerLoanDetailPage() {
   };
 
   const handleAcceptLoan = async () => {
-    if (!loan?.id || !contract) {
+    const parsedCaptchaAnswer = Number(acceptanceCaptchaAnswer);
+    if (!loan?.id || !contract || !acceptanceChallenge || !Number.isFinite(parsedCaptchaAnswer)) {
       return;
     }
     setActionLoading("accept");
     setError("");
     try {
-      const updated = await acceptLoanApi(accessToken, loan.id);
+      const updated = await acceptLoanApi(accessToken, loan.id, {
+        reviewConfirmed: true,
+        captchaToken: acceptanceChallenge.captchaToken,
+        captchaAnswer: parsedCaptchaAnswer
+      });
       setLoan(updated);
       const refreshedContract = await getMyLoanContractApi(accessToken, loan.id);
       setContract(refreshedContract);
       setReviewConfirmed(false);
+      setAcceptanceCaptchaAnswer("");
+      setAcceptanceChallenge(null);
+      setChallengeError("");
     } catch (err) {
       setError(err.message || "Không thực hiện được thao tác hồ sơ vay");
+      setAcceptanceCaptchaAnswer("");
+      try {
+        const refreshedChallenge = await getLoanAcceptanceChallengeApi(accessToken, loan.id);
+        setAcceptanceChallenge(refreshedChallenge);
+      } catch (challengeErr) {
+        setAcceptanceChallenge(null);
+        setChallengeError(challengeErr.message || "Không tải lại được CAPTCHA xác nhận hợp đồng");
+      }
     } finally {
       setActionLoading("");
     }
@@ -268,7 +337,7 @@ export default function CustomerLoanDetailPage() {
     }
   };
 
-  const canWithdraw = ["DRAFT", "PENDING", "NEEDS_MORE_INFO", "APPOINTMENT_SCHEDULED", "APPROVED"].includes(loan?.status);
+  const canWithdraw = CUSTOMER_WITHDRAWABLE_STATUSES.includes(loan?.status);
 
   const finalReasonText = formatFinalReason(loan?.finalReason);
 
@@ -378,6 +447,21 @@ export default function CustomerLoanDetailPage() {
             </Alert>
           )}
 
+          {loan.status === "NEEDS_MORE_INFO" && (
+            <Alert severity="warning" sx={{ mt: 2 }}>
+              Nhân viên đang chờ bạn bổ sung hồ sơ.
+              {loan.additionalInfoRequestNote ? ` Nội dung cần bổ sung: ${loan.additionalInfoRequestNote}.` : ""}
+              {loan.additionalInfoRequestDeadline ? ` Hạn bổ sung: ${formatDateTime(loan.additionalInfoRequestDeadline)}.` : ""}
+              {loan.additionalInfoRequestCount != null ? ` Số lần đã yêu cầu: ${loan.additionalInfoRequestCount}.` : ""}
+            </Alert>
+          )}
+          {loan.status === "PENDING" && loan.reviewDeadlineAt && (
+            <Alert severity="info" sx={{ mt: 2 }}>
+              Hồ sơ đang chờ thẩm định đến {formatDateTime(loan.reviewDeadlineAt)}. Nếu quá hạn này mà chưa có quyết định,
+              hệ thống sẽ tự hủy hồ sơ theo SLA xử lý.
+            </Alert>
+          )}
+
           {shouldLoadContract && (
             <>
               <Divider sx={{ my: 2 }} />
@@ -444,8 +528,11 @@ export default function CustomerLoanDetailPage() {
                               <TableCell>Gốc đầu kỳ</TableCell>
                               <TableCell>Gốc kỳ này</TableCell>
                               <TableCell>Lãi kỳ này</TableCell>
+                              <TableCell>Phí phạt</TableCell>
                               <TableCell>Tổng kỳ này</TableCell>
+                              <TableCell>Đã trả phí</TableCell>
                               <TableCell>Đã trả</TableCell>
+                              <TableCell>Còn phí</TableCell>
                               <TableCell>Còn lại</TableCell>
                               <TableCell>Trạng thái</TableCell>
                             </TableRow>
@@ -458,8 +545,11 @@ export default function CustomerLoanDetailPage() {
                                 <TableCell>{formatVnd(installment.openingPrincipal)}</TableCell>
                                 <TableCell>{formatVnd(installment.scheduledPrincipal)}</TableCell>
                                 <TableCell>{formatVnd(installment.scheduledInterest)}</TableCell>
+                                <TableCell>{formatVnd(installment.scheduledFee)}</TableCell>
                                 <TableCell>{formatVnd(installment.scheduledAmount)}</TableCell>
+                                <TableCell>{formatVnd(installment.paidFee)}</TableCell>
                                 <TableCell>{formatVnd(installment.paidAmount)}</TableCell>
+                                <TableCell>{formatVnd(installment.remainingFee)}</TableCell>
                                 <TableCell>{formatVnd(installment.remainingAmount)}</TableCell>
                                 <TableCell>{labelInstallmentStatus(installment.status)}</TableCell>
                               </TableRow>
@@ -473,8 +563,14 @@ export default function CustomerLoanDetailPage() {
                 {loan.status === "APPROVED" && contract && (
                   <>
                     <Alert severity="info">
-                      Hồ sơ đã được duyệt nhưng hợp đồng chỉ có hiệu lực sau khi bạn xem kỹ các điều khoản và xác nhận chấp nhận.
+                      Hồ sơ đã được duyệt nhưng hợp đồng chỉ có hiệu lực sau khi bạn xem kỹ các điều khoản, xác nhận chủ động và vượt qua CAPTCHA xác nhận.
                     </Alert>
+                    {loan.contractAcceptanceDeadlineAt && (
+                      <Alert severity="warning">
+                        Bạn cần chấp nhận hợp đồng trước {formatDateTime(loan.contractAcceptanceDeadlineAt)}. Quá hạn này hồ sơ sẽ tự hủy
+                        và hợp đồng chờ ký sẽ bị đóng.
+                      </Alert>
+                    )}
                     <FormControlLabel
                       control={
                         <Checkbox
@@ -484,6 +580,53 @@ export default function CustomerLoanDetailPage() {
                       }
                       label="Tôi đã xem các điều khoản hợp đồng và đồng ý tiếp tục ký/chấp nhận."
                     />
+                    {challengeError && <Alert severity="error">{challengeError}</Alert>}
+                    {challengeLoading && (
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <CircularProgress size={18} />
+                        <Typography variant="body2" color="text.secondary">
+                          Đang tạo CAPTCHA xác nhận...
+                        </Typography>
+                      </Stack>
+                    )}
+                    {acceptanceChallenge && (
+                      <Stack
+                        direction={{ xs: "column", sm: "row" }}
+                        spacing={1}
+                        alignItems={{ sm: "flex-start" }}
+                      >
+                        <TextField
+                          label="CAPTCHA xác nhận"
+                          value={acceptanceCaptchaAnswer}
+                          onChange={(event) => setAcceptanceCaptchaAnswer(event.target.value)}
+                          fullWidth
+                          inputProps={{ inputMode: "numeric", pattern: "[0-9-]*" }}
+                          helperText={acceptanceChallenge.question}
+                        />
+                        <Button
+                          variant="outlined"
+                          onClick={async () => {
+                            if (!loan?.id) {
+                              return;
+                            }
+                            setChallengeLoading(true);
+                            setChallengeError("");
+                            try {
+                              const refreshedChallenge = await getLoanAcceptanceChallengeApi(accessToken, loan.id);
+                              setAcceptanceChallenge(refreshedChallenge);
+                              setAcceptanceCaptchaAnswer("");
+                            } catch (err) {
+                              setChallengeError(err.message || "Không tải được CAPTCHA xác nhận hợp đồng");
+                            } finally {
+                              setChallengeLoading(false);
+                            }
+                          }}
+                          disabled={challengeLoading}
+                        >
+                          Làm mới CAPTCHA
+                        </Button>
+                      </Stack>
+                    )}
                   </>
                 )}
               </Stack>
@@ -537,7 +680,13 @@ export default function CustomerLoanDetailPage() {
                   <Button
                     variant="contained"
                     onClick={handleAcceptLoan}
-                    disabled={Boolean(actionLoading) || !contract || !reviewConfirmed}
+                    disabled={
+                      Boolean(actionLoading)
+                      || !contract
+                      || !reviewConfirmed
+                      || !acceptanceChallenge
+                      || acceptanceCaptchaAnswer.trim() === ""
+                    }
                   >
                     {actionLoading === "accept" ? "Đang xử lý..." : "Chấp nhận hợp đồng"}
                   </Button>

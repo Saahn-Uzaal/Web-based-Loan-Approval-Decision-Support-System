@@ -4,6 +4,7 @@ import com.loanapproval.dss.loan.LoanDocumentDownload;
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.security.AuthenticatedUser;
 import com.loanapproval.dss.shared.PageResponse;
+import com.loanapproval.dss.staff.dto.ResolveOverdueLoanRequest;
 import com.loanapproval.dss.staff.dto.StaffDecisionRequest;
 import com.loanapproval.dss.staff.dto.StaffDecisionResponse;
 import com.loanapproval.dss.staff.dto.StaffRequestDetailResponse;
@@ -123,6 +124,15 @@ public class StaffReviewController {
             @PathVariable("id") Long id) {
         AuthenticatedUser staff = extractUser(authentication);
         return staffReviewService.disburseLoan(staff.id(), id);
+    }
+
+    @PostMapping("/{id}/overdue-resolution")
+    public StaffRequestDetailResponse resolveOverdueLoan(
+            Authentication authentication,
+            @PathVariable("id") Long id,
+            @Valid @RequestBody ResolveOverdueLoanRequest request) {
+        AuthenticatedUser staff = extractUser(authentication);
+        return staffReviewService.resolveOverdueLoan(staff.id(), id, request);
     }
 
     @GetMapping("/{id}/documents/{documentId}")

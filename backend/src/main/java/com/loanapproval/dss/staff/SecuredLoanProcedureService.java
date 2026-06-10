@@ -9,6 +9,7 @@ import com.loanapproval.dss.loan.LoanApprovalReassessmentService;
 import com.loanapproval.dss.loan.LoanApplicationVerificationService;
 import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
+import com.loanapproval.dss.loan.LoanSlaService;
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.loan.LoanStatusHistoryService;
 import com.loanapproval.dss.loan.LoanType;
@@ -41,6 +42,7 @@ public class SecuredLoanProcedureService {
     private final LoanApprovalReassessmentService loanApprovalReassessmentService;
     private final LoanStatusHistoryService loanStatusHistoryService;
     private final NotificationService notificationService;
+    private final LoanSlaService loanSlaService;
 
     public SecuredLoanProcedureService(
             SecuredLoanProcedureRepository securedLoanProcedureRepository,
@@ -50,7 +52,8 @@ public class SecuredLoanProcedureService {
             LoanApplicationVerificationService loanApplicationVerificationService,
             LoanApprovalReassessmentService loanApprovalReassessmentService,
             LoanStatusHistoryService loanStatusHistoryService,
-            NotificationService notificationService) {
+            NotificationService notificationService,
+            LoanSlaService loanSlaService) {
         this.securedLoanProcedureRepository = securedLoanProcedureRepository;
         this.loanRepository = loanRepository;
         this.loanContractService = loanContractService;
@@ -59,6 +62,7 @@ public class SecuredLoanProcedureService {
         this.loanApprovalReassessmentService = loanApprovalReassessmentService;
         this.loanStatusHistoryService = loanStatusHistoryService;
         this.notificationService = notificationService;
+        this.loanSlaService = loanSlaService;
     }
 
     public List<StaffSecuredProcedureSummaryResponse> listSecuredProcedures() {
@@ -225,6 +229,9 @@ public class SecuredLoanProcedureService {
                     staffUserId,
                     buildContractScheduleTerms(requestToPersist, reassessment),
                     LoanContractStatus.PENDING_ACCEPTANCE);
+            loanSlaService.scheduleContractAcceptanceDeadline(
+                    approvedLoan.id(),
+                    approvedLoan.updatedAt() != null ? approvedLoan.updatedAt() : Instant.now());
         }
 
         complianceAuditService.log(

@@ -2,8 +2,10 @@ package com.loanapproval.dss.loan;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.loanapproval.dss.loan.dto.AcceptApprovedLoanRequest;
 import com.loanapproval.dss.loan.dto.CreateLoanRequest;
 import com.loanapproval.dss.loan.dto.LoanDetailResponse;
+import com.loanapproval.dss.loan.dto.LoanContractAcceptanceChallengeResponse;
 import com.loanapproval.dss.loan.dto.LoanSummaryResponse;
 import com.loanapproval.dss.security.AuthenticatedUser;
 import com.loanapproval.dss.shared.PageResponse;
@@ -57,8 +59,9 @@ public class CustomerLoanController {
     public LoanDetailResponse createLoan(
             Authentication authentication,
             @Valid @RequestBody CreateLoanRequest request) {
-        AuthenticatedUser user = extractUser(authentication);
-        return customerLoanService.createDraft(user.id(), request);
+        throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Để nộp hồ sơ vay thẩm định, vui lòng gửi multipart/form-data qua /api/customer/loans. Nếu chỉ muốn lưu nháp JSON, hãy dùng /api/customer/loans/drafts.");
     }
 
     @PostMapping(value = "/drafts", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -212,9 +215,18 @@ public class CustomerLoanController {
     @PostMapping("/{id}/accept")
     public LoanDetailResponse acceptApprovedLoan(
             Authentication authentication,
+            @PathVariable("id") Long id,
+            @Valid @RequestBody AcceptApprovedLoanRequest request) {
+        AuthenticatedUser user = extractUser(authentication);
+        return customerLoanService.acceptApprovedLoan(user.id(), id, request);
+    }
+
+    @GetMapping("/{id}/acceptance-challenge")
+    public LoanContractAcceptanceChallengeResponse getAcceptanceChallenge(
+            Authentication authentication,
             @PathVariable("id") Long id) {
         AuthenticatedUser user = extractUser(authentication);
-        return customerLoanService.acceptApprovedLoan(user.id(), id);
+        return customerLoanService.getAcceptanceChallenge(user.id(), id);
     }
 
     @PostMapping("/{id}/withdraw")

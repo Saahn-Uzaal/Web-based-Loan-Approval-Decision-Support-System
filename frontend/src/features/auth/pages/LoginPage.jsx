@@ -17,6 +17,7 @@ import {
   ArrowBackRounded as BackIcon,
   AutoGraphRounded as ScoreIcon,
   LockRounded as LockIcon,
+  MarkEmailReadRounded as MailVerifiedIcon,
   PaymentsRounded as PaymentIcon,
   ShieldRounded as ShieldIcon
 } from "@mui/icons-material";
@@ -74,13 +75,17 @@ function ModeButton({ active, onClick, children }) {
 export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, register, isAuthenticated, user, isInitializing } = useAuth();
+  const { login, register, resendVerification, isAuthenticated, user, isInitializing } = useAuth();
 
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [info, setInfo] = useState("");
+  const [showResendVerification, setShowResendVerification] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [resendingVerification, setResendingVerification] = useState(false);
 
   if (!isInitializing && isAuthenticated) {
     return <Navigate to={roleHome(user.role)} replace />;
@@ -89,20 +94,57 @@ export default function LoginPage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
+    setSuccess("");
+    setInfo("");
+    setShowResendVerification(false);
     setSubmitting(true);
     try {
       if (isRegisterMode) {
-        await register({ email, password, role: "CUSTOMER" });
+        const response = await register({ email, password, role: "CUSTOMER" });
+        setSuccess(response.message || "Đăng ký thành công.");
+        setShowResendVerification(Boolean(response.verificationRequired));
+        setIsRegisterMode(false);
+        return;
       } else {
         await login({ email, password });
+        setShowResendVerification(false);
       }
       const fallback = roleHome();
       const from = location.state?.from?.pathname || fallback;
       navigate(from, { replace: true });
     } catch (err) {
-      setError(err.message || "Xác thực thất bại");
+      const nextError = err.message || "Xác thực thất bại";
+      setError(nextError);
+      setShowResendVerification(nextError.toLowerCase().includes("chưa được xác minh"));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const switchMode = (nextIsRegisterMode) => {
+    setIsRegisterMode(nextIsRegisterMode);
+    setError("");
+    setSuccess("");
+    setInfo("");
+    setShowResendVerification(false);
+  };
+
+  const handleResendVerification = async () => {
+    if (!email.trim()) {
+      setError("Vui lòng nhập email cần gửi lại liên kết xác minh.");
+      return;
+    }
+
+    setError("");
+    setInfo("");
+    setResendingVerification(true);
+    try {
+      const response = await resendVerification({ email });
+      setInfo(response.message || "Đã gửi lại email xác minh.");
+    } catch (err) {
+      setError(err.message || "Không thể gửi lại email xác minh.");
+    } finally {
+      setResendingVerification(false);
     }
   };
 
@@ -311,21 +353,56 @@ export default function LoginPage() {
                 gap: 0.75
               }}
             >
-              <ModeButton active={!isRegisterMode} onClick={() => setIsRegisterMode(false)}>
+              <ModeButton active={!isRegisterMode} onClick={() => switchMode(false)}>
                 Đăng nhập
               </ModeButton>
-              <ModeButton active={isRegisterMode} onClick={() => setIsRegisterMode(true)}>
+              <ModeButton active={isRegisterMode} onClick={() => switchMode(true)}>
                 Đăng ký
               </ModeButton>
             </Box>
 
             {isRegisterMode && (
               <Alert severity="info" sx={{ borderRadius: 3 }}>
-                Bạn chỉ có thể đăng ký tài khoản khách hàng tại màn hình công khai này.
+                Bạn chỉ có thể đăng ký tài khoản khách hàng tại màn hình công khai này. Sau khi đăng ký, hệ thống sẽ yêu
+                cầu xác minh email trước khi cho phép đăng nhập.
               </Alert>
             )}
 
             {error && <Alert severity="error" sx={{ borderRadius: 3 }}>{error}</Alert>}
+            {success && (
+              <Alert icon={<MailVerifiedIcon fontSize="inherit" />} severity="success" sx={{ borderRadius: 3 }}>
+                {success}
+              </Alert>
+            )}
+            {info && <Alert severity="info" sx={{ borderRadius: 3 }}>{info}</Alert>}
+
+            {showResendVerification && (
+              <Paper
+                sx={{
+                  p: 2,
+                  borderRadius: 4,
+                  bgcolor: "rgba(9,33,58,0.03)",
+                  border: "1px solid rgba(9,33,58,0.06)"
+                }}
+              >
+                <Stack spacing={1.2}>
+                  <Typography variant="body2" fontWeight={700}>
+                    Chưa thấy email xác minh?
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Hãy kiểm tra hộp thư đến, thư rác hoặc gửi lại liên kết xác minh tới email đang nhập.
+                  </Typography>
+                  <Button
+                    variant="outlined"
+                    onClick={handleResendVerification}
+                    disabled={resendingVerification || submitting}
+                    sx={{ alignSelf: "flex-start", borderRadius: 999 }}
+                  >
+                    {resendingVerification ? "Đang gửi lại..." : "Gửi lại email xác minh"}
+                  </Button>
+                </Stack>
+              </Paper>
+            )}
 
             <Box component="form" onSubmit={handleSubmit}>
               <Stack spacing={2.25}>
@@ -351,7 +428,7 @@ export default function LoginPage() {
                   control={(
                     <Switch
                       checked={isRegisterMode}
-                      onChange={(event) => setIsRegisterMode(event.target.checked)}
+                      onChange={(event) => switchMode(event.target.checked)}
                     />
                   )}
                   label={isRegisterMode ? "Đang ở chế độ đăng ký" : "Đang ở chế độ đăng nhập"}

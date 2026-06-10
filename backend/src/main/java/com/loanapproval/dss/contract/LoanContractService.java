@@ -153,8 +153,11 @@ public class LoanContractService {
                         installment.openingPrincipal(),
                         installment.scheduledPrincipal(),
                         installment.scheduledInterest(),
+                        installment.scheduledFee(),
                         installment.scheduledAmount(),
+                        installment.paidFee(),
                         installment.paidAmount(),
+                        installment.remainingFee(),
                         installment.remainingAmount(),
                         installment.status(),
                         installment.lastPaidAt()))

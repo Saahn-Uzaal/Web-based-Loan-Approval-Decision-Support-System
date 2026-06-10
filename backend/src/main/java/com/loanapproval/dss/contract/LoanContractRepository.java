@@ -203,6 +203,20 @@ public class LoanContractRepository {
                 id);
     }
 
+    public int shiftFinalScheduleDates(Long id, int extensionDays) {
+        return jdbcTemplate.update(
+                """
+                UPDATE loan_contracts
+                SET end_date = DATE_ADD(end_date, INTERVAL ? DAY),
+                    final_payment_date = DATE_ADD(final_payment_date, INTERVAL ? DAY),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                extensionDays,
+                extensionDays,
+                id);
+    }
+
     private LoanContract mapLoanContract(ResultSet rs) throws SQLException {
         return new LoanContract(
                 rs.getLong("id"),

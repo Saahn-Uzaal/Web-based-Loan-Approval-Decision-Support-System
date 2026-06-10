@@ -11,8 +11,11 @@ public record LoanContractInstallmentResponse(
         BigDecimal openingPrincipal,
         BigDecimal scheduledPrincipal,
         BigDecimal scheduledInterest,
+        BigDecimal scheduledFee,
         BigDecimal scheduledAmount,
+        BigDecimal paidFee,
         BigDecimal paidAmount,
+        BigDecimal remainingFee,
         BigDecimal remainingAmount,
         LoanInstallmentStatus status,
         Instant lastPaidAt) {

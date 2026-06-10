@@ -286,6 +286,10 @@ public class LoanDelinquencyRepository {
                 rs.getBigDecimal("approved_monthly_payment"),
                 rs.getString("decision_policy_version"),
                 rs.getString("intake_note"),
+                null,
+                null,
+                null,
+                0,
                 toInstant(rs.getTimestamp("loan_created_at")),
                 toInstant(rs.getTimestamp("loan_updated_at")));
         LoanContract contract = new LoanContract(

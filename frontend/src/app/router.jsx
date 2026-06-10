@@ -6,6 +6,7 @@ import { AppShell } from "@/shared/layouts/AppShell";
 
 const LandingPage = lazy(() => import("@/shared/pages/LandingPage"));
 const HomePage = lazy(() => import("@/shared/pages/HomePage"));
+const EmailVerificationPage = lazy(() => import("@/features/auth/pages/EmailVerificationPage"));
 const LoginPage = lazy(() => import("@/features/auth/pages/LoginPage"));
 const NotFoundPage = lazy(() => import("@/shared/pages/NotFoundPage"));
 const AdminUsersPage = lazy(() => import("@/features/admin/pages/AdminUsersPage"));
@@ -47,6 +48,10 @@ export const router = createBrowserRouter([
   {
     path: "/login",
     element: <SuspenseWrapper><LoginPage /></SuspenseWrapper>
+  },
+  {
+    path: "/verify-email",
+    element: <SuspenseWrapper><EmailVerificationPage /></SuspenseWrapper>
   },
   {
     path: "/",

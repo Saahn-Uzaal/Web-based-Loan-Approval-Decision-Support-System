@@ -14,8 +14,31 @@ public record StaffDecisionRequest(
     Instant scheduledAt,
     @Size(max = 255) String appointmentLocation,
     @Size(max = 500) String appointmentNote,
+    @Size(max = 500) String additionalInfoRequestNote,
+    Instant additionalInfoDeadlineAt,
     @DecimalMin(value = "1.00", inclusive = true) BigDecimal approvedAmount,
     @Min(1) @Max(360) Integer approvedTermMonths,
     @DecimalMin(value = "0.00", inclusive = true) BigDecimal approvedAnnualRate
 ) {
+    public StaffDecisionRequest(
+        StaffDecisionAction action,
+        Instant scheduledAt,
+        String appointmentLocation,
+        String appointmentNote,
+        BigDecimal approvedAmount,
+        Integer approvedTermMonths,
+        BigDecimal approvedAnnualRate
+    ) {
+        this(
+            action,
+            scheduledAt,
+            appointmentLocation,
+            appointmentNote,
+            null,
+            null,
+            approvedAmount,
+            approvedTermMonths,
+            approvedAnnualRate
+        );
+    }
 }

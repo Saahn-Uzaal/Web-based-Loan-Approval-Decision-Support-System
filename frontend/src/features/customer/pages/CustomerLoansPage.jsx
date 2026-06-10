@@ -43,7 +43,7 @@ function PaymentDueChip({ loan }) {
     return <Typography variant="body2" color="text.secondary">-</Typography>;
   }
   if (loan.nextPaymentOverdue) {
-    const days = Number(loan.nextPaymentOverdueDays || 0);
+    const days = Number(loan.daysPastDue ?? loan.nextPaymentOverdueDays ?? 0);
     return (
       <Chip
         size="small"

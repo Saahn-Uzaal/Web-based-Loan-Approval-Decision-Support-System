@@ -204,6 +204,37 @@ public class LoanInstallmentRepository {
                 installmentNumber);
     }
 
+    public int waiveScheduledFee(Long loanRequestId, Integer installmentNumber, BigDecimal feeDelta) {
+        return jdbcTemplate.update(
+                """
+                UPDATE loan_installments
+                SET scheduled_fee = GREATEST(0, scheduled_fee - ?),
+                    scheduled_amount = GREATEST(0, scheduled_amount - ?),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE loan_request_id = ?
+                  AND installment_number = ?
+                """,
+                feeDelta,
+                feeDelta,
+                loanRequestId,
+                installmentNumber);
+    }
+
+    public int shiftDueDatesForOpenInstallments(Long loanRequestId, Integer fromInstallmentNumber, int extensionDays) {
+        return jdbcTemplate.update(
+                """
+                UPDATE loan_installments
+                SET due_date = DATE_ADD(due_date, INTERVAL ? DAY),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE loan_request_id = ?
+                  AND installment_number >= ?
+                  AND paid_amount < scheduled_amount
+                """,
+                extensionDays,
+                loanRequestId,
+                fromInstallmentNumber);
+    }
+
     private LoanInstallment mapRecord(ResultSet rs, int rowNum) throws SQLException {
         return new LoanInstallment(
                 rs.getLong("id"),

@@ -21,10 +21,15 @@ public record LoanSummaryResponse(
         BigDecimal totalRepayableAmount,
         BigDecimal totalPaidAmount,
         BigDecimal remainingRepayableAmount,
+        BigDecimal nextPrincipalDue,
+        BigDecimal nextInterestDue,
+        BigDecimal nextFeeDue,
+        BigDecimal lateFeeDue,
         BigDecimal nextAmountDue,
         Integer nextInstallmentNumber,
         LocalDate nextDueDate,
         Boolean nextPaymentOverdue,
+        Long daysPastDue,
         Long nextPaymentOverdueDays,
         Instant createdAt) {
 }

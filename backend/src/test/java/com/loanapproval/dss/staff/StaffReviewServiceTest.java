@@ -24,12 +24,15 @@ import com.loanapproval.dss.loan.LoanDocumentStorageService;
 import com.loanapproval.dss.loan.LoanPurpose;
 import com.loanapproval.dss.loan.LoanRecord;
 import com.loanapproval.dss.loan.LoanRepository;
+import com.loanapproval.dss.loan.LoanSlaService;
 import com.loanapproval.dss.loan.LoanStatus;
 import com.loanapproval.dss.loan.LoanStatusHistoryService;
 import com.loanapproval.dss.loan.LoanType;
 import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.profile.CustomerProfile;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
+import com.loanapproval.dss.repayment.OverdueLoanResolutionService;
+import com.loanapproval.dss.repayment.RepaymentScheduleService;
 import com.loanapproval.dss.staff.dto.StaffDecisionRequest;
 import com.loanapproval.dss.staff.dto.StaffDecisionResponse;
 import com.loanapproval.dss.staff.dto.StaffRequestDetailResponse;
@@ -87,6 +90,15 @@ class StaffReviewServiceTest {
     @Mock
     private LoanStatusHistoryService loanStatusHistoryService;
 
+    @Mock
+    private RepaymentScheduleService repaymentScheduleService;
+
+    @Mock
+    private OverdueLoanResolutionService overdueLoanResolutionService;
+
+    @Mock
+    private LoanSlaService loanSlaService;
+
     @InjectMocks
     private StaffReviewService staffReviewService;
 
@@ -121,6 +133,69 @@ class StaffReviewServiceTest {
                 });
 
         verify(staffReviewRepository).findOperationQueue(LoanStatus.CONTRACTED);
+    }
+
+    @Test
+    void shouldBlockAssigningOwnLoan() {
+        Long staffUserId = 44L;
+        LoanRecord ownLoan = loanRecord(98L, staffUserId, LoanType.UNSECURED, LoanStatus.PENDING);
+        when(loanRepository.findById(98L)).thenReturn(Optional.of(ownLoan));
+
+        assertThatThrownBy(() -> staffReviewService.assignCase(staffUserId, 98L))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> {
+                    ResponseStatusException exception = (ResponseStatusException) error;
+                    assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(exception.getReason()).contains("chính tài khoản nhân viên");
+                });
+
+        verify(staffReviewRepository, never()).assignCase(anyLong(), anyLong());
+    }
+
+    @Test
+    void shouldBlockSubmittingDecisionForOwnLoan() {
+        Long staffUserId = 45L;
+        LoanRecord ownLoan = loanRecord(99L, staffUserId, LoanType.UNSECURED, LoanStatus.PENDING);
+        when(loanRepository.findById(99L)).thenReturn(Optional.of(ownLoan));
+
+        assertThatThrownBy(() -> staffReviewService.submitDecision(
+                        staffUserId,
+                        99L,
+                        new StaffDecisionRequest(
+                                StaffDecisionAction.REJECT,
+                                null,
+                                null,
+                                "Xung đột lợi ích",
+                                null,
+                                null,
+                                null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> {
+                    ResponseStatusException exception = (ResponseStatusException) error;
+                    assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(exception.getReason()).contains("chính tài khoản nhân viên");
+                });
+
+        verify(staffReviewRepository, never()).findAssignedStaffUserId(anyLong());
+        verify(staffReviewRepository, never()).insertDecisionAudit(anyLong(), anyLong(), any(), anyString());
+    }
+
+    @Test
+    void shouldBlockDisbursingOwnLoan() {
+        Long staffUserId = 66L;
+        LoanRecord ownLoan = loanRecord(120L, staffUserId, LoanType.UNSECURED, LoanStatus.CONTRACTED);
+        when(loanRepository.findById(120L)).thenReturn(Optional.of(ownLoan));
+
+        assertThatThrownBy(() -> staffReviewService.disburseLoan(staffUserId, 120L))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> {
+                    ResponseStatusException exception = (ResponseStatusException) error;
+                    assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(exception.getReason()).contains("chính tài khoản nhân viên");
+                });
+
+        verify(loanRepository, never()).updateStatus(anyLong(), any());
+        verify(notificationService, never()).notifyCustomerLoanDisbursed(anyLong(), anyLong(), anyLong(), any());
     }
 
     @Test
@@ -212,7 +287,8 @@ class StaffReviewServiceTest {
                         eq(LoanType.SECURED),
                         eq(LoanStatus.APPOINTMENT_SCHEDULED),
                         contains("Head Office"),
-                        eq(false));
+                        eq(false),
+                        eq(null));
         verify(notificationService)
                 .notifyCustomerAppointmentScheduled(
                         loanRequestId,

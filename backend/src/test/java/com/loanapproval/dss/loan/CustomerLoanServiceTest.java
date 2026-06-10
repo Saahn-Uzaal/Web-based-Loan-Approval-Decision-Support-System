@@ -27,6 +27,7 @@ import com.loanapproval.dss.dss.DssRecommendation;
 import com.loanapproval.dss.dss.DssResult;
 import com.loanapproval.dss.dss.DssResultRepository;
 import com.loanapproval.dss.dss.RiskRank;
+import com.loanapproval.dss.loan.dto.AcceptApprovedLoanRequest;
 import com.loanapproval.dss.loan.dto.CreateLoanRequest;
 import com.loanapproval.dss.loan.dto.LoanDetailResponse;
 import com.loanapproval.dss.notification.NotificationService;
@@ -95,10 +96,16 @@ class CustomerLoanServiceTest {
     private LoanContractService loanContractService;
 
     @Mock
+    private LoanContractAcceptanceCaptchaService loanContractAcceptanceCaptchaService;
+
+    @Mock
     private CustomerInformationVerificationService customerInformationVerificationService;
 
     @Mock
     private LoanEligibilityService loanEligibilityService;
+
+    @Mock
+    private LoanSlaService loanSlaService;
 
     @Mock
     private RepaymentScheduleService repaymentScheduleService;
@@ -324,7 +331,8 @@ class CustomerLoanServiceTest {
                         eq(LoanType.SECURED),
                         eq(LoanStatus.REJECTED),
                         eq("Hồ sơ vay thế chấp đã bị tự động từ chối vì điểm tín dụng quá thấp nên hồ sơ đã bị hủy."),
-                        eq(true));
+                        eq(true),
+                        eq(null));
     }
 
     @Test
@@ -488,9 +496,13 @@ class CustomerLoanServiceTest {
                 .thenReturn(1);
         when(loanDocumentRepository.findByLoanRequestId(loanRequestId)).thenReturn(List.of());
 
-        LoanDetailResponse response = customerLoanService.acceptApprovedLoan(customerId, loanRequestId);
+        LoanDetailResponse response = customerLoanService.acceptApprovedLoan(
+                customerId,
+                loanRequestId,
+                new AcceptApprovedLoanRequest(true, "captcha-token", 15));
 
         assertThat(response.status()).isEqualTo(LoanStatus.CONTRACTED);
+        verify(loanContractAcceptanceCaptchaService).validateChallenge(customerId, loanRequestId, "captcha-token", 15);
         verify(notificationService).notifyStaffLoanContractAccepted(
                 loanRequestId,
                 customerId,
@@ -509,10 +521,9 @@ class CustomerLoanServiceTest {
         when(loanRepository.findOwnedById(loanRequestId, customerId))
                 .thenReturn(Optional.of(pendingLoan), Optional.of(withdrawnLoan));
         when(loanRepository.findAssignedStaffUserId(loanRequestId)).thenReturn(Optional.of(assignedStaffUserId));
-        when(loanRepository.updateOwnedStatusAndReason(
+        when(loanRepository.withdrawOwnedApplication(
                         loanRequestId,
                         customerId,
-                        LoanStatus.WITHDRAWN,
                         "Khách hàng đã rút hồ sơ trước khi ký hợp đồng"))
                 .thenReturn(1);
         when(loanDocumentRepository.findByLoanRequestId(loanRequestId)).thenReturn(List.of());
@@ -529,28 +540,21 @@ class CustomerLoanServiceTest {
     }
 
     @Test
-    void shouldCancelPendingContractWhenApprovedLoanIsWithdrawn() {
+    void shouldRejectWithdrawingApprovedLoan() {
         Long customerId = 71L;
         Long loanRequestId = 701L;
-        Long assignedStaffUserId = 11L;
         LoanRecord approvedLoan = loanRecord(loanRequestId, customerId, LoanType.UNSECURED, LoanStatus.APPROVED);
-        LoanRecord withdrawnLoan = loanRecord(loanRequestId, customerId, LoanType.UNSECURED, LoanStatus.WITHDRAWN);
 
-        when(loanRepository.findOwnedById(loanRequestId, customerId))
-                .thenReturn(Optional.of(approvedLoan), Optional.of(withdrawnLoan));
-        when(loanRepository.findAssignedStaffUserId(loanRequestId)).thenReturn(Optional.of(assignedStaffUserId));
-        when(loanRepository.updateOwnedStatusAndReason(
-                        loanRequestId,
-                        customerId,
-                        LoanStatus.WITHDRAWN,
-                        "Khách hàng đã rút hồ sơ trước khi ký hợp đồng"))
-                .thenReturn(1);
-        when(loanDocumentRepository.findByLoanRequestId(loanRequestId)).thenReturn(List.of());
+        when(loanRepository.findOwnedById(loanRequestId, customerId)).thenReturn(Optional.of(approvedLoan));
 
-        LoanDetailResponse response = customerLoanService.withdrawLoan(customerId, loanRequestId);
+        ResponseStatusException exception = Assertions.assertThrows(
+                ResponseStatusException.class,
+                () -> customerLoanService.withdrawLoan(customerId, loanRequestId));
 
-        assertThat(response.status()).isEqualTo(LoanStatus.WITHDRAWN);
-        verify(loanContractService).cancelPendingAcceptance(loanRequestId);
+        assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(exception.getReason()).contains("bản nháp, chờ thẩm định hoặc đang chờ bổ sung");
+        verify(loanRepository, never()).withdrawOwnedApplication(anyLong(), anyLong(), anyString());
+        verify(loanContractService, never()).cancelPendingAcceptance(anyLong());
     }
 
     private CustomerProfile profile(BigDecimal monthlyIncome, BigDecimal verifiedMonthlyIncome) {

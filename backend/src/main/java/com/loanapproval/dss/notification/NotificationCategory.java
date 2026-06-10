@@ -16,5 +16,6 @@ public enum NotificationCategory {
     PAYMENT_REJECTED,
     PAYMENT_DUE_SOON,
     LOAN_OVERDUE,
+    LOAN_OVERDUE_RESOLVED,
     LOAN_CLOSED
 }
