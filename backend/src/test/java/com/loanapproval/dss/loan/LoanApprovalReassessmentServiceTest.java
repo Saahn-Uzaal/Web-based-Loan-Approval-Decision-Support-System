@@ -3,6 +3,7 @@ package com.loanapproval.dss.loan;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,11 +16,13 @@ import com.loanapproval.dss.dss.DecisionEngineService;
 import com.loanapproval.dss.dss.DecisionInput;
 import com.loanapproval.dss.dss.DssRecommendation;
 import com.loanapproval.dss.dss.DssResult;
+import com.loanapproval.dss.dss.DssResultRecord;
 import com.loanapproval.dss.dss.DssResultRepository;
 import com.loanapproval.dss.dss.RiskRank;
 import com.loanapproval.dss.profile.CustomerProfile;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
 import com.loanapproval.dss.risk.RiskAssessment;
+import com.loanapproval.dss.risk.RiskAssessmentRepository;
 import com.loanapproval.dss.risk.RiskAssessmentService;
 import com.loanapproval.dss.risk.RiskLevel;
 import com.loanapproval.dss.verification.CustomerVerification;
@@ -52,6 +55,9 @@ class LoanApprovalReassessmentServiceTest {
     private DssResultRepository dssResultRepository;
 
     @Mock
+    private RiskAssessmentRepository riskAssessmentRepository;
+
+    @Mock
     private RiskAssessmentService riskAssessmentService;
 
     @Mock
@@ -68,6 +74,72 @@ class LoanApprovalReassessmentServiceTest {
 
     @Captor
     private ArgumentCaptor<DecisionInput> decisionInputCaptor;
+
+    @Test
+    void shouldApproveUsingStoredAssessmentWithoutReScoring() {
+        LoanRecord loan = new LoanRecord(
+                301L,
+                31L,
+                LoanType.UNSECURED,
+                BigDecimal.valueOf(300_000_000),
+                24,
+                LoanPurpose.PERSONAL,
+                null,
+                null,
+                LoanStatus.PENDING,
+                null,
+                BigDecimal.valueOf(220_000_000),
+                BigDecimal.valueOf(200_000_000),
+                24,
+                BigDecimal.valueOf(0.115000).setScale(6),
+                BigDecimal.valueOf(10_500_000),
+                "policy-v2",
+                "intake",
+                Instant.now(),
+                Instant.now());
+        DssResultRecord storedDss = new DssResultRecord(
+                loan.id(),
+                713,
+                RiskRank.B,
+                CustomerSegment.LOW_RISK_HIGH_VALUE,
+                DssRecommendation.MANUAL_REVIEW_RECOMMENDED,
+                "stored",
+                Instant.now());
+        RiskAssessment storedRisk = new RiskAssessment(
+                loan.id(),
+                52,
+                20,
+                50,
+                RiskLevel.MEDIUM,
+                "Không có cờ rủi ro cao",
+                Instant.now());
+        BigDecimal annualRate = BigDecimal.valueOf(0.115000).setScale(6);
+
+        when(dssResultRepository.findByLoanRequestId(loan.id())).thenReturn(Optional.of(storedDss));
+        when(riskAssessmentRepository.findByLoanRequestId(loan.id())).thenReturn(Optional.of(storedRisk));
+        when(loanEligibilityService.calculateMonthlyPayment(
+                        BigDecimal.valueOf(200_000_000),
+                        24,
+                        annualRate))
+                .thenReturn(BigDecimal.valueOf(9_350_000));
+        when(loanEligibilityService.currentPolicyVersion()).thenReturn("policy-v2");
+
+        LoanApprovalReassessmentService.ReassessmentResult result =
+                loanApprovalReassessmentService.approveUsingStoredAssessment(
+                        loan,
+                        BigDecimal.valueOf(200_000_000),
+                        24,
+                        annualRate);
+
+        assertThat(result.approvedAmount()).isEqualByComparingTo("200000000");
+        assertThat(result.eligibleLimit()).isEqualByComparingTo("220000000");
+        assertThat(result.approvedMonthlyPayment()).isEqualByComparingTo("9350000");
+        assertThat(result.explanation()).contains("không chấm lại khi phê duyệt");
+        verify(decisionEngineService, never()).evaluate(any());
+        verify(riskAssessmentService, never()).evaluate(any(), any(), any(), any());
+        verify(dssResultRepository, never()).upsert(any(), any());
+        verify(riskAssessmentService, never()).save(any());
+    }
 
     @Test
     void shouldReassessUsingVerifiedIncomeAndAppraisedCollateralValue() {
@@ -131,6 +203,11 @@ class LoanApprovalReassessmentServiceTest {
                         85,
                         1,
                         0,
+                        BigDecimal.ZERO,
+                        BigDecimal.ZERO,
+                        BigDecimal.ZERO,
+                        BigDecimal.ZERO,
+                        1,
                         false,
                         false,
                         "Clear",

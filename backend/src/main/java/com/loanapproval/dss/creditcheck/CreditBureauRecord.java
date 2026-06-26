@@ -1,5 +1,6 @@
 package com.loanapproval.dss.creditcheck;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 
 public record CreditBureauRecord(
@@ -12,6 +13,13 @@ public record CreditBureauRecord(
     boolean manualReviewRequired,
     boolean hardReject,
     String riskNote,
+    BigDecimal totalMonthlyObligation,
+    BigDecimal totalOutstandingBalance,
+    BigDecimal externalMonthlyObligation,
+    BigDecimal externalOutstandingBalance,
+    Integer reportingInstitutionCount,
+    boolean consentGranted,
+    Instant lastReportedAt,
     Instant updatedAt
 ) {
 }

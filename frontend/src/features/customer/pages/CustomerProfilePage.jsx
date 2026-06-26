@@ -558,6 +558,9 @@ export default function CustomerProfilePage() {
             <Alert severity={creditCheckSeverity(creditCheck)}>
               Kết quả tra cứu tín dụng nội bộ theo CCCD: {labelCreditBureauStatus(creditCheck.bureauStatus)}.
               {creditCheck.creditScore != null ? ` Điểm tín dụng nội bộ hiện tại: ${creditCheck.creditScore}.` : ""}
+              {Number(creditCheck.activeLoanCount || 0) > 0
+                ? ` Hệ thống đang ghi nhận ${creditCheck.activeLoanCount} khoản vay hiệu lực với nghĩa vụ khoảng ${formatVnd(creditCheck.totalMonthlyObligation || 0)} mỗi tháng và dư nợ còn lại khoảng ${formatVnd(creditCheck.totalOutstandingBalance || 0)}.`
+                : ""}
               {creditCheck.manualReviewRequired ? " Hồ sơ này sẽ bị đẩy sang thẩm định thủ công." : ""}
               {creditCheck.hardReject ? " Dữ liệu tín dụng đang có cờ từ chối cứng." : ""}
               {creditCheck.riskNote ? ` Ghi chú: ${creditCheck.riskNote}` : ""}

@@ -31,12 +31,17 @@ public class CustomerCreditCheckRepository {
                     credit_score,
                     active_loan_count,
                     days_past_due,
+                    total_monthly_obligation,
+                    total_outstanding_balance,
+                    external_monthly_obligation,
+                    external_outstanding_balance,
+                    reporting_institution_count,
                     manual_review_required,
                     hard_reject,
                     risk_note,
                     source,
                     checked_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 Statement.RETURN_GENERATED_KEYS
             );
@@ -47,11 +52,16 @@ public class CustomerCreditCheckRepository {
             statement.setObject(5, record.creditScore());
             statement.setInt(6, valueOrZero(record.activeLoanCount()));
             statement.setInt(7, valueOrZero(record.daysPastDue()));
-            statement.setBoolean(8, record.manualReviewRequired());
-            statement.setBoolean(9, record.hardReject());
-            statement.setString(10, record.riskNote());
-            statement.setString(11, record.source());
-            statement.setTimestamp(12, record.checkedAt() != null ? Timestamp.from(record.checkedAt()) : Timestamp.from(java.time.Instant.now()));
+            statement.setBigDecimal(8, valueOrZero(record.totalMonthlyObligation()));
+            statement.setBigDecimal(9, valueOrZero(record.totalOutstandingBalance()));
+            statement.setBigDecimal(10, valueOrZero(record.externalMonthlyObligation()));
+            statement.setBigDecimal(11, valueOrZero(record.externalOutstandingBalance()));
+            statement.setInt(12, valueOrZero(record.reportingInstitutionCount()));
+            statement.setBoolean(13, record.manualReviewRequired());
+            statement.setBoolean(14, record.hardReject());
+            statement.setString(15, record.riskNote());
+            statement.setString(16, record.source());
+            statement.setTimestamp(17, record.checkedAt() != null ? Timestamp.from(record.checkedAt()) : Timestamp.from(java.time.Instant.now()));
             return statement;
         }, keyHolder);
 
@@ -68,6 +78,11 @@ public class CustomerCreditCheckRepository {
             record.creditScore(),
             record.activeLoanCount(),
             record.daysPastDue(),
+            record.totalMonthlyObligation(),
+            record.totalOutstandingBalance(),
+            record.externalMonthlyObligation(),
+            record.externalOutstandingBalance(),
+            record.reportingInstitutionCount(),
             record.manualReviewRequired(),
             record.hardReject(),
             record.riskNote(),
@@ -88,6 +103,11 @@ public class CustomerCreditCheckRepository {
                 credit_score,
                 active_loan_count,
                 days_past_due,
+                total_monthly_obligation,
+                total_outstanding_balance,
+                external_monthly_obligation,
+                external_outstanding_balance,
+                reporting_institution_count,
                 manual_review_required,
                 hard_reject,
                 risk_note,
@@ -107,6 +127,11 @@ public class CustomerCreditCheckRepository {
                 (Integer) rs.getObject("credit_score"),
                 (Integer) rs.getObject("active_loan_count"),
                 (Integer) rs.getObject("days_past_due"),
+                rs.getBigDecimal("total_monthly_obligation"),
+                rs.getBigDecimal("total_outstanding_balance"),
+                rs.getBigDecimal("external_monthly_obligation"),
+                rs.getBigDecimal("external_outstanding_balance"),
+                (Integer) rs.getObject("reporting_institution_count"),
                 rs.getBoolean("manual_review_required"),
                 rs.getBoolean("hard_reject"),
                 rs.getString("risk_note"),
@@ -119,5 +144,9 @@ public class CustomerCreditCheckRepository {
 
     private int valueOrZero(Integer value) {
         return value != null ? value : 0;
+    }
+
+    private java.math.BigDecimal valueOrZero(java.math.BigDecimal value) {
+        return value != null ? value : java.math.BigDecimal.ZERO;
     }
 }

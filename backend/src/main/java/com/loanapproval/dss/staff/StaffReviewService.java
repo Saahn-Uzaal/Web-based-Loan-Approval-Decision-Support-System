@@ -289,14 +289,11 @@ public class StaffReviewService {
 
         LoanApprovalReassessmentService.ReassessmentResult approvedTerms =
                 request.action() == StaffDecisionAction.APPROVE
-                        ? loanApprovalReassessmentService.reassessAndPersist(
+                        ? loanApprovalReassessmentService.approveUsingStoredAssessment(
                                 loan,
-                                approvalVerification,
                                 request.approvedAmount(),
                                 request.approvedTermMonths(),
-                                request.approvedAnnualRate(),
-                                null,
-                                false)
+                                request.approvedAnnualRate())
                         : null;
 
         int updatedRows;

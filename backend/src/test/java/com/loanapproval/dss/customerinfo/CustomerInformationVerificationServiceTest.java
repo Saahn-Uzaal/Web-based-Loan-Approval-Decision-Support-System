@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.loanapproval.dss.creditcheck.CustomerCreditCheckService;
+import com.loanapproval.dss.debt.CustomerDebtService;
 import com.loanapproval.dss.debt.CustomerDebtRepository;
 import com.loanapproval.dss.loan.LoanApplicationSnapshotRepository;
 import com.loanapproval.dss.notification.NotificationService;
@@ -40,6 +41,9 @@ class CustomerInformationVerificationServiceTest {
 
     @Mock
     private CustomerDebtRepository customerDebtRepository;
+
+    @Mock
+    private CustomerDebtService customerDebtService;
 
     @Mock
     private CustomerVerificationRepository customerVerificationRepository;
@@ -143,9 +147,7 @@ class CustomerInformationVerificationServiceTest {
                         null,
                         Instant.now(),
                         Instant.now())));
-        when(customerProfileRepository.findEffectiveMonthlyIncomeByUserId(customerId))
-                .thenReturn(Optional.of(verifiedIncome));
-        when(customerDebtRepository.sumActiveMonthlyDebt(customerId)).thenReturn(BigDecimal.ZERO);
+        when(customerDebtService.recalculateAndSyncDti(customerId)).thenReturn(BigDecimal.ZERO);
         when(customerInformationVerificationRepository.findByCustomerId(customerId))
                 .thenReturn(Optional.of(new CustomerInformationVerification(
                         customerId,
@@ -164,6 +166,8 @@ class CustomerInformationVerificationServiceTest {
                         null,
                         verifiedIncome));
 
+        verify(customerDebtService).recalculateAndSyncDti(customerId);
+
         ArgumentCaptor<CustomerVerification> verificationCaptor =
                 ArgumentCaptor.forClass(CustomerVerification.class);
         verify(customerVerificationRepository).upsert(verificationCaptor.capture());
@@ -181,6 +185,38 @@ class CustomerInformationVerificationServiceTest {
                 eq(synced),
                 eq(verifiedIncome),
                 eq("Đồng bộ từ bước xác minh thông tin"),
+                eq(staffUserId),
+                any());
+    }
+
+    @Test
+    void shouldFailInformationVerificationWhenFaceMatchFails() {
+        CustomerInformationVerificationService service = service();
+        Long customerId = 320L;
+        Long staffUserId = 15L;
+        when(customerProfileRepository.findByUserId(customerId)).thenReturn(Optional.of(submittedProfile(customerId)));
+
+        CustomerVerification verification = new CustomerVerification(
+                customerId,
+                VerificationStatus.PASSED,
+                VerificationStatus.PASSED,
+                VerificationStatus.FAILED,
+                VerificationStatus.PENDING,
+                VerificationStatus.PENDING,
+                VerificationStatus.PENDING,
+                false,
+                "face mismatch",
+                staffUserId,
+                Instant.now(),
+                Instant.now(),
+                Instant.now());
+
+        service.syncFromLoanApprovalVerification(customerId, staffUserId, verification);
+
+        verify(customerInformationVerificationRepository).upsertDecision(
+                eq(customerId),
+                eq(VerificationStatus.FAILED),
+                eq("Từ chối do khuôn mặt không khớp CCCD trong bước xác minh tổng hợp"),
                 eq(staffUserId),
                 any());
     }
@@ -233,6 +269,7 @@ class CustomerInformationVerificationServiceTest {
                 customerInformationVerificationRepository,
                 customerProfileRepository,
                 customerDebtRepository,
+                customerDebtService,
                 customerVerificationRepository,
                 loanApplicationSnapshotRepository,
                 customerCreditCheckService,

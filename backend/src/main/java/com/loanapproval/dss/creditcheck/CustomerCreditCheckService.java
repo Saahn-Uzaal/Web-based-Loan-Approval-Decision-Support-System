@@ -2,6 +2,7 @@ package com.loanapproval.dss.creditcheck;
 
 import com.loanapproval.dss.profile.CustomerProfile;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Optional;
 import org.springframework.stereotype.Service;
@@ -67,6 +68,11 @@ public class CustomerCreditCheckService {
             normalizedScore,
             bureauRecord.activeLoanCount(),
             bureauRecord.daysPastDue(),
+            nonNegative(bureauRecord.totalMonthlyObligation()),
+            nonNegative(bureauRecord.totalOutstandingBalance()),
+            nonNegative(bureauRecord.externalMonthlyObligation()),
+            nonNegative(bureauRecord.externalOutstandingBalance()),
+            bureauRecord.reportingInstitutionCount(),
             manualReviewRequired,
             hardReject,
             defaultRiskNote(bureauRecord, hardReject, manualReviewRequired),
@@ -85,9 +91,14 @@ public class CustomerCreditCheckService {
             DEFAULT_NO_HIT_SCORE,
             0,
             0,
+            BigDecimal.ZERO,
+            BigDecimal.ZERO,
+            BigDecimal.ZERO,
+            BigDecimal.ZERO,
+            0,
             false,
             false,
-            "Không tìm thấy dữ liệu nợ xấu trong kho nội bộ cho số CCCD này.",
+            "Không tìm thấy dữ liệu khoản vay hoặc cảnh báo tín dụng trong kho nội bộ cho số CCCD này.",
             INTERNAL_SOURCE,
             Instant.now()
         );
@@ -127,5 +138,12 @@ public class CustomerCreditCheckService {
         }
         String digitsOnly = value.replaceAll("\\s+", "");
         return digitsOnly.isBlank() ? null : digitsOnly;
+    }
+
+    private BigDecimal nonNegative(BigDecimal value) {
+        if (value == null || value.compareTo(BigDecimal.ZERO) < 0) {
+            return BigDecimal.ZERO;
+        }
+        return value;
     }
 }

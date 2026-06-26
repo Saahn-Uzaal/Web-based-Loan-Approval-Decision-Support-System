@@ -9,6 +9,7 @@ import com.loanapproval.dss.customerinfo.dto.ReviewCustomerInformationRequest;
 import com.loanapproval.dss.customerinfo.dto.StaffCustomerInformationDetailResponse;
 import com.loanapproval.dss.customerinfo.dto.StaffCustomerInformationSummaryResponse;
 import com.loanapproval.dss.debt.CustomerDebtRepository;
+import com.loanapproval.dss.debt.CustomerDebtService;
 import com.loanapproval.dss.loan.LoanApplicationSnapshotRepository;
 import com.loanapproval.dss.notification.NotificationService;
 import com.loanapproval.dss.profile.CustomerProfile;
@@ -17,7 +18,6 @@ import com.loanapproval.dss.verification.CustomerVerification;
 import com.loanapproval.dss.verification.CustomerVerificationRepository;
 import com.loanapproval.dss.verification.VerificationStatus;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.http.HttpStatus;
@@ -31,6 +31,7 @@ public class CustomerInformationVerificationService {
     private final CustomerInformationVerificationRepository customerInformationVerificationRepository;
     private final CustomerProfileRepository customerProfileRepository;
     private final CustomerDebtRepository customerDebtRepository;
+    private final CustomerDebtService customerDebtService;
     private final CustomerVerificationRepository customerVerificationRepository;
     private final LoanApplicationSnapshotRepository loanApplicationSnapshotRepository;
     private final CustomerCreditCheckService customerCreditCheckService;
@@ -41,6 +42,7 @@ public class CustomerInformationVerificationService {
         CustomerInformationVerificationRepository customerInformationVerificationRepository,
         CustomerProfileRepository customerProfileRepository,
         CustomerDebtRepository customerDebtRepository,
+        CustomerDebtService customerDebtService,
         CustomerVerificationRepository customerVerificationRepository,
         LoanApplicationSnapshotRepository loanApplicationSnapshotRepository,
         CustomerCreditCheckService customerCreditCheckService,
@@ -50,6 +52,7 @@ public class CustomerInformationVerificationService {
         this.customerInformationVerificationRepository = customerInformationVerificationRepository;
         this.customerProfileRepository = customerProfileRepository;
         this.customerDebtRepository = customerDebtRepository;
+        this.customerDebtService = customerDebtService;
         this.customerVerificationRepository = customerVerificationRepository;
         this.loanApplicationSnapshotRepository = loanApplicationSnapshotRepository;
         this.customerCreditCheckService = customerCreditCheckService;
@@ -131,7 +134,7 @@ public class CustomerInformationVerificationService {
             customerProfileRepository.updateVerifiedMonthlyIncome(
                 customerId, request.verifiedMonthlyIncome());
             customerDebtRepository.markPendingAsVerified(customerId, staffUserId, "Đã xác minh cùng hồ sơ thông tin");
-            recalculateCustomerDti(customerId);
+            customerDebtService.recalculateAndSyncDti(customerId);
         } else {
             customerDebtRepository.markPendingAsRejected(customerId, staffUserId, reason);
         }
@@ -239,18 +242,6 @@ public class CustomerInformationVerificationService {
             return null;
         }
         return reason.trim();
-    }
-
-    private void recalculateCustomerDti(Long customerId) {
-        BigDecimal income = customerProfileRepository.findEffectiveMonthlyIncomeByUserId(customerId).orElse(null);
-        if (income == null || income.compareTo(BigDecimal.ZERO) <= 0) {
-            return;
-        }
-        BigDecimal activeDebt = customerDebtRepository.sumActiveMonthlyDebt(customerId);
-        BigDecimal dti = activeDebt
-            .multiply(BigDecimal.valueOf(100))
-            .divide(income, 2, RoundingMode.HALF_UP);
-        customerProfileRepository.updateDebtToIncomeRatio(customerId, dti);
     }
 
     private void syncLoanApprovalVerification(
@@ -367,6 +358,7 @@ public class CustomerInformationVerificationService {
             return VerificationStatus.PENDING;
         }
         if (verification.fraudFlag()
+            || verification.faceMatchStatus() == VerificationStatus.FAILED
             || verification.kycStatus() == VerificationStatus.FAILED
             || verification.amlStatus() == VerificationStatus.FAILED
             || verification.incomeStatus() == VerificationStatus.FAILED) {
@@ -386,6 +378,9 @@ public class CustomerInformationVerificationService {
         }
         if (verification.fraudFlag()) {
             return "Từ chối do cờ gian lận trong bước xác minh tổng hợp";
+        }
+        if (verification.faceMatchStatus() == VerificationStatus.FAILED) {
+            return "Từ chối do khuôn mặt không khớp CCCD trong bước xác minh tổng hợp";
         }
         if (verification.kycStatus() == VerificationStatus.FAILED) {
             return "Từ chối do KYC không đạt trong bước xác minh tổng hợp";

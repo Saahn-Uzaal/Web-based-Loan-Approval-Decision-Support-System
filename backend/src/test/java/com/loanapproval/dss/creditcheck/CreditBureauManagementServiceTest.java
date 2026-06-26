@@ -6,7 +6,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.loanapproval.dss.contract.LoanContractService;
+import com.loanapproval.dss.creditcheck.dto.UpsertCreditBureauLoanAccountRequest;
 import com.loanapproval.dss.creditcheck.dto.UpsertCreditBureauRecordRequest;
+import com.loanapproval.dss.loan.LoanRepository;
+import com.loanapproval.dss.profile.CustomerProfileRepository;
+import com.loanapproval.dss.repayment.RepaymentScheduleService;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -23,6 +28,14 @@ class CreditBureauManagementServiceTest {
 
     @Mock
     private CreditBureauRepository creditBureauRepository;
+    @Mock
+    private LoanRepository loanRepository;
+    @Mock
+    private LoanContractService loanContractService;
+    @Mock
+    private RepaymentScheduleService repaymentScheduleService;
+    @Mock
+    private CustomerProfileRepository customerProfileRepository;
 
     @InjectMocks
     private CreditBureauManagementService creditBureauManagementService;
@@ -31,6 +44,7 @@ class CreditBureauManagementServiceTest {
     void listPagedShouldApplySafePagingBounds() {
         when(creditBureauRepository.count(null, null)).thenReturn(1L);
         when(creditBureauRepository.findPaged(null, null, 0, 100)).thenReturn(List.of(record("079094001234")));
+        when(creditBureauRepository.findLoanAccountsByIdentityNumber("079094001234")).thenReturn(List.of());
 
         var page = creditBureauManagementService.listPaged(null, "   ", -3, 999);
 
@@ -44,22 +58,27 @@ class CreditBureauManagementServiceTest {
     @Test
     void createShouldNormalizeIdentityNumberBeforeSaving() {
         when(creditBureauRepository.upsert(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(creditBureauRepository.findLoanAccountsByIdentityNumber("079094001234")).thenReturn(List.of());
 
         creditBureauManagementService.create(new UpsertCreditBureauRecordRequest(
             "0790 9400 1234",
             "Nguyễn Minh An",
-            CreditBureauStatus.BAD_DEBT,
-            35,
-            3,
-            45,
             true,
             false,
-            "Có lịch sử nợ quá hạn"
+            "Có lịch sử nợ quá hạn",
+            List.of(loanAccount(
+                "Ngân hàng A",
+                CreditLoanSourceType.PARTNER_NETWORK,
+                CreditLoanAccountStatus.BAD_DEBT,
+                45
+            ))
         ));
 
         ArgumentCaptor<CreditBureauRecord> recordCaptor = ArgumentCaptor.forClass(CreditBureauRecord.class);
         verify(creditBureauRepository).upsert(recordCaptor.capture());
         assertThat(recordCaptor.getValue().identityNumber()).isEqualTo("079094001234");
+        assertThat(recordCaptor.getValue().bureauStatus()).isEqualTo(CreditBureauStatus.BAD_DEBT);
+        assertThat(recordCaptor.getValue().activeLoanCount()).isEqualTo(1);
     }
 
     @Test
@@ -69,13 +88,10 @@ class CreditBureauManagementServiceTest {
             new UpsertCreditBureauRecordRequest(
                 "079094009999",
                 "Nguyễn Minh An",
-                CreditBureauStatus.BAD_DEBT,
-                35,
-                3,
-                45,
                 true,
                 false,
-                "Có lịch sử nợ quá hạn"
+                "Có lịch sử nợ quá hạn",
+                List.of()
             )
         ))
             .isInstanceOf(ResponseStatusException.class)
@@ -94,7 +110,34 @@ class CreditBureauManagementServiceTest {
             true,
             false,
             "Có lịch sử nợ quá hạn",
+            java.math.BigDecimal.valueOf(7_500_000),
+            java.math.BigDecimal.valueOf(65_000_000),
+            java.math.BigDecimal.valueOf(7_500_000),
+            java.math.BigDecimal.valueOf(65_000_000),
+            1,
+            true,
+            Instant.now(),
             Instant.now()
+        );
+    }
+
+    private UpsertCreditBureauLoanAccountRequest loanAccount(
+        String institution,
+        CreditLoanSourceType sourceType,
+        CreditLoanAccountStatus status,
+        int daysPastDue
+    ) {
+        return new UpsertCreditBureauLoanAccountRequest(
+            institution,
+            "HD-001",
+            sourceType,
+            "Vay tiêu dùng",
+            status,
+            java.math.BigDecimal.valueOf(80_000_000),
+            java.math.BigDecimal.valueOf(65_000_000),
+            java.math.BigDecimal.valueOf(7_500_000),
+            daysPastDue,
+            "Khoản vay thử nghiệm"
         );
     }
 }

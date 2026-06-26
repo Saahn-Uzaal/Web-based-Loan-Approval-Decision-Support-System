@@ -209,6 +209,20 @@ public class LoanRepository {
                                 id).stream().findFirst();
         }
 
+        public List<LoanRecord> findByStatuses(Set<LoanStatus> statuses) {
+                if (statuses == null || statuses.isEmpty()) {
+                        return List.of();
+                }
+                return jdbcTemplate.query(
+                                """
+                                                SELECT %s
+                                                FROM loan_requests
+                                                WHERE status IN (%s)
+                                                ORDER BY created_at DESC, id DESC
+                                                """.formatted(LOAN_SELECT_COLUMNS, statusListSql(statuses)),
+                                LOAN_ROW_MAPPER);
+        }
+
         public void updateStatus(Long id, LoanStatus status) {
                 jdbcTemplate.update(
                                 """

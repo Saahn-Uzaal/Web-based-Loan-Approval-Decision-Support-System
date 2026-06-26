@@ -203,7 +203,7 @@ class StaffReviewServiceTest {
         Long loanRequestId = 99L;
         Long customerId = 44L;
         Long staffUserId = 8L;
-        Instant scheduledAt = Instant.parse("2026-06-10T09:00:00Z");
+        Instant scheduledAt = Instant.now().plusSeconds(3_600);
         LoanRecord pendingLoan = loanRecord(loanRequestId, customerId, LoanType.SECURED, LoanStatus.PENDING);
         LoanRecord updatedLoan = loanRecord(loanRequestId, customerId, LoanType.SECURED, LoanStatus.APPOINTMENT_SCHEDULED);
         CustomerVerification verification = fullyVerified(customerId);
@@ -231,14 +231,11 @@ class StaffReviewServiceTest {
         when(staffReviewRepository.findAssignedStaffUserId(loanRequestId)).thenReturn(Optional.of(staffUserId));
         when(loanApplicationVerificationService.getOrDefault(loanRequestId, customerId)).thenReturn(verification);
         when(loanApplicationVerificationService.isFullyVerified(LoanType.SECURED, verification)).thenReturn(true);
-        when(loanApprovalReassessmentService.reassessAndPersist(
+        when(loanApprovalReassessmentService.approveUsingStoredAssessment(
                         pendingLoan,
-                        verification,
                         request.approvedAmount(),
                         request.approvedTermMonths(),
-                        request.approvedAnnualRate(),
-                        null,
-                        false))
+                        request.approvedAnnualRate()))
                 .thenReturn(reassessment);
         when(loanRepository.updateDecision(
                         eq(loanRequestId),
@@ -330,14 +327,11 @@ class StaffReviewServiceTest {
         when(staffReviewRepository.findAssignedStaffUserId(loanRequestId)).thenReturn(Optional.of(staffUserId));
         when(loanApplicationVerificationService.getOrDefault(loanRequestId, customerId)).thenReturn(verification);
         when(loanApplicationVerificationService.isFullyVerified(LoanType.UNSECURED, verification)).thenReturn(true);
-        when(loanApprovalReassessmentService.reassessAndPersist(
+        when(loanApprovalReassessmentService.approveUsingStoredAssessment(
                         pendingLoan,
-                        verification,
                         request.approvedAmount(),
                         request.approvedTermMonths(),
-                        request.approvedAnnualRate(),
-                        null,
-                        false))
+                        request.approvedAnnualRate()))
                 .thenReturn(reassessment);
         when(loanRepository.updateDecision(
                         eq(loanRequestId),

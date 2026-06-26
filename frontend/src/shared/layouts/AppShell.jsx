@@ -31,12 +31,12 @@ const ROLE_NAVIGATION = {
     { label: "Vận hành khoản vay", to: "/staff/loan-operations" },
     { label: "Xác nhận thanh toán", to: "/staff/payment-confirmations" },
     { label: "Bảng điều khiển", to: "/staff/dashboard" },
-    { label: "Danh sách nợ xấu", to: "/credit-bureau" }
+    { label: "Sổ tra cứu tín dụng", to: "/credit-bureau" }
   ],
   ADMIN: [
     { label: "Quản lý người dùng", to: "/admin/users" },
     { label: "Tạo tài khoản", to: "/admin/accounts/new" },
-    { label: "Danh sách nợ xấu", to: "/credit-bureau" }
+    { label: "Sổ tra cứu tín dụng", to: "/credit-bureau" }
   ]
 };
 

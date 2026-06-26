@@ -4,6 +4,11 @@ import com.loanapproval.dss.auth.UserAccount;
 import com.loanapproval.dss.auth.UserRepository;
 import com.loanapproval.dss.contract.LoanContractRepository;
 import com.loanapproval.dss.contract.LoanContractStatus;
+import com.loanapproval.dss.creditcheck.CreditBureauManagementService;
+import com.loanapproval.dss.creditcheck.CreditLoanAccountStatus;
+import com.loanapproval.dss.creditcheck.CreditLoanSourceType;
+import com.loanapproval.dss.creditcheck.dto.UpsertCreditBureauLoanAccountRequest;
+import com.loanapproval.dss.creditcheck.dto.UpsertCreditBureauRecordRequest;
 import com.loanapproval.dss.customerinfo.CustomerInformationVerificationRepository;
 import com.loanapproval.dss.debt.CustomerDebtRepository;
 import com.loanapproval.dss.dss.CustomerSegment;
@@ -73,10 +78,24 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
     private static final String CUSTOMER_DEMO_EMAIL = "customer.demo@loan.local";
     private static final String CUSTOMER_PENDING_EMAIL = "customer.pending@loan.local";
     private static final String CUSTOMER_FAILED_EMAIL = "customer.failed@loan.local";
+    private static final String CUSTOMER_DEMO_IDENTITY = "079094001234";
+    private static final String CUSTOMER_PENDING_IDENTITY = "079097001235";
+    private static final String CUSTOMER_FAILED_IDENTITY = "079091001236";
+    private static final String EXTERNAL_CLEAR_IDENTITY = "079088001237";
+    private static final String EXTERNAL_NO_HIT_IDENTITY = "079085001238";
+    private static final String EXTERNAL_FRAUD_IDENTITY = "079082001239";
     private static final List<String> SAMPLE_CUSTOMER_EMAILS = List.of(
         CUSTOMER_DEMO_EMAIL,
         CUSTOMER_PENDING_EMAIL,
         CUSTOMER_FAILED_EMAIL
+    );
+    private static final List<String> SAMPLE_CREDIT_REGISTRY_IDENTITIES = List.of(
+        CUSTOMER_DEMO_IDENTITY,
+        CUSTOMER_PENDING_IDENTITY,
+        CUSTOMER_FAILED_IDENTITY,
+        EXTERNAL_CLEAR_IDENTITY,
+        EXTERNAL_NO_HIT_IDENTITY,
+        EXTERNAL_FRAUD_IDENTITY
     );
     private static final List<String> SAMPLE_EMAILS = List.of(
         STAFF_EMAIL,
@@ -103,6 +122,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
     private final PasswordEncoder passwordEncoder;
     private final CustomerProfileRepository customerProfileRepository;
     private final CustomerDebtRepository customerDebtRepository;
+    private final CreditBureauManagementService creditBureauManagementService;
     private final CustomerInformationVerificationRepository customerInformationVerificationRepository;
     private final CustomerVerificationRepository customerVerificationRepository;
     private final LoanRepository loanRepository;
@@ -126,6 +146,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
         PasswordEncoder passwordEncoder,
         CustomerProfileRepository customerProfileRepository,
         CustomerDebtRepository customerDebtRepository,
+        CreditBureauManagementService creditBureauManagementService,
         CustomerInformationVerificationRepository customerInformationVerificationRepository,
         CustomerVerificationRepository customerVerificationRepository,
         LoanRepository loanRepository,
@@ -148,6 +169,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
         this.passwordEncoder = passwordEncoder;
         this.customerProfileRepository = customerProfileRepository;
         this.customerDebtRepository = customerDebtRepository;
+        this.creditBureauManagementService = creditBureauManagementService;
         this.customerInformationVerificationRepository = customerInformationVerificationRepository;
         this.customerVerificationRepository = customerVerificationRepository;
         this.loanRepository = loanRepository;
@@ -184,6 +206,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
         seedApprovedCustomer(staff, demoCustomer);
         seedPendingCustomer(pendingCustomer);
         seedFailedCustomer(staff, failedCustomer);
+        seedCreditRegistrySamples();
 
         logger.info(
             "Bootstrapped demo data for testing: staff={}, customers={}, {}, {}",
@@ -195,6 +218,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
     }
 
     private void cleanupExistingDemoData() {
+        deleteCreditRegistrySamples();
         List<Long> userIds = findSampleUserIds();
         List<Long> customerUserIds = findSampleCustomerIds();
         if (userIds.isEmpty()) {
@@ -243,7 +267,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
             customer.id(),
             "Nguyễn Minh An",
             "0901234567",
-            "079094001234",
+            CUSTOMER_DEMO_IDENTITY,
             LocalDate.of(1994, 5, 12),
             money("32000000"),
             money("30000000"),
@@ -301,7 +325,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
             customer.id(),
             "Trần Thu Hà",
             "0912345678",
-            "079097001235",
+            CUSTOMER_PENDING_IDENTITY,
             LocalDate.of(1997, 9, 21),
             money("22000000"),
             null,
@@ -343,7 +367,7 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
             customer.id(),
             "Lê Quốc Bảo",
             "0987654321",
-            "079091001236",
+            CUSTOMER_FAILED_IDENTITY,
             LocalDate.of(1991, 2, 8),
             money("18000000"),
             null,
@@ -785,6 +809,207 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
         loanRepository.updateStatus(loan.id(), LoanStatus.CONTRACTED);
     }
 
+    private void seedCreditRegistrySamples() {
+        seedCreditRegistryRecord(new UpsertCreditBureauRecordRequest(
+            CUSTOMER_DEMO_IDENTITY,
+            "Nguyễn Minh An",
+            true,
+            false,
+            "Khách có lịch sử thanh toán tốt tại các tổ chức đã kết nối. Hệ thống có thể dùng hồ sơ này để thử tính DTI liên tổ chức.",
+            List.of(
+                loanAccount(
+                    "Techcombank",
+                    "TCB-CIC-240315",
+                    CreditLoanSourceType.PARTNER_NETWORK,
+                    "Vay mua ô tô",
+                    CreditLoanAccountStatus.CURRENT,
+                    money("95000000"),
+                    money("54000000"),
+                    money("2900000"),
+                    0,
+                    "12 kỳ gần nhất thanh toán đúng hạn"
+                ),
+                loanAccount(
+                    "FE Credit",
+                    "FEC-CC-8891",
+                    CreditLoanSourceType.PARTNER_NETWORK,
+                    "Thẻ tín dụng",
+                    CreditLoanAccountStatus.CURRENT,
+                    money("25000000"),
+                    money("12000000"),
+                    money("1350000"),
+                    0,
+                    "Dư nợ quay vòng vẫn trong hạn"
+                ),
+                loanAccount(
+                    "VPBank",
+                    "VPB-2024-0007",
+                    CreditLoanSourceType.CUSTOMER_DECLARED,
+                    "Vay tiêu dùng",
+                    CreditLoanAccountStatus.CLOSED,
+                    money("40000000"),
+                    money("0"),
+                    money("0"),
+                    0,
+                    "Khách tự khai khoản vay đã tất toán đầu quý này"
+                )
+            )
+        ));
+
+        seedCreditRegistryRecord(new UpsertCreditBureauRecordRequest(
+            CUSTOMER_PENDING_IDENTITY,
+            "Trần Thu Hà",
+            true,
+            false,
+            "Có một khoản chậm thanh toán ngắn ngày tại đối tác. Nên gọi xác minh nguyên nhân trước khi ra quyết định cho vay mới.",
+            List.of(
+                loanAccount(
+                    "MBBank",
+                    "MBB-CIC-7721",
+                    CreditLoanSourceType.PARTNER_NETWORK,
+                    "Vay tiêu dùng",
+                    CreditLoanAccountStatus.OVERDUE,
+                    money("45000000"),
+                    money("28000000"),
+                    money("2200000"),
+                    17,
+                    "Đang quá hạn 17 ngày"
+                ),
+                loanAccount(
+                    "Shinhan Finance",
+                    "SHF-2025-092",
+                    CreditLoanSourceType.PARTNER_NETWORK,
+                    "Vay tiền mặt",
+                    CreditLoanAccountStatus.CURRENT,
+                    money("20000000"),
+                    money("9800000"),
+                    money("980000"),
+                    0,
+                    "Khoản vay vẫn được trả đều"
+                )
+            )
+        ));
+
+        seedCreditRegistryRecord(new UpsertCreditBureauRecordRequest(
+            CUSTOMER_FAILED_IDENTITY,
+            "Lê Quốc Bảo",
+            true,
+            false,
+            "Ghi nhận nợ xấu tại đối tác với số ngày quá hạn cao. Hồ sơ này dùng để test luồng cảnh báo từ chối cấp tín dụng.",
+            List.of(
+                loanAccount(
+                    "Home Credit",
+                    "HC-ODS-3104",
+                    CreditLoanSourceType.PARTNER_NETWORK,
+                    "Trả góp điện máy",
+                    CreditLoanAccountStatus.BAD_DEBT,
+                    money("38000000"),
+                    money("21400000"),
+                    money("4350000"),
+                    124,
+                    "Chậm thanh toán kéo dài, đã bị chuyển nhóm nợ xấu"
+                ),
+                loanAccount(
+                    "Mirae Asset",
+                    "MAF-2024-301",
+                    CreditLoanSourceType.CUSTOMER_DECLARED,
+                    "Vay tiền mặt",
+                    CreditLoanAccountStatus.CURRENT,
+                    money("30000000"),
+                    money("11600000"),
+                    money("1650000"),
+                    0,
+                    "Khoản vay bổ sung theo khai báo của khách"
+                )
+            )
+        ));
+
+        seedCreditRegistryRecord(new UpsertCreditBureauRecordRequest(
+            EXTERNAL_CLEAR_IDENTITY,
+            "Phạm Gia Huy",
+            true,
+            false,
+            "Khách mới đến hệ thống nhưng đã có lịch sử tín dụng tốt tại đơn vị khác.",
+            List.of(
+                loanAccount(
+                    "ACB",
+                    "ACB-RET-5588",
+                    CreditLoanSourceType.PARTNER_NETWORK,
+                    "Vay mua xe máy",
+                    CreditLoanAccountStatus.CURRENT,
+                    money("70000000"),
+                    money("38000000"),
+                    money("3100000"),
+                    0,
+                    "Toàn bộ lịch trả nợ đúng hạn"
+                )
+            )
+        ));
+
+        seedCreditRegistryRecord(new UpsertCreditBureauRecordRequest(
+            EXTERNAL_NO_HIT_IDENTITY,
+            "Đỗ Thanh Mai",
+            true,
+            false,
+            "Chưa ghi nhận khoản vay hoạt động nào từ các tổ chức đã kết nối.",
+            List.of()
+        ));
+
+        seedCreditRegistryRecord(new UpsertCreditBureauRecordRequest(
+            EXTERNAL_FRAUD_IDENTITY,
+            "Tạ Hải Yến",
+            false,
+            true,
+            "Dữ liệu định danh và số điện thoại giữa các tổ chức có dấu hiệu không đồng nhất, cần chặn phê duyệt để kiểm tra thủ công.",
+            List.of(
+                loanAccount(
+                    "Công ty Tài chính Á Châu",
+                    "AFC-221-09",
+                    CreditLoanSourceType.PARTNER_NETWORK,
+                    "Vay tiền mặt",
+                    CreditLoanAccountStatus.CURRENT,
+                    money("18000000"),
+                    money("16000000"),
+                    money("950000"),
+                    0,
+                    "Khoản vay đang hoạt động nhưng hồ sơ bị gắn cờ nghi vấn"
+                )
+            )
+        ));
+
+        creditBureauManagementService.syncInternalLoans();
+    }
+
+    private void seedCreditRegistryRecord(UpsertCreditBureauRecordRequest request) {
+        creditBureauManagementService.create(request);
+    }
+
+    private UpsertCreditBureauLoanAccountRequest loanAccount(
+        String reportingInstitution,
+        String accountReference,
+        CreditLoanSourceType sourceType,
+        String loanCategory,
+        CreditLoanAccountStatus accountStatus,
+        BigDecimal originalAmount,
+        BigDecimal outstandingBalance,
+        BigDecimal monthlyPayment,
+        int daysPastDue,
+        String note
+    ) {
+        return new UpsertCreditBureauLoanAccountRequest(
+            reportingInstitution,
+            accountReference,
+            sourceType,
+            loanCategory,
+            accountStatus,
+            originalAmount,
+            outstandingBalance,
+            monthlyPayment,
+            daysPastDue,
+            note
+        );
+    }
+
     private LoanRecord createLoan(
         Long customerId,
         LoanType loanType,
@@ -983,6 +1208,25 @@ public class DemoDataBootstrapInitializer implements ApplicationRunner {
         }
         String placeholders = placeholders(ids.size());
         jdbcTemplate.update(String.format(sqlTemplate, placeholders), ids.toArray());
+    }
+
+    private void deleteCreditRegistrySamples() {
+        deleteByStrings(
+            "DELETE FROM credit_bureau_loan_accounts WHERE identity_number IN (%s)",
+            SAMPLE_CREDIT_REGISTRY_IDENTITIES
+        );
+        deleteByStrings(
+            "DELETE FROM credit_bureau_records WHERE identity_number IN (%s)",
+            SAMPLE_CREDIT_REGISTRY_IDENTITIES
+        );
+    }
+
+    private void deleteByStrings(String sqlTemplate, List<String> values) {
+        if (values.isEmpty()) {
+            return;
+        }
+        String placeholders = placeholders(values.size());
+        jdbcTemplate.update(String.format(sqlTemplate, placeholders), values.toArray());
     }
 
     private void deleteStorageDirectories(Path storageRoot, List<Long> ids) {

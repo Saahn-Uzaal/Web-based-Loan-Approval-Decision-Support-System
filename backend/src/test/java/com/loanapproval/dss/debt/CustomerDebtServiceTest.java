@@ -9,6 +9,9 @@ import static org.mockito.Mockito.when;
 import com.loanapproval.dss.debt.dto.CreateCustomerDebtRequest;
 import com.loanapproval.dss.debt.dto.CustomerDebtMetricsResponse;
 import com.loanapproval.dss.debt.dto.CustomerDebtResponse;
+import com.loanapproval.dss.creditcheck.CreditBureauRecord;
+import com.loanapproval.dss.creditcheck.CreditBureauRepository;
+import com.loanapproval.dss.creditcheck.CreditBureauStatus;
 import com.loanapproval.dss.profile.CustomerProfile;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
 import java.math.BigDecimal;
@@ -35,6 +38,9 @@ class CustomerDebtServiceTest {
 
     @Mock
     private com.loanapproval.dss.loan.LoanRepository loanRepository;
+
+    @Mock
+    private CreditBureauRepository creditBureauRepository;
 
     @InjectMocks
     private CustomerDebtService customerDebtService;
@@ -85,6 +91,7 @@ class CustomerDebtServiceTest {
         when(customerDebtRepository.sumActiveMonthlyDebt(customerId)).thenReturn(BigDecimal.valueOf(5_000_000));
         when(loanRepository.sumCommittedMonthlyPaymentByCustomerId(customerId)).thenReturn(BigDecimal.valueOf(7_500_000));
         when(customerProfileRepository.findByUserId(customerId)).thenReturn(Optional.of(profile(customerId, BigDecimal.valueOf(41.67))));
+        when(creditBureauRepository.findByIdentityNumber("012345678901")).thenReturn(Optional.empty());
 
         CustomerDebtMetricsResponse response = customerDebtService.getMetrics(customerId);
 
@@ -95,6 +102,41 @@ class CustomerDebtServiceTest {
         assertThat(response.verifiedMonthlyDebt()).isEqualByComparingTo("5000000");
         assertThat(response.totalMonthlyObligation()).isEqualByComparingTo("12500000");
         assertThat(response.debtToIncomeRatio()).isEqualByComparingTo("41.67");
+    }
+
+    @Test
+    void shouldUseHigherRegistryExternalObligationWhenCalculatingDti() {
+        Long customerId = 40L;
+        when(customerDebtRepository.sumActiveMonthlyDebt(customerId)).thenReturn(BigDecimal.valueOf(2_000_000));
+        when(loanRepository.sumCommittedMonthlyPaymentByCustomerId(customerId)).thenReturn(BigDecimal.valueOf(3_000_000));
+        when(customerProfileRepository.findByUserId(customerId)).thenReturn(Optional.of(profile(customerId, BigDecimal.ZERO)));
+        when(customerProfileRepository.findEffectiveMonthlyIncomeByUserId(customerId)).thenReturn(Optional.of(BigDecimal.valueOf(20_000_000)));
+        when(creditBureauRepository.findByIdentityNumber("012345678901")).thenReturn(Optional.of(
+            new CreditBureauRecord(
+                "012345678901",
+                "Nguyen Van A",
+                CreditBureauStatus.CLEAR,
+                80,
+                2,
+                0,
+                false,
+                false,
+                null,
+                BigDecimal.valueOf(9_000_000),
+                BigDecimal.valueOf(70_000_000),
+                BigDecimal.valueOf(6_000_000),
+                BigDecimal.valueOf(50_000_000),
+                2,
+                true,
+                Instant.parse("2026-01-01T00:00:00Z"),
+                Instant.parse("2026-01-01T00:00:00Z")
+            )
+        ));
+
+        BigDecimal dti = customerDebtService.recalculateAndSyncDti(customerId);
+
+        assertThat(dti).isEqualByComparingTo("45.00");
+        verify(customerProfileRepository).updateDebtToIncomeRatio(customerId, BigDecimal.valueOf(45.00).setScale(2));
     }
 
     @Test

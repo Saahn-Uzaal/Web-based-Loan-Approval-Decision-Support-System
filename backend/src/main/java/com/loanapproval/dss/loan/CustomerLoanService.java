@@ -495,6 +495,7 @@ public class CustomerLoanService {
                 "CUSTOMER_ACCEPT_LOAN_TERMS",
                 ComplianceOutcome.PASSED,
                 "customer reviewed and accepted loan contract #" + contract.id());
+        customerDebtService.recalculateAndSyncDti(customerId);
         notificationService.notifyStaffLoanContractAccepted(id, customerId, assignedStaffUserId, loan.loanType());
         return toDetailResponse(loanRepository.findOwnedById(id, customerId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ vay")));

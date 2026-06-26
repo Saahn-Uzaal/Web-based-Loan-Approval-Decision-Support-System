@@ -7,10 +7,12 @@ import com.loanapproval.dss.dss.DecisionEngineService;
 import com.loanapproval.dss.dss.DecisionInput;
 import com.loanapproval.dss.dss.DssRecommendation;
 import com.loanapproval.dss.dss.DssResult;
+import com.loanapproval.dss.dss.DssResultRecord;
 import com.loanapproval.dss.dss.DssResultRepository;
 import com.loanapproval.dss.profile.CustomerProfile;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
 import com.loanapproval.dss.risk.RiskAssessment;
+import com.loanapproval.dss.risk.RiskAssessmentRepository;
 import com.loanapproval.dss.risk.RiskAssessmentService;
 import com.loanapproval.dss.risk.RiskLevel;
 import com.loanapproval.dss.verification.CustomerVerification;
@@ -30,6 +32,7 @@ public class LoanApprovalReassessmentService {
     private final CustomerDebtService customerDebtService;
     private final DecisionEngineService decisionEngineService;
     private final DssResultRepository dssResultRepository;
+    private final RiskAssessmentRepository riskAssessmentRepository;
     private final RiskAssessmentService riskAssessmentService;
     private final LoanEligibilityService loanEligibilityService;
     private final LoanApplicationSnapshotRepository loanApplicationSnapshotRepository;
@@ -40,6 +43,7 @@ public class LoanApprovalReassessmentService {
             CustomerDebtService customerDebtService,
             DecisionEngineService decisionEngineService,
             DssResultRepository dssResultRepository,
+            RiskAssessmentRepository riskAssessmentRepository,
             RiskAssessmentService riskAssessmentService,
             LoanEligibilityService loanEligibilityService,
             LoanApplicationSnapshotRepository loanApplicationSnapshotRepository,
@@ -48,10 +52,64 @@ public class LoanApprovalReassessmentService {
         this.customerDebtService = customerDebtService;
         this.decisionEngineService = decisionEngineService;
         this.dssResultRepository = dssResultRepository;
+        this.riskAssessmentRepository = riskAssessmentRepository;
         this.riskAssessmentService = riskAssessmentService;
         this.loanEligibilityService = loanEligibilityService;
         this.loanApplicationSnapshotRepository = loanApplicationSnapshotRepository;
         this.customerCreditCheckService = customerCreditCheckService;
+    }
+
+    public ReassessmentResult approveUsingStoredAssessment(
+            LoanRecord loan,
+            BigDecimal requestedApprovedAmount,
+            Integer requestedTermMonths,
+            BigDecimal requestedAnnualRate) {
+        CandidateTerms candidate = resolveCandidateTerms(
+                loan,
+                requestedApprovedAmount,
+                requestedTermMonths,
+                requestedAnnualRate);
+        DssResultRecord storedDss = dssResultRepository.findByLoanRequestId(loan.id())
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Hồ sơ chưa có kết quả DSS ban đầu để dùng cho bước phê duyệt"));
+        RiskAssessment storedRisk = riskAssessmentRepository.findByLoanRequestId(loan.id())
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Hồ sơ chưa có đánh giá rủi ro ban đầu để dùng cho bước phê duyệt"));
+        if (storedDss.recommendation() == DssRecommendation.REJECT_RECOMMENDED) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "DSS ban đầu đang đề xuất từ chối, không thể phê duyệt");
+        }
+        if (storedRisk.overallRiskLevel() == RiskLevel.HIGH) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Đánh giá rủi ro ban đầu đang ở mức HIGH, không thể phê duyệt");
+        }
+
+        BigDecimal eligibleLimit = scaleLimit(loan.eligibleLimit());
+        if (eligibleLimit != null && candidate.approvedAmount().compareTo(eligibleLimit) > 0) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    buildStoredEligibilityExceededMessage(eligibleLimit));
+        }
+
+        BigDecimal approvedMonthlyPayment = loanEligibilityService.calculateMonthlyPayment(
+                candidate.approvedAmount(),
+                candidate.approvedTermMonths(),
+                candidate.approvedAnnualRate());
+
+        return new ReassessmentResult(
+                eligibleLimit,
+                candidate.approvedAmount(),
+                candidate.approvedTermMonths(),
+                candidate.approvedAnnualRate(),
+                approvedMonthlyPayment,
+                loanEligibilityService.currentPolicyVersion(),
+                buildStoredAssessmentExplanation(storedDss, storedRisk, approvedMonthlyPayment, eligibleLimit),
+                null,
+                false);
     }
 
     public ReassessmentResult reassessAndPersist(
@@ -296,6 +354,30 @@ public class LoanApprovalReassessmentService {
         }
         return "Khoản vay vượt hạn mức an toàn sau khi tính lại. Hạn mức tối đa: "
                 + eligibleLimit.toPlainString();
+    }
+
+    private String buildStoredEligibilityExceededMessage(BigDecimal eligibleLimit) {
+        if (eligibleLimit == null) {
+            return "Khoản vay vượt hạn mức đánh giá ban đầu";
+        }
+        return "Khoản vay vượt hạn mức đánh giá ban đầu. Hạn mức tối đa: "
+                + eligibleLimit.toPlainString();
+    }
+
+    private String buildStoredAssessmentExplanation(
+            DssResultRecord storedDss,
+            RiskAssessment storedRisk,
+            BigDecimal approvedMonthlyPayment,
+            BigDecimal eligibleLimit) {
+        StringBuilder builder = new StringBuilder("Giữ nguyên DSS/rủi ro ban đầu, không chấm lại khi phê duyệt");
+        builder.append(", khoản trả hằng tháng dự kiến=")
+                .append(approvedMonthlyPayment.toPlainString());
+        if (eligibleLimit != null) {
+            builder.append(", hạn mức tham chiếu=").append(eligibleLimit.toPlainString());
+        }
+        builder.append(", khuyến nghị DSS=").append(storedDss.recommendation());
+        builder.append(", mức rủi ro=").append(storedRisk.overallRiskLevel());
+        return builder.toString();
     }
 
     private String buildExplanation(

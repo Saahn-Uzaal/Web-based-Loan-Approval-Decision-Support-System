@@ -1,6 +1,8 @@
 package com.loanapproval.dss.creditcheck;
 
 import com.loanapproval.dss.creditcheck.dto.CreditBureauRecordResponse;
+import com.loanapproval.dss.creditcheck.dto.CreditBureauRegistrySummaryResponse;
+import com.loanapproval.dss.creditcheck.dto.CreditBureauSyncResultResponse;
 import com.loanapproval.dss.creditcheck.dto.UpsertCreditBureauRecordRequest;
 import com.loanapproval.dss.shared.PageResponse;
 import jakarta.validation.Valid;
@@ -38,6 +40,12 @@ public class CreditBureauManagementController {
         return creditBureauManagementService.listPaged(status, query, page, size);
     }
 
+    @GetMapping("/summary")
+    @PreAuthorize("hasAnyRole('STAFF', 'ADMIN')")
+    public CreditBureauRegistrySummaryResponse getSummary() {
+        return creditBureauManagementService.getSummary();
+    }
+
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.CREATED)
@@ -59,5 +67,11 @@ public class CreditBureauManagementController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable("identityNumber") String identityNumber) {
         creditBureauManagementService.delete(identityNumber);
+    }
+
+    @PostMapping("/sync-internal-loans")
+    @PreAuthorize("hasRole('ADMIN')")
+    public CreditBureauSyncResultResponse syncInternalLoans() {
+        return creditBureauManagementService.syncInternalLoans();
     }
 }

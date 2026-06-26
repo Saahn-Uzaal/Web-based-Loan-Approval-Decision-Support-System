@@ -128,11 +128,24 @@ const PAYMENT_CONFIRMATION_STATUS_LABELS = {
 };
 
 const CREDIT_BUREAU_STATUS_LABELS = {
-  NO_HIT: "Không có dữ liệu xấu",
-  CLEAR: "Lịch sử sạch",
-  WATCHLIST: "Danh sách cần rà soát",
-  BAD_DEBT: "Có nợ xấu",
+  NO_HIT: "Chưa có quan hệ tín dụng",
+  CLEAR: "Đang trả tốt",
+  WATCHLIST: "Cần rà soát",
+  BAD_DEBT: "Nợ xấu",
   FRAUD_SUSPECT: "Nghi ngờ gian lận"
+};
+
+const CREDIT_LOAN_SOURCE_TYPE_LABELS = {
+  INTERNAL_SYSTEM: "Nội bộ từ app",
+  PARTNER_NETWORK: "Đối tác / tổ chức khác",
+  CUSTOMER_DECLARED: "Khách hàng tự khai"
+};
+
+const CREDIT_LOAN_ACCOUNT_STATUS_LABELS = {
+  CURRENT: "Đang trả bình thường",
+  OVERDUE: "Đang quá hạn",
+  BAD_DEBT: "Nợ xấu",
+  CLOSED: "Đã tất toán"
 };
 
 function fallback(value) {
@@ -213,4 +226,12 @@ export function labelAppointmentStatus(value) {
 
 export function labelCreditBureauStatus(value) {
   return CREDIT_BUREAU_STATUS_LABELS[value] || fallback(value);
+}
+
+export function labelCreditLoanSourceType(value) {
+  return CREDIT_LOAN_SOURCE_TYPE_LABELS[value] || fallback(value);
+}
+
+export function labelCreditLoanAccountStatus(value) {
+  return CREDIT_LOAN_ACCOUNT_STATUS_LABELS[value] || fallback(value);
 }

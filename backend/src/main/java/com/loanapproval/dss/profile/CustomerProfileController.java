@@ -74,11 +74,7 @@ public class CustomerProfileController {
     ) {
         AuthenticatedUser user = extractUser(authentication);
         CustomerProfileRequest request = parseAndValidateProfile(profileJson);
-        return customerProfileService.upsert(
-            user.id(),
-            request,
-            new CustomerProfileFiles(payslip, idCardFront, idCardBack)
-        );
+        return customerProfileService.upsert(user.id(), request, new CustomerProfileFiles(payslip, idCardFront, idCardBack));
     }
 
     @GetMapping("/payslip")

@@ -494,6 +494,7 @@ class CustomerLoanServiceTest {
         when(loanContractService.activateForCustomer(customerId, loanRequestId)).thenReturn(activeContract(loanRequestId, customerId));
         when(loanRepository.markAcceptedAndContracted(eq(loanRequestId), eq(customerId), org.mockito.ArgumentMatchers.isNull()))
                 .thenReturn(1);
+        when(customerDebtService.recalculateAndSyncDti(customerId)).thenReturn(BigDecimal.valueOf(24.50));
         when(loanDocumentRepository.findByLoanRequestId(loanRequestId)).thenReturn(List.of());
 
         LoanDetailResponse response = customerLoanService.acceptApprovedLoan(
@@ -503,6 +504,7 @@ class CustomerLoanServiceTest {
 
         assertThat(response.status()).isEqualTo(LoanStatus.CONTRACTED);
         verify(loanContractAcceptanceCaptchaService).validateChallenge(customerId, loanRequestId, "captcha-token", 15);
+        verify(customerDebtService).recalculateAndSyncDti(customerId);
         verify(notificationService).notifyStaffLoanContractAccepted(
                 loanRequestId,
                 customerId,
@@ -603,6 +605,11 @@ class CustomerLoanServiceTest {
                 creditScore,
                 1,
                 0,
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                1,
                 manualReviewRequired,
                 hardReject,
                 manualReviewRequired ? "Manual review required" : "Clear",

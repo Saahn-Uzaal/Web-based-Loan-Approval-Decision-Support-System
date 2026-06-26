@@ -3,6 +3,7 @@ package com.loanapproval.dss.debt;
 import com.loanapproval.dss.debt.dto.CreateCustomerDebtRequest;
 import com.loanapproval.dss.debt.dto.CustomerDebtMetricsResponse;
 import com.loanapproval.dss.debt.dto.CustomerDebtResponse;
+import com.loanapproval.dss.creditcheck.CreditBureauRepository;
 import com.loanapproval.dss.profile.CustomerProfile;
 import com.loanapproval.dss.profile.CustomerProfileRepository;
 import java.math.BigDecimal;
@@ -18,15 +19,18 @@ public class CustomerDebtService {
     private final CustomerDebtRepository customerDebtRepository;
     private final CustomerProfileRepository customerProfileRepository;
     private final com.loanapproval.dss.loan.LoanRepository loanRepository;
+    private final CreditBureauRepository creditBureauRepository;
 
     public CustomerDebtService(
         CustomerDebtRepository customerDebtRepository,
         CustomerProfileRepository customerProfileRepository,
-        com.loanapproval.dss.loan.LoanRepository loanRepository
+        com.loanapproval.dss.loan.LoanRepository loanRepository,
+        CreditBureauRepository creditBureauRepository
     ) {
         this.customerDebtRepository = customerDebtRepository;
         this.customerProfileRepository = customerProfileRepository;
         this.loanRepository = loanRepository;
+        this.creditBureauRepository = creditBureauRepository;
     }
 
     public BigDecimal recalculateAndSyncDti(Long customerId) {
@@ -120,9 +124,10 @@ public class CustomerDebtService {
     }
 
     private BigDecimal totalMonthlyObligations(Long customerId) {
-        return customerDebtRepository
-            .sumActiveMonthlyDebt(customerId)
-            .add(loanRepository.sumCommittedMonthlyPaymentByCustomerId(customerId));
+        BigDecimal verifiedDeclaredExternalDebt = customerDebtRepository.sumActiveMonthlyDebt(customerId);
+        BigDecimal registryExternalDebt = resolveRegistryExternalMonthlyObligation(customerId);
+        BigDecimal effectiveExternalDebt = verifiedDeclaredExternalDebt.max(registryExternalDebt);
+        return effectiveExternalDebt.add(loanRepository.sumCommittedMonthlyPaymentByCustomerId(customerId));
     }
 
     private int countByStatus(List<CustomerDebt> debts, DebtStatus status) {
@@ -144,5 +149,19 @@ public class CustomerDebtService {
 
     private String normalize(String value) {
         return value == null ? null : value.trim().replaceAll("\\s+", " ");
+    }
+
+    private BigDecimal resolveRegistryExternalMonthlyObligation(Long customerId) {
+        String identityNumber = customerProfileRepository.findByUserId(customerId)
+            .map(CustomerProfile::identityNumber)
+            .map(value -> value.replaceAll("\\s+", "").trim())
+            .filter(value -> !value.isBlank())
+            .orElse(null);
+        if (identityNumber == null) {
+            return BigDecimal.ZERO;
+        }
+        return creditBureauRepository.findByIdentityNumber(identityNumber)
+            .map(record -> record.externalMonthlyObligation() != null ? record.externalMonthlyObligation() : BigDecimal.ZERO)
+            .orElse(BigDecimal.ZERO);
     }
 }

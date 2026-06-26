@@ -43,6 +43,10 @@ public class CustomerProfileService {
     public CustomerProfileResponse getByUserId(Long userId) {
         CustomerProfile profile = customerProfileRepository.findByUserId(userId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hồ sơ khách hàng"));
+        BigDecimal calculatedDti = customerDebtService.recalculateAndSyncDti(userId);
+        if (calculatedDti != null) {
+            profile = withCalculatedDti(profile, calculatedDti);
+        }
         return toResponse(profile);
     }
 

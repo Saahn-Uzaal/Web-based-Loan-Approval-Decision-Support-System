@@ -51,6 +51,21 @@ class CustomerProfileServiceTest {
     private CustomerProfileService customerProfileService;
 
     @Test
+    void shouldRecalculateDtiWhenFetchingProfile() {
+        Long userId = 41L;
+        CustomerProfile existing = profile(userId, BigDecimal.valueOf(25_000_000), BigDecimal.valueOf(22_000_000));
+
+        when(customerProfileRepository.findByUserId(userId)).thenReturn(Optional.of(existing));
+        when(customerDebtService.recalculateAndSyncDti(userId)).thenReturn(BigDecimal.valueOf(6.25));
+        when(customerCreditCheckService.findLatestByCustomerId(userId)).thenReturn(Optional.empty());
+
+        CustomerProfileResponse response = customerProfileService.getByUserId(userId);
+
+        assertThat(response.debtToIncomeRatio()).isEqualByComparingTo("6.25");
+        verify(customerDebtService).recalculateAndSyncDti(userId);
+    }
+
+    @Test
     void shouldClearVerifiedIncomeWhenCustomerUpdatesMonthlyIncome() {
         Long userId = 42L;
         CustomerProfile existing = profile(userId, BigDecimal.valueOf(25_000_000), BigDecimal.valueOf(22_000_000));

@@ -762,6 +762,9 @@ export default function StaffRequestDetailPage() {
                 <Alert severity={detail.customerProfile.creditCheck.hardReject ? "error" : detail.customerProfile.creditCheck.manualReviewRequired ? "warning" : "info"}>
                   Tra cứu tín dụng nội bộ theo CCCD: {labelCreditBureauStatus(detail.customerProfile.creditCheck.bureauStatus)}.
                   {detail.customerProfile.creditCheck.creditScore != null ? ` Điểm: ${detail.customerProfile.creditCheck.creditScore}.` : ""}
+                  {Number(detail.customerProfile.creditCheck.activeLoanCount || 0) > 0
+                    ? ` Ghi nhận ${detail.customerProfile.creditCheck.activeLoanCount} khoản vay hiệu lực, nghĩa vụ khoảng ${formatVnd(detail.customerProfile.creditCheck.totalMonthlyObligation || 0)}/tháng và dư nợ còn lại khoảng ${formatVnd(detail.customerProfile.creditCheck.totalOutstandingBalance || 0)}.`
+                    : ""}
                   {detail.customerProfile.creditCheck.manualReviewRequired ? " Cần thẩm định thủ công." : ""}
                   {detail.customerProfile.creditCheck.hardReject ? " Có cờ từ chối cứng." : ""}
                   {detail.customerProfile.creditCheck.riskNote ? ` Ghi chú: ${detail.customerProfile.creditCheck.riskNote}` : ""}
